@@ -5,7 +5,8 @@ appearances, both using Telvox branding.
 
 ## Environment
 
-- Project: `/var/www/html/mobile/telvox-chat-mobile-app`
+- Build server: `forge@122.179.143.220` (Ubuntu 24.04, x86_64)
+- Project: `/home/forge/telvox-chat-mobile-app`
 - Flutter 3.47.8; Dart 3.13.7
 - Java 17; Android SDK in `~/Android/Sdk`
 - SDK: `~/.local/flutter-sdk/flutter`
@@ -52,9 +53,16 @@ uses Cupertino navigation and tabs, segmented filters, buttons, search and text
 fields, pickers, action sheets, dialogs, and switches. The iPhone appearance uses
 the system font; appearance previews on other devices use bundled Geist.
 
-Both appearances retain Telvox green, the text-only wordmark, compact business
-lists, readable chat bubbles, swipe-to-reply, reaction spacing, and a brief send
-transition. The existing Telvox mark remains the Android launcher icon.
+Both appearances retain Telvox green, the text-only wordmark, and compact
+business lists. Chat bubbles fit their content, with inline timestamps and
+receipts, larger emoji-only messages, and tight spacing within a sender's group.
+Changing sender or a gap of more than five minutes starts a new group and tail.
+The launcher uses the supplied Telvox speech-bubble and double-check mark in
+theme green (`#176B46`) and light mint (`#F4F7F3`). The canonical artwork is
+`assets/brand/telvox-chat-mark.svg`; `assets/brand/mark.png` is its 1024 px master.
+Android includes legacy density icons, a vector adaptive foreground, and a
+monochrome layer for themed launchers. The symbol stays inside the adaptive
+safe area; the launcher supplies its circular or rounded mask.
 Geist's license is in `assets/fonts/OFL.txt`; Roboto's is in
 `assets/fonts/Roboto-OFL.txt`. Both are registered in Flutter's license registry.
 
@@ -90,11 +98,17 @@ host project, a supported Mac/Xcode setup, and device testing.
 
 Sign-in is for existing accounts only; there is no account-creation screen or route.
 Workspace rows and inbox, contact, and ticket lists stay compact. Chat retains
-contextual replies, reactions below the message, forwarding, starring, message
-info, and local deletion. Quick replies, AI assist, templates, and product
-sharing remain under **Attach**. The main tabs put search directly below the
-header. New messages use a short 140 ms transition in place; reduced motion
-shows the new message immediately.
+contextual replies, forwarding, starring, message info, and local deletion.
+Long-press a message (or right-click in a desktop preview) to keep it visible
+between a floating reaction picker and action menu. The menu fits above an open
+keyboard; long selections and action lists scroll independently. Selecting the
+same reaction removes it. Tap a reaction badge to view/remove it, or use **+**
+in the picker for more emoji. Badges sit against the bubble's lower edge and
+reserve space below its text. Swipe right to reply; quotes show the sender.
+Quick replies, AI assist, templates, and product sharing remain under **Attach**.
+The main tabs put search directly below the header. New messages use a short
+140 ms transition in place; reduced motion shows them immediately. Reactions
+and swipe return transitions also respect reduced motion.
 
 Search, filters, draft replies, customer notes, tags, assignments, and some
 forms update in-memory preview state. State resets when the app restarts.
@@ -104,7 +118,8 @@ Firebase initialization, or Laravel integration is performed.
 
 `lib/ui/` contains the theme, fixtures, shared controls, and screens.
 `lib/ui/platform.dart` provides platform-aware controls; `theme.dart` contains
-the two visual configurations and shared screen layouts.
+the two visual configurations and shared screen layouts. `chat_message.dart`
+contains message bubbles, receipt layout, reactions, and the anchored menu.
 `lib/app/app.dart` holds the routes. The UI tests cover all review routes on both appearances, compact/tablet
 layouts, larger text, input and filter state, validation, tabs, pickers, sheets,
 confirmation dialogs, and key preview journeys.
@@ -129,9 +144,15 @@ authentication/API contract, followed by the first app flow.
 
 ## Verified on this Linux checkout
 
-Formatting, static analysis, all twenty-four UI tests, and both Android debug
-and optimized internal-review APK builds passed with Flutter 3.47.8 and Dart 3.13.7. The build installed
-Android SDK platforms 34 and 35 required by dependencies.
+The Forge setup passed formatting, static analysis, all twenty-four original UI
+tests, and an Android debug APK build with Flutter 3.47.8 and Dart 3.13.7.
+The chat refinement passed all thirty UI tests, static analysis, and an optimized
+internal-review APK build on the Forge server. The six new tests cover compact sizing, receipt/text
+separation at increased text scales, grouping, joined emoji, reactions, and
+keyboard-open message menus on both platforms. Review images are generated in
+`build/ui-previews/chat-behavior/`; validation/build logs are in
+`build/chat-refinement/`. The SDK includes Android platforms 34, 35 and 36,
+build tools 36.0.0, NDK 28.2.13676358, and CMake 3.22.1.
 
 The current Firebase plugin emits a Kotlin Gradle Plugin migration warning
 about future Flutter versions. The pinned setup builds successfully; review

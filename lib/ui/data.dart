@@ -58,11 +58,13 @@ class Message {
     this.time = '10:24',
     this.type = 'text',
     this.reply,
+    this.replyAuthor,
     this.reaction = '',
+    this.read = true,
   });
   final String text, time, type, reaction;
-  final String? reply;
-  final bool out;
+  final String? reply, replyAuthor;
+  final bool out, read;
 }
 
 class TicketItem {
@@ -376,8 +378,18 @@ class PreviewController extends Notifier<UiState> {
       updatePerson(id, (p) => p.copy(notes: [...p.notes, note]));
   void tags(String id, List<String> tags) =>
       updatePerson(id, (p) => p.copy(tags: tags));
-  void send(String id, String text, {String type = 'text', String? reply}) {
+  void send(
+    String id,
+    String text, {
+    String type = 'text',
+    String? reply,
+    String? replyAuthor,
+  }) {
     if (text.trim().isEmpty) return;
+    final now = DateTime.now();
+    final time =
+        '${now.hour.toString().padLeft(2, '0')}:'
+        '${now.minute.toString().padLeft(2, '0')}';
     state = state.copy(
       messages: {
         ...state.messages,
@@ -386,9 +398,11 @@ class PreviewController extends Notifier<UiState> {
           Message(
             text.trim(),
             out: true,
-            time: 'Now',
+            time: time,
             type: type,
             reply: reply,
+            replyAuthor: replyAuthor,
+            read: false,
           ),
         ],
       },

@@ -6,6 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'data.dart';
+import 'chat_message.dart';
+
+export 'chat_message.dart' show MessageBubble, ProductArt, VoiceWave;
 import 'theme.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
@@ -26,6 +29,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final deleted = <int>{};
   final entering = <int>{};
   String? reply;
+  String? replyAuthor;
+  int? activeMessage;
 
   @override
   void dispose() {
@@ -101,11 +106,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           AppIconButton(
             tooltip: 'Voice call',
             onPressed: () => context.push('/call/${p.id}'),
-            icon: const AppIcon(
-              Icons.call_outlined,
-              size: 21,
-              color: Colors.white,
-            ),
+            icon: const AppIcon(Icons.call_outlined, size: 21, color: T.green),
           ),
           AppMenuButton<String>(
             tooltip: 'Conversation options',
@@ -192,7 +193,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   reverse: true,
                   keyboardDismissBehavior:
                       ScrollViewKeyboardDismissBehavior.onDrag,
-                  padding: const EdgeInsets.fromLTRB(10, 12, 10, 8),
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
                   itemCount: indices.length + 1,
                   findChildIndexCallback: (key) {
                     if (key is! ValueKey<String> ||
@@ -215,86 +216,64 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     final m = messages[i];
                     final first =
                         visible == 0 ||
-                        messages[indices[visible - 1]].out != m.out;
+                        _startsGroup(messages[indices[visible - 1]], m);
                     final reaction = reactions[i] ?? m.reaction;
                     return MessageEntry(
                       key: ValueKey('message-$i'),
                       animate: entering.contains(i),
                       onEnd: () => entering.remove(i),
                       child: Padding(
-                        padding: EdgeInsets.only(
-                          top: first ? 10 : 5,
-                          bottom: 1,
-                        ),
-                        child: SwipeReply(
-                          onReply: () => _reply(m),
-                          child: Align(
-                            alignment: m.out
-                                ? Alignment.centerRight
-                                : Alignment.centerLeft,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: m.out
-                                  ? CrossAxisAlignment.end
-                                  : CrossAxisAlignment.start,
-                              children: [
-                                GestureDetector(
-                                  onLongPress: () => _messageActions(m, i),
-                                  child: MessageBubble(
-                                    key: bubbleKeys.putIfAbsent(
-                                      i,
-                                      () => GlobalKey(),
-                                    ),
-                                    message: m,
-                                    first: first,
-                                    starred: starred.contains(i),
-                                    maxWidth: math.min(
-                                      MediaQuery.sizeOf(context).width * .84,
-                                      520,
-                                    ),
-                                    onMenu: () => _messageActions(m, i),
-                                  ),
-                                ),
-                                if (reaction.isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(
-                                      top: 3,
-                                      left: 8,
-                                      right: 8,
-                                      bottom: 1,
-                                    ),
-                                    child: InkWell(
-                                      key: ValueKey('message-reaction-$i'),
-                                      onTap: () => _messageActions(m, i),
-                                      borderRadius: BorderRadius.circular(20),
-                                      child: AnimatedSwitcher(
-                                        duration: const Duration(
-                                          milliseconds: 120,
-                                        ),
-                                        child: Container(
-                                          key: ValueKey(reaction),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 7,
-                                            vertical: 2,
+                        padding: EdgeInsets.only(top: first ? 8 : 2),
+                        child: Align(
+                          alignment: m.out
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
+                          child: SwipeReply(
+                            onReply: () => _reply(m),
+                            child: Opacity(
+                              opacity: activeMessage == i ? 0 : 1,
+                              child: ExcludeSemantics(
+                                excluding: activeMessage == i,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: m.out
+                                      ? CrossAxisAlignment.end
+                                      : CrossAxisAlignment.start,
+                                  children: [
+                                    Semantics(
+                                      onLongPress: () =>
+                                          _messageActions(m, i, first: first),
+                                      child: GestureDetector(
+                                        excludeFromSemantics: true,
+                                        onLongPress: () =>
+                                            _messageActions(m, i, first: first),
+                                        onSecondaryTap: () =>
+                                            _messageActions(m, i, first: first),
+                                        child: MessageBubble(
+                                          key: bubbleKeys.putIfAbsent(
+                                            i,
+                                            () => GlobalKey(),
                                           ),
-                                          decoration: BoxDecoration(
-                                            color: T.wash,
-                                            border: Border.all(color: T.edge),
-                                            borderRadius: BorderRadius.circular(
-                                              16,
-                                            ),
-                                          ),
-                                          child: Text(
-                                            reaction,
-                                            style: const TextStyle(
-                                              fontSize: 13,
-                                            ),
+                                          message: m,
+                                          first: first,
+                                          starred: starred.contains(i),
+                                          maxWidth: math.min(
+                                            MediaQuery.sizeOf(context).width *
+                                                .82,
+                                            480,
                                           ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                              ],
+                                    MessageReaction(
+                                      emoji: reaction,
+                                      index: i,
+                                      out: m.out,
+                                      onTap: () => _reactionDetails(m, i),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -319,9 +298,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Replying to message',
-                              style: TextStyle(
+                            Text(
+                              replyAuthor ?? 'Replying to message',
+                              style: const TextStyle(
                                 fontSize: 10,
                                 color: T.green,
                                 fontWeight: FontWeight.w600,
@@ -466,192 +445,101 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   void _reply(Message m) {
     HapticFeedback.selectionClick();
-    setState(() => reply = m.text);
+    setState(() {
+      reply = m.text;
+      replyAuthor = m.out
+          ? 'You'
+          : person(ref.read(previewProvider), widget.id).name;
+    });
     focus.requestFocus();
   }
 
   void _send() {
     final text = composer.text.trim();
     if (text.isEmpty) return;
-    _sendText(text, quoted: reply);
+    _sendText(text, quoted: reply, quotedAuthor: replyAuthor);
     setState(() {
       composer.clear();
       reply = null;
+      replyAuthor = null;
     });
   }
 
-  void _sendText(String text, {String type = 'text', String? quoted}) {
+  void _sendText(
+    String text, {
+    String type = 'text',
+    String? quoted,
+    String? quotedAuthor,
+  }) {
     final index = (ref.read(previewProvider).messages[widget.id] ?? []).length;
     if (!MediaQuery.disableAnimationsOf(context)) entering.add(index);
     ref
         .read(previewProvider.notifier)
-        .send(widget.id, text, type: type, reply: quoted);
+        .send(
+          widget.id,
+          text,
+          type: type,
+          reply: quoted,
+          replyAuthor: quotedAuthor,
+        );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && scroll.hasClients) scroll.jumpTo(0);
     });
   }
 
-  Future<void> _messageActions(Message m, int i) async {
-    focus.unfocus();
+  bool _startsGroup(Message previous, Message current) {
+    if (previous.out != current.out) return true;
+    int? minutes(String time) {
+      final parts = time.split(':');
+      if (parts.length != 2) return null;
+      final hour = int.tryParse(parts[0]), minute = int.tryParse(parts[1]);
+      return hour == null || minute == null ? null : hour * 60 + minute;
+    }
+
+    final before = minutes(previous.time), after = minutes(current.time);
+    return before != null &&
+        after != null &&
+        (after < before || after - before > 5);
+  }
+
+  Future<void> _messageActions(Message m, int i, {bool first = false}) async {
+    if (activeMessage != null) return;
     final anchor = _rect(bubbleKeys[i]);
-    final selected = await showGeneralDialog<String>(
+    focus.unfocus();
+    HapticFeedback.selectionClick();
+    setState(() => activeMessage = i);
+    final selected = await showMessageActions(
       context: context,
-      barrierDismissible: true,
-      barrierLabel: 'Dismiss message actions',
-      barrierColor: Colors.black.withValues(alpha: .12),
-      transitionDuration: const Duration(milliseconds: 160),
-      transitionBuilder: (_, a, _, child) =>
-          FadeTransition(opacity: a, child: child),
-      pageBuilder: (dialogContext, _, _) => SafeArea(
-        child: LayoutBuilder(
-          builder: (context, size) {
-            final top =
-                ((anchor?.top ?? size.maxHeight / 3) -
-                        MediaQuery.paddingOf(context).top -
-                        52)
-                    .clamp(12.0, math.max(12.0, size.maxHeight - 410))
-                    .toDouble();
-            return Stack(
-              children: [
-                Positioned(
-                  top: top,
-                  right: m.out ? 12 : null,
-                  left: m.out ? null : 12,
-                  width: math.min(270, size.maxWidth - 24),
-                  child: Material(
-                    color: T.wash,
-                    elevation: 3,
-                    shadowColor: T.ink.withValues(alpha: .15),
-                    borderRadius: BorderRadius.circular(20),
-                    clipBehavior: Clip.antiAlias,
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxHeight: math.max(100, size.maxHeight - top - 12),
-                      ),
-                      child: SingleChildScrollView(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 5,
-                                vertical: 8,
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
-                                children: [
-                                  for (final emoji in [
-                                    '👍',
-                                    '🤍',
-                                    '😊',
-                                    '🙏',
-                                    '✨',
-                                  ])
-                                    Expanded(
-                                      child: InkWell(
-                                        onTap: () => Navigator.pop(
-                                          dialogContext,
-                                          'emoji:$emoji',
-                                        ),
-                                        borderRadius: BorderRadius.circular(24),
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 8,
-                                          ),
-                                          child: Center(
-                                            child: Text(
-                                              emoji,
-                                              style: const TextStyle(
-                                                fontSize: 23,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            const Divider(height: 1),
-                            for (final (value, label, icon) in [
-                              ('reply', 'Reply', Icons.reply_rounded),
-                              ('copy', 'Copy', Icons.content_copy_rounded),
-                              ('forward', 'Forward', Icons.forward_rounded),
-                              (
-                                'star',
-                                starred.contains(i) ? 'Unstar' : 'Star',
-                                Icons.star_border_rounded,
-                              ),
-                              if ((reactions[i] ?? m.reaction).isNotEmpty)
-                                (
-                                  'remove-reaction',
-                                  'Remove reaction',
-                                  Icons.emoji_emotions_outlined,
-                                ),
-                              (
-                                'info',
-                                'Message info',
-                                Icons.info_outline_rounded,
-                              ),
-                              (
-                                'delete',
-                                'Delete for me',
-                                Icons.delete_outline_rounded,
-                              ),
-                            ])
-                              InkWell(
-                                onTap: () =>
-                                    Navigator.pop(dialogContext, value),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 18,
-                                    vertical: 10,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          label,
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            color: value == 'delete'
-                                                ? T.danger
-                                                : T.ink,
-                                          ),
-                                        ),
-                                      ),
-                                      AppIcon(
-                                        icon,
-                                        size: 19,
-                                        color: value == 'delete'
-                                            ? T.danger
-                                            : T.secondary,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            const SizedBox(height: 5),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
+      message: m,
+      anchor: anchor,
+      first: first,
+      starred: starred.contains(i),
+      reaction: reactions[i] ?? m.reaction,
+      actions: [
+        ('reply', 'Reply', Icons.reply_rounded),
+        ('copy', 'Copy', Icons.content_copy_rounded),
+        ('forward', 'Forward', Icons.forward_rounded),
+        (
+          'star',
+          starred.contains(i) ? 'Unstar' : 'Star',
+          Icons.star_border_rounded,
         ),
-      ),
+        if ((reactions[i] ?? m.reaction).isNotEmpty)
+          ('remove-reaction', 'Remove reaction', Icons.emoji_emotions_outlined),
+        ('info', 'Message info', Icons.info_outline_rounded),
+        ('delete', 'Delete for me', Icons.delete_outline_rounded),
+      ],
     );
+    if (!mounted) return;
+    setState(() => activeMessage = null);
     if (!mounted || selected == null) return;
     if (selected.startsWith('emoji:')) {
-      HapticFeedback.selectionClick();
-      setState(() => reactions[i] = selected.substring(6));
+      _setReaction(m, i, selected.substring(6));
       return;
     }
     switch (selected) {
+      case 'more-reactions':
+        _moreReactions(m, i);
       case 'reply':
         _reply(m);
       case 'copy':
@@ -696,6 +584,95 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         }
     }
   }
+
+  void _setReaction(Message m, int i, String emoji) {
+    HapticFeedback.selectionClick();
+    setState(
+      () => reactions[i] = (reactions[i] ?? m.reaction) == emoji ? '' : emoji,
+    );
+  }
+
+  void _reactionDetails(Message m, int i) => sheet(
+    context,
+    Builder(
+      builder: (popup) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Reactions', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 14),
+          AppListTile(
+            leading: const Avatar('You', size: 38),
+            title: const Text('You'),
+            subtitle: const Text('Tap to remove'),
+            trailing: Text(
+              reactions[i] ?? m.reaction,
+              style: const TextStyle(fontSize: 24),
+            ),
+            onTap: () {
+              setState(() => reactions[i] = '');
+              Navigator.pop(popup);
+            },
+          ),
+        ],
+      ),
+    ),
+  );
+
+  void _moreReactions(Message m, int i) => sheet(
+    context,
+    Builder(
+      builder: (popup) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'React to message',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final emoji in [
+                '👍',
+                '🤍',
+                '😊',
+                '😂',
+                '😮',
+                '😢',
+                '🙏',
+                '❤️',
+                '🎉',
+                '✨',
+                '🙌',
+                '👋',
+                '🥰',
+                '🔥',
+                '✅',
+                '💯',
+                '👏',
+                '😎',
+              ])
+                AppIconButton(
+                  tooltip: 'React with $emoji',
+                  onPressed: () {
+                    _setReaction(m, i, emoji);
+                    Navigator.pop(popup);
+                  },
+                  icon: Text(
+                    emoji,
+                    textScaler: TextScaler.noScaling,
+                    style: const TextStyle(fontSize: 26),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
 
   void _forward(Message m) => sheet(
     context,
@@ -925,284 +902,6 @@ class _DayLabel extends StatelessWidget {
   );
 }
 
-class MessageBubble extends StatelessWidget {
-  const MessageBubble({
-    super.key,
-    required this.message,
-    this.first = false,
-    this.starred = false,
-    this.maxWidth = 320,
-    this.onMenu,
-  });
-  final Message message;
-  final bool first, starred;
-  final double maxWidth;
-  final VoidCallback? onMenu;
-  @override
-  Widget build(BuildContext context) {
-    final m = message;
-    final color = m.out ? T.outgoing : Colors.white;
-    return CustomPaint(
-      painter: first ? _BubbleTail(m.out, color) : null,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: maxWidth),
-        padding: EdgeInsets.fromLTRB(
-          m.type == 'image' || m.type == 'order' ? 5 : 11,
-          9,
-          9,
-          7,
-        ),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(first && !m.out ? 3 : 10),
-            topRight: Radius.circular(first && m.out ? 3 : 10),
-            bottomLeft: const Radius.circular(10),
-            bottomRight: const Radius.circular(10),
-          ),
-          border: Border.all(
-            color: m.out
-                ? T.green.withValues(alpha: .18)
-                : T.control.withValues(alpha: .65),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: T.ink.withValues(alpha: .08),
-              offset: const Offset(0, 2),
-              blurRadius: 5,
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (m.reply != null)
-              Container(
-                margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-                decoration: BoxDecoration(
-                  color: T.green.withValues(alpha: .07),
-                  border: const Border(
-                    left: BorderSide(color: T.green, width: 3),
-                  ),
-                  borderRadius: BorderRadius.circular(5),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Reply',
-                      style: TextStyle(
-                        color: T.green,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      m.reply!,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12, color: T.secondary),
-                    ),
-                  ],
-                ),
-              ),
-            if (m.type == 'image' || m.type == 'order') ...[
-              SizedBox(
-                width: maxWidth - 12,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: const SizedBox(
-                    height: 122,
-                    child: ProductArt(icon: Icons.shopping_bag_outlined),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 6),
-            ],
-            if (m.type == 'document')
-              Container(
-                padding: const EdgeInsets.all(9),
-                margin: const EdgeInsets.only(bottom: 4),
-                decoration: BoxDecoration(
-                  color: T.green.withValues(alpha: .06),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const AppIcon(
-                      Icons.description_outlined,
-                      color: T.brass,
-                      size: 28,
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            m.text,
-                            style: const TextStyle(fontSize: 12),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const Text(
-                            'PDF · 248 KB',
-                            style: TextStyle(fontSize: 9, color: T.muted),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    const AppIcon(
-                      Icons.download_rounded,
-                      size: 20,
-                      color: T.brass,
-                    ),
-                  ],
-                ),
-              ),
-            if (m.type == 'audio')
-              SizedBox(
-                width: maxWidth - 18,
-                child: Row(
-                  children: [
-                    const AppIcon(
-                      Icons.play_arrow_rounded,
-                      color: T.green,
-                      size: 30,
-                    ),
-                    const SizedBox(width: 4),
-                    const Expanded(
-                      child: SizedBox(height: 32, child: VoiceWave()),
-                    ),
-                    const SizedBox(width: 8),
-                    Text('0:12', style: mono(size: 9)),
-                  ],
-                ),
-              ),
-            if (m.type == 'location')
-              Container(
-                height: 88,
-                width: maxWidth - 18,
-                margin: const EdgeInsets.only(bottom: 6),
-                decoration: BoxDecoration(
-                  color: T.selected,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Center(
-                  child: AppIcon(Icons.location_on, color: T.green, size: 32),
-                ),
-              ),
-            Stack(
-              children: [
-                if (m.type != 'document' && m.type != 'audio')
-                  Padding(
-                    padding: const EdgeInsets.only(right: 1),
-                    child: Text.rich(
-                      TextSpan(
-                        text: m.text,
-                        children: [
-                          WidgetSpan(
-                            child: SizedBox(
-                              width: starred ? 97 : 83,
-                              height: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                      textWidthBasis: TextWidthBasis.longestLine,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        height: 1.35,
-                        color: T.ink,
-                      ),
-                    ),
-                  )
-                else
-                  SizedBox(width: maxWidth - 18, height: 17),
-                Positioned(
-                  right: 0,
-                  bottom: -2,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (starred)
-                        const Padding(
-                          padding: EdgeInsets.only(right: 3),
-                          child: AppIcon(
-                            Icons.star_rounded,
-                            size: 10,
-                            color: T.brass,
-                          ),
-                        ),
-                      Text(
-                        m.time == 'Now' ? 'now' : m.time,
-                        style: mono(size: 8, color: T.muted),
-                      ),
-                      if (m.out)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 3),
-                          child: AppIcon(
-                            m.time == 'Now' ? Icons.check : Icons.done_all,
-                            size: 13,
-                            color: m.time == 'Now' ? T.muted : T.blue,
-                          ),
-                        ),
-                      if (onMenu != null)
-                        SizedBox(
-                          width: 25,
-                          height: 23,
-                          child: AppIconButton(
-                            tooltip: 'Message options',
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            onPressed: onMenu,
-                            icon: const AppIcon(
-                              Icons.keyboard_arrow_down_rounded,
-                              size: 16,
-                              color: T.muted,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _BubbleTail extends CustomPainter {
-  _BubbleTail(this.out, this.color);
-  final bool out;
-  final Color color;
-  @override
-  void paint(Canvas canvas, Size size) {
-    final x = out ? size.width - 2 : 2.0;
-    final direction = out ? 1.0 : -1.0;
-    canvas.drawPath(
-      Path()
-        ..moveTo(x, 0)
-        ..lineTo(x + 7 * direction, 0)
-        ..quadraticBezierTo(x + 8 * direction, 0, x + 5 * direction, 4)
-        ..lineTo(x, 10)
-        ..close(),
-      Paint()..color = color,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _BubbleTail old) =>
-      old.out != out || old.color != color;
-}
-
 class SwipeReply extends StatefulWidget {
   const SwipeReply({super.key, required this.child, required this.onReply});
   final Widget child;
@@ -1218,7 +917,7 @@ class _SwipeReplyState extends State<SwipeReply> {
   Widget build(BuildContext context) => GestureDetector(
     onHorizontalDragStart: (_) => setState(() => dragging = true),
     onHorizontalDragUpdate: (d) =>
-        setState(() => distance = (distance + d.delta.dx).clamp(0, 64)),
+        setState(() => distance = (distance + d.delta.dx * .8).clamp(0, 60)),
     onHorizontalDragEnd: (_) {
       if (distance >= 38) widget.onReply();
       setState(() {
@@ -1236,13 +935,27 @@ class _SwipeReplyState extends State<SwipeReply> {
         if (distance > 8)
           Opacity(
             opacity: (distance / 48).clamp(0, 1),
-            child: const Padding(
-              padding: EdgeInsets.only(left: 12),
-              child: AppIcon(Icons.reply_rounded, color: T.green, size: 22),
+            child: Container(
+              width: 30,
+              height: 30,
+              margin: const EdgeInsets.only(left: 4),
+              decoration: BoxDecoration(
+                color: distance >= 38 ? T.selected : T.wash,
+                shape: BoxShape.circle,
+              ),
+              child: const AppIcon(
+                Icons.reply_rounded,
+                color: T.green,
+                size: 18,
+              ),
             ),
           ),
         AnimatedContainer(
-          duration: Duration(milliseconds: dragging ? 0 : 180),
+          duration: Duration(
+            milliseconds: dragging || MediaQuery.disableAnimationsOf(context)
+                ? 0
+                : 140,
+          ),
           curve: Curves.easeOutCubic,
           transform: Matrix4.translationValues(distance, 0, 0),
           child: widget.child,
@@ -1358,54 +1071,6 @@ class ChatWallpaper extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant ChatWallpaper oldDelegate) => false;
-}
-
-class VoiceWave extends StatelessWidget {
-  const VoiceWave({super.key});
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, size) => Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: [
-        for (var i = 0; i < (size.maxWidth / 7).floor().clamp(5, 45); i++)
-          Container(
-            width: 3,
-            height: (8 + (i * 17 % 27)).toDouble(),
-            decoration: BoxDecoration(
-              color: i < 7 ? T.green : T.brass.withValues(alpha: .4),
-              borderRadius: BorderRadius.circular(5),
-            ),
-          ),
-      ],
-    ),
-  );
-}
-
-class ProductArt extends StatelessWidget {
-  const ProductArt({
-    super.key,
-    required this.icon,
-    this.color = T.paper,
-    this.small = false,
-  });
-  final IconData icon;
-  final Color color;
-  final bool small;
-  @override
-  Widget build(BuildContext context) => Container(
-    height: small ? 52 : 160,
-    width: small ? 52 : double.infinity,
-    decoration: BoxDecoration(
-      color: color,
-      borderRadius: BorderRadius.circular(small ? 9 : 14),
-    ),
-    alignment: Alignment.center,
-    child: AppIcon(
-      icon,
-      size: small ? 30 : 76,
-      color: T.brass.withValues(alpha: .8),
-    ),
-  );
 }
 
 class CustomerPage extends ConsumerWidget {

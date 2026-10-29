@@ -1,5 +1,18 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <group android:scaleX="1" android:scaleY="1" android:translateX="4" android:translateY="4">
-        <path android:strokeColor="#1E7A4F" android:strokeWidth="12" android:strokeLineCap="round" android:fillColor="@android:color/transparent" android:pathData="M50,26 L50,58 Q50,70 63,70 M33,39 L67,39" />
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Same mark as assets/brand/telvox-chat-mark.svg, centered in the 72dp face.
+         The complete silhouette remains inside the adaptive icon's safe zone. -->
+    <group android:scaleX="0.103359375" android:scaleY="0.103359375"
+        android:translateX="1.08" android:translateY="3.35390625">
+        <path android:fillColor="@android:color/transparent"
+            android:strokeColor="#F4F7F3" android:strokeWidth="52"
+            android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M359 283 H664 C700 283 730 313 730 349 V543 C730 580 700 610 664 610 H468 L359 697 V610 C323 610 293 580 293 543 V349 C293 313 323 283 359 283 Z"/>
+        <path android:fillColor="@android:color/transparent"
+            android:strokeColor="#F4F7F3" android:strokeWidth="52"
+            android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M403 453 L446 495 L515 419 M477 476 L518 517 L596 432"/>
     </group>
 </vector>

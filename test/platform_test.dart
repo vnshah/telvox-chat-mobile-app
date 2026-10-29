@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:telvox_chat_mobile_app/app/app.dart';
 import 'package:telvox_chat_mobile_app/ui/data.dart';
+import 'package:telvox_chat_mobile_app/ui/conversation.dart';
 import 'package:telvox_chat_mobile_app/ui/management.dart';
 import 'package:telvox_chat_mobile_app/ui/preview.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
@@ -213,7 +214,7 @@ void main() {
       expect(find.text('/hours'), findsOneWidget);
       router.go('/chat/ananya');
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Message options').first);
+      await tester.longPress(find.byType(MessageBubble).first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Delete for me'));
       await tester.pumpAndSettle();

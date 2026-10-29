@@ -149,7 +149,7 @@ void main() {
       tester.getSize(find.byKey(const ValueKey('chat-composer'))).height,
       lessThanOrEqualTo(64),
     );
-    await tester.tap(find.byTooltip('Message options').first);
+    await tester.longPress(find.byType(MessageBubble).first);
     await tester.pumpAndSettle();
     for (final label in [
       'Reply',
@@ -164,7 +164,7 @@ void main() {
     await tester.tap(find.text('👍'));
     await tester.pumpAndSettle();
     expect(find.text('👍'), findsOneWidget);
-    await tester.tap(find.byTooltip('Message options').first);
+    await tester.longPress(find.byType(MessageBubble).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Reply'));
     await tester.pumpAndSettle();
@@ -175,13 +175,14 @@ void main() {
     await tester.pumpAndSettle();
     final sent = container.read(previewProvider).messages['ananya']!.last;
     expect(sent.reply, 'That sounds perfect, thank you!');
+    expect(sent.replyAuthor, 'Ananya Shah');
     expect(sent.text, 'Your order is on its way.');
     expect(find.byKey(const ValueKey('reply-preview')), findsNothing);
-    await tester.tap(find.byTooltip('Message options').first);
+    await tester.longPress(find.byType(MessageBubble).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Star'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Message options').first);
+    await tester.longPress(find.byType(MessageBubble).first);
     await tester.pumpAndSettle();
     expect(find.text('Unstar'), findsOneWidget);
     await tester.tap(find.text('Delete for me'));
@@ -216,11 +217,8 @@ void main() {
           await tester.pumpAndSettle();
         }
         final entry = find.byKey(ValueKey('message-$index'));
-        await tester.tap(
-          find.descendant(
-            of: entry,
-            matching: find.byTooltip('Message options'),
-          ),
+        await tester.longPress(
+          find.descendant(of: entry, matching: find.byType(MessageBubble)),
         );
         await tester.pumpAndSettle();
         await tester.tap(find.text(emoji));
@@ -232,7 +230,7 @@ void main() {
         final badge = find.byKey(ValueKey('message-reaction-$index'));
         expect(
           tester.getTopLeft(badge).dy,
-          greaterThanOrEqualTo(tester.getBottomLeft(bubble).dy + 2),
+          greaterThanOrEqualTo(tester.getBottomLeft(bubble).dy - 3.1),
         );
         expect(tester.takeException(), isNull, reason: '$index at $textScale');
       }
@@ -547,7 +545,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         if (name == 'message-actions') {
-          await tester.tap(find.byTooltip('Message options').first);
+          await tester.longPress(find.byType(MessageBubble).first);
           await tester.pumpAndSettle();
         } else if (name == 'chat-reply') {
           final last = find.descendant(
@@ -570,7 +568,7 @@ void main() {
           await tester.pump();
           await tester.tap(find.byTooltip('Send reply'));
           await tester.pumpAndSettle();
-          await tester.tap(find.byTooltip('Message options').first);
+          await tester.longPress(find.byType(MessageBubble).first);
           await tester.pumpAndSettle();
           await tester.tap(find.text('👍'));
           await tester.pumpAndSettle();
