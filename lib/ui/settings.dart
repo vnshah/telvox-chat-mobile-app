@@ -9,17 +9,10 @@ class MorePage extends ConsumerWidget {
   const MorePage({super.key});
   @override
   Widget build(BuildContext context, WidgetRef ref) => SingleChildScrollView(
-    padding: const EdgeInsets.fromLTRB(20, 22, 20, 30),
+    padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Your workspace', style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 6),
-        const Text(
-          'The tools behind thoughtful conversations.',
-          style: TextStyle(color: T.muted, fontSize: 12),
-        ),
-        const SizedBox(height: 24),
         Panel(
           color: T.firm,
           child: Column(
@@ -47,12 +40,18 @@ class MorePage extends ConsumerWidget {
                 onTap: () => context.push('/reports'),
                 child: const Row(
                   children: [
-                    Text(
-                      'A closer look at your day',
-                      style: TextStyle(fontSize: 12, color: T.paper),
+                    Expanded(
+                      child: Text(
+                        'A closer look at your day',
+                        style: TextStyle(fontSize: 12, color: T.paper),
+                      ),
                     ),
-                    Spacer(),
-                    Icon(Icons.arrow_forward_rounded, size: 18, color: T.paper),
+                    SizedBox(width: 10),
+                    AppIcon(
+                      Icons.arrow_forward_rounded,
+                      size: 18,
+                      color: T.paper,
+                    ),
                   ],
                 ),
               ),
@@ -124,11 +123,14 @@ class MorePage extends ConsumerWidget {
         const SizedBox(height: 20),
         const Divider(),
         const SizedBox(height: 16),
-        Row(
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
           children: [
             const Pill('Preview workspace', color: T.brass, fill: T.wash),
-            const Spacer(),
-            TextButton(
+            AppButton.text(
               onPressed: () => context.push('/preview'),
               child: const Text(
                 'View screens',
@@ -190,7 +192,7 @@ class SettingsPage extends StatelessWidget {
                     ],
                   ),
                 ),
-                const Icon(Icons.chevron_right, color: T.brass),
+                const AppIcon(Icons.chevron_right, color: T.brass),
               ],
             ),
           ),
@@ -273,7 +275,7 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   Widget build(BuildContext context) => PageFrame(
     title: 'Your profile',
-    bottom: FilledButton(
+    bottom: AppButton.filled(
       onPressed: () {
         if (!form.currentState!.validate()) return;
         notice(context, 'Profile saved in preview.');
@@ -289,7 +291,7 @@ class _ProfilePageState extends State<ProfilePage> {
           Center(child: Avatar(name.isEmpty ? 'Your profile' : name, size: 86)),
           const SizedBox(height: 10),
           Center(
-            child: TextButton(
+            child: AppButton.text(
               onPressed: () => sheet(
                 context,
                 Column(
@@ -312,7 +314,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       ],
                     ),
                     const SizedBox(height: 20),
-                    TextButton(
+                    AppButton.text(
                       onPressed: () => Navigator.pop(context),
                       child: const Text('Done'),
                     ),
@@ -360,7 +362,7 @@ class NotificationsPage extends ConsumerWidget {
     return PageFrame(
       title: 'Notifications',
       actions: [
-        TextButton(
+        AppButton.text(
           onPressed: () =>
               ref.read(previewProvider.notifier).notificationsRead(),
           child: const Text('Mark all read', style: TextStyle(fontSize: 12)),
@@ -416,7 +418,7 @@ class NotificationsPage extends ConsumerWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(icon, size: 21, color: T.brass),
+                    AppIcon(icon, size: 21, color: T.brass),
                     const SizedBox(width: 13),
                     Expanded(
                       child: Column(
@@ -444,13 +446,13 @@ class NotificationsPage extends ConsumerWidget {
                       ),
                     ),
                     if (!read)
-                      const Icon(Icons.circle, size: 6, color: T.green),
+                      const AppIcon(Icons.circle, size: 6, color: T.green),
                   ],
                 ),
               ),
             ),
           const SizedBox(height: 16),
-          TextButton(
+          AppButton.text(
             onPressed: () => context.push('/notifications/permission'),
             child: const Text('Notification permissions'),
           ),
@@ -494,7 +496,7 @@ class PreferencePage extends ConsumerWidget {
         children: [
           const Section('Your preferences'),
           for (final item in definitions)
-            SwitchListTile(
+            AppSwitchTile(
               contentPadding: const EdgeInsets.symmetric(vertical: 8),
               title: Text(
                 item.$1,
@@ -553,7 +555,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
   @override
   Widget build(BuildContext context) => PageFrame(
     title: 'Business profile',
-    bottom: FilledButton(
+    bottom: AppButton.filled(
       onPressed: () {
         if (form.currentState!.validate()) {
           notice(context, 'Business profile saved in preview.');
@@ -615,7 +617,7 @@ class SecurityPage extends StatelessWidget {
           color: T.selected,
           child: Row(
             children: [
-              Icon(Icons.verified_user_outlined, color: T.green, size: 26),
+              AppIcon(Icons.verified_user_outlined, color: T.green, size: 26),
               SizedBox(width: 14),
               Expanded(
                 child: Text(
@@ -655,7 +657,7 @@ class SecurityPage extends StatelessWidget {
             children: [
               const InfoLine('Web browser', 'Chrome · macOS'),
               const InfoLine('Last active', 'Today · 09:15'),
-              TextButton(
+              AppButton.text(
                 onPressed: () async {
                   if (await confirm(
                         context,
@@ -694,7 +696,7 @@ class PermissionPage extends StatelessWidget {
             color: T.selected,
             shape: BoxShape.circle,
           ),
-          child: const Icon(
+          child: const AppIcon(
             Icons.notifications_active_outlined,
             size: 48,
             color: T.green,
@@ -713,14 +715,14 @@ class PermissionPage extends StatelessWidget {
           style: TextStyle(color: T.muted, height: 1.7),
         ),
         const SizedBox(height: 34),
-        FilledButton(
+        AppButton.filled(
           onPressed: () => notice(
             context,
             'Permission request preview. No device setting has changed.',
           ),
           child: const Text('Enable notifications'),
         ),
-        TextButton(
+        AppButton.text(
           onPressed: () => context.pop(),
           child: const Text('Maybe later'),
         ),

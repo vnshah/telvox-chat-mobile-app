@@ -20,13 +20,10 @@ class _AuthPageState extends State<AuthPage> {
   Widget build(BuildContext context) {
     final mode = widget.mode;
     final login = mode == 'login';
-    final register = mode == 'register';
     final verify = mode == 'verify';
     final reset = mode == 'reset';
     final title = login
         ? 'Welcome back.'
-        : register
-        ? 'Make room for better\nconversations.'
         : verify
         ? 'Check your inbox.'
         : reset
@@ -45,12 +42,20 @@ class _AuthPageState extends State<AuthPage> {
                 children: [
                   Row(
                     children: [
-                      const Brand(),
-                      const Spacer(),
+                      const Expanded(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Brand(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
                       const Pill('Preview', fill: T.wash, color: T.brass),
                     ],
                   ),
-                  const SizedBox(height: 56),
+                  const SizedBox(height: 36),
                   const Eyebrow('Good conversations start here'),
                   const SizedBox(height: 14),
                   Text(title, style: Theme.of(context).textTheme.headlineLarge),
@@ -58,8 +63,6 @@ class _AuthPageState extends State<AuthPage> {
                   Text(
                     login
                         ? 'Your customers, your team, one thoughtful workspace.'
-                        : register
-                        ? 'Create a workspace for your business and bring your team together.'
                         : verify
                         ? 'Enter the six-digit code sent to renav@studionorth.co.'
                         : reset
@@ -74,20 +77,8 @@ class _AuthPageState extends State<AuthPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          if (register) ...[
-                            const LabeledField(
-                              'Your name',
-                              hint: 'Full name',
-                              required: true,
-                            ),
-                            const LabeledField(
-                              'Business name',
-                              hint: 'Your business',
-                              required: true,
-                            ),
-                          ],
                           if (!verify && !reset)
-                            TextFormField(
+                            AppTextFormField(
                               initialValue: login
                                   ? 'renav@studionorth.co'
                                   : null,
@@ -104,8 +95,8 @@ class _AuthPageState extends State<AuthPage> {
                                   : 'Enter a valid email address',
                             ),
                           if (!verify && !reset) const SizedBox(height: 20),
-                          if (login || register || reset) ...[
-                            TextFormField(
+                          if (login || reset) ...[
+                            AppTextFormField(
                               initialValue: login ? 'preview123' : null,
                               obscureText: !visible,
                               validator: (v) => v != null && v.length >= 8
@@ -114,13 +105,13 @@ class _AuthPageState extends State<AuthPage> {
                               decoration: InputDecoration(
                                 labelText: reset ? 'New password' : 'Password',
                                 hintText: 'At least 8 characters',
-                                suffixIcon: IconButton(
+                                suffixIcon: AppIconButton(
                                   tooltip: visible
                                       ? 'Hide password'
                                       : 'Show password',
                                   onPressed: () =>
                                       setState(() => visible = !visible),
-                                  icon: Icon(
+                                  icon: AppIcon(
                                     visible
                                         ? Icons.visibility_off_outlined
                                         : Icons.visibility_outlined,
@@ -139,7 +130,7 @@ class _AuthPageState extends State<AuthPage> {
                               required: true,
                             ),
                           if (verify)
-                            TextFormField(
+                            AppTextFormField(
                               keyboardType: TextInputType.number,
                               maxLength: 6,
                               style: mono(size: 27, color: T.ink),
@@ -165,7 +156,7 @@ class _AuthPageState extends State<AuthPage> {
                                     SizedBox(
                                       width: 24,
                                       height: 36,
-                                      child: Checkbox(
+                                      child: Checkbox.adaptive(
                                         value: remember,
                                         onChanged: (v) =>
                                             setState(() => remember = v!),
@@ -178,7 +169,7 @@ class _AuthPageState extends State<AuthPage> {
                                     ),
                                   ],
                                 ),
-                                TextButton(
+                                AppButton.text(
                                   onPressed: () =>
                                       context.push('/forgot-password'),
                                   child: const Text(
@@ -189,10 +180,10 @@ class _AuthPageState extends State<AuthPage> {
                               ],
                             ),
                           const SizedBox(height: 14),
-                          FilledButton(
+                          AppButton.filled(
                             onPressed: () {
                               if (!form.currentState!.validate()) return;
-                              if (login || register) {
+                              if (login) {
                                 context.go('/workspaces');
                               } else if (verify) {
                                 context.go('/reset-password');
@@ -209,8 +200,6 @@ class _AuthPageState extends State<AuthPage> {
                             child: Text(
                               login
                                   ? 'Sign in'
-                                  : register
-                                  ? 'Create workspace'
                                   : verify
                                   ? 'Verify code'
                                   : reset
@@ -219,7 +208,7 @@ class _AuthPageState extends State<AuthPage> {
                             ),
                           ),
                           if (verify)
-                            TextButton(
+                            AppButton.text(
                               onPressed: () => notice(
                                 context,
                                 'This is a preview. No email is sent.',
@@ -231,22 +220,8 @@ class _AuthPageState extends State<AuthPage> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  if (login)
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Text(
-                          'New to telvox?',
-                          style: TextStyle(color: T.muted, fontSize: 13),
-                        ),
-                        TextButton(
-                          onPressed: () => context.push('/register'),
-                          child: const Text('Create an account'),
-                        ),
-                      ],
-                    )
-                  else
-                    TextButton(
+                  if (!login)
+                    AppButton.text(
                       onPressed: () => context.go('/login'),
                       child: const Text('Back to sign in'),
                     ),
@@ -262,14 +237,14 @@ class _AuthPageState extends State<AuthPage> {
                     alignment: WrapAlignment.center,
                     spacing: 12,
                     children: [
-                      TextButton(
+                      AppButton.text(
                         onPressed: () => context.push('/legal/privacy'),
                         child: const Text(
                           'Privacy',
                           style: TextStyle(color: T.brass, fontSize: 11),
                         ),
                       ),
-                      TextButton(
+                      AppButton.text(
                         onPressed: () => context.push('/legal/terms'),
                         child: const Text(
                           'Terms',
@@ -293,72 +268,81 @@ class WorkspacePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) => PageFrame(
     title: 'Your workspaces',
-    subtitle: 'Choose a business number to start your day.',
+    subtitle: 'Choose a connected business number.',
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 18),
-        const Brand(large: true),
-        const SizedBox(height: 36),
+        const SizedBox(height: 4),
         const Eyebrow('Connected numbers'),
-        const SizedBox(height: 14),
-        for (final (name, phone, label) in [
-          ('Studio North', '+91 98765 00001', 'Sales & support'),
-          ('Studio North · Wholesale', '+91 98765 00002', 'Business enquiries'),
-        ])
-          Padding(
-            padding: const EdgeInsets.only(bottom: 14),
-            child: Panel(
-              child: InkWell(
-                onTap: () {
-                  ref.read(previewProvider.notifier).workspace(name);
-                  context.go('/inbox');
-                },
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+        const SizedBox(height: 12),
+        Panel(
+          padding: EdgeInsets.zero,
+          child: Column(
+            children: [
+              for (final (i, name, phone) in [
+                (0, 'Studio North', '+91 98765 00001'),
+                (1, 'Studio North · Wholesale', '+91 98765 00002'),
+              ]) ...[
+                if (i > 0)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 66),
+                    child: Divider(),
+                  ),
+                InkWell(
+                  key: ValueKey('workspace-row-$i'),
+                  onTap: () {
+                    ref.read(previewProvider.notifier).workspace(name);
+                    context.go('/inbox');
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 13,
+                    ),
+                    child: Row(
                       children: [
-                        Avatar(name),
+                        Avatar(name, size: 38),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: Text(
-                            name,
-                            style: Theme.of(context).textTheme.titleMedium,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                name,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(phone, style: mono(size: 11)),
+                            ],
                           ),
                         ),
-                        const Icon(
-                          Icons.arrow_forward_rounded,
-                          size: 20,
+                        const SizedBox(width: 8),
+                        const AppIcon(
+                          Icons.check_circle_rounded,
+                          size: 15,
+                          color: T.green,
+                        ),
+                        const SizedBox(width: 10),
+                        const AppIcon(
+                          Icons.chevron_right_rounded,
+                          size: 18,
                           color: T.brass,
                         ),
                       ],
                     ),
-                    const SizedBox(height: 18),
-                    Text(phone, style: mono(size: 14, color: T.ink)),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        const Pill('Connected', dot: true),
-                        const Spacer(),
-                        Text(
-                          label,
-                          style: const TextStyle(fontSize: 12, color: T.muted),
-                        ),
-                      ],
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
+              ],
+            ],
           ),
-        const SizedBox(height: 16),
-        const Panel(
-          color: T.wash,
-          child: Text(
-            'You’re exploring a sample workspace. Changes stay in this preview.',
-            style: TextStyle(fontSize: 12, height: 1.6, color: T.secondary),
-          ),
+        ),
+        const SizedBox(height: 20),
+        const Text(
+          'Sample workspaces · Changes stay in this preview.',
+          style: TextStyle(fontSize: 11, height: 1.5, color: T.muted),
         ),
       ],
     ),

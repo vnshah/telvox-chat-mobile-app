@@ -1,4 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -15,44 +18,79 @@ class ChatPage extends ConsumerStatefulWidget {
 
 class _ChatPageState extends ConsumerState<ChatPage> {
   late final composer = TextEditingController(text: widget.initialDraft);
-  String? reply;
+  final focus = FocusNode();
+  final scroll = ScrollController();
+  final bubbleKeys = <int, GlobalKey>{};
   final reactions = <int, String>{};
+  final starred = <int>{};
+  final deleted = <int>{};
+  final entering = <int>{};
+  String? reply;
+
   @override
   void dispose() {
     composer.dispose();
+    focus.dispose();
+    scroll.dispose();
     super.dispose();
+  }
+
+  Rect? _rect(GlobalKey? key) {
+    final box = key?.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
   }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(previewProvider);
     final p = person(state, widget.id);
-    final messages =
-        state.messages[p.id] ??
-        [Message('Hello! How can we help you today?', out: true)];
+    final messages = state.messages[p.id] ?? <Message>[];
+    final indices = [
+      for (var i = 0; i < messages.length; i++)
+        if (!deleted.contains(i)) i,
+    ];
+    final hasText = composer.text.trim().isNotEmpty;
     return Scaffold(
-      backgroundColor: T.wash,
-      appBar: AppBar(
+      backgroundColor: T.paper,
+      appBar: platformAppBar(
+        context,
+        leadingWidth: 42,
+        leading: AppIconButton(
+          tooltip: 'Back to inbox',
+          onPressed: () =>
+              context.canPop() ? context.pop() : context.go('/inbox'),
+          icon: const AppIcon(Icons.arrow_back_rounded, size: 22),
+        ),
         titleSpacing: 0,
         title: InkWell(
           onTap: () => context.push('/customer/${p.id}'),
           child: Row(
             children: [
               Avatar(p.name, size: 35, color: p.color),
-              const SizedBox(width: 10),
+              const SizedBox(width: 9),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       p.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 14,
+                        fontSize: 15,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 2),
-                    Text(p.phone, style: mono(size: 10)),
+                    Text(
+                      p.closed
+                          ? 'Closed · ${p.phone}'
+                          : 'Assigned to ${p.assignee}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 10, color: T.muted),
+                    ),
                   ],
                 ),
               ),
@@ -60,35 +98,30 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           ),
         ),
         actions: [
-          IconButton(
+          AppIconButton(
             tooltip: 'Voice call',
             onPressed: () => context.push('/call/${p.id}'),
-            icon: const Icon(Icons.call_outlined, size: 21),
+            icon: const AppIcon(
+              Icons.call_outlined,
+              size: 21,
+              color: Colors.white,
+            ),
           ),
-          PopupMenuButton<String>(
+          AppMenuButton<String>(
             tooltip: 'Conversation options',
-            iconColor: T.brass,
-            onSelected: (v) async {
-              if (v == 'details') {
-                context.push('/customer/${p.id}');
-              }
-              if (v == 'media') {
-                context.push('/customer/${p.id}/media');
-              }
-              if (v == 'assign') {
-                context.push('/customer/${p.id}/assign');
-              }
-              if (v == 'favourite') {
-                ref.read(previewProvider.notifier).favorite(p.id);
-              }
-              if (v == 'close') {
-                ref.read(previewProvider.notifier).close(p.id);
-                notice(
-                  context,
-                  p.closed
-                      ? 'Conversation reopened in preview.'
-                      : 'Conversation closed in preview.',
-                );
+            icon: const AppIcon(Icons.more_vert, size: 22, color: T.green),
+            onSelected: (v) {
+              switch (v) {
+                case 'details':
+                  context.push('/customer/${p.id}');
+                case 'media':
+                  context.push('/customer/${p.id}/media');
+                case 'assign':
+                  context.push('/customer/${p.id}/assign');
+                case 'favourite':
+                  ref.read(previewProvider.notifier).favorite(p.id);
+                case 'close':
+                  ref.read(previewProvider.notifier).close(p.id);
               }
             },
             itemBuilder: (_) => [
@@ -122,550 +155,638 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       ),
       body: SafeArea(
         top: false,
-        child: Column(
-          children: [
-            Container(
-              color: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
-              child: Row(
-                children: [
-                  const Icon(Icons.person_outline, size: 14, color: T.brass),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      'Assigned to ${p.assignee}',
-                      style: const TextStyle(fontSize: 11, color: T.secondary),
-                    ),
-                  ),
-                  const Pill('Preview', color: T.brass, fill: T.wash),
-                  const SizedBox(width: 8),
-                  Pill(p.closed ? 'Closed' : 'Open', dot: true),
-                ],
-              ),
-            ),
-            if (p.bot)
-              Container(
-                color: T.selected,
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.auto_awesome_outlined,
-                      size: 17,
-                      color: T.green,
-                    ),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text(
-                        'Studio assistant is handling this chat.',
-                        style: TextStyle(fontSize: 11),
+        child: CustomPaint(
+          painter: const ChatWallpaper(),
+          child: Column(
+            children: [
+              if (p.bot)
+                Container(
+                  color: T.selected,
+                  padding: const EdgeInsets.only(left: 16, right: 6),
+                  child: Row(
+                    children: [
+                      const AppIcon(
+                        Icons.auto_awesome_outlined,
+                        size: 16,
+                        color: T.green,
                       ),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        ref.read(previewProvider.notifier).assign(p.id, 'You');
-                        notice(context, 'Assigned to you in preview.');
-                      },
-                      child: const Text('Take over'),
-                    ),
-                  ],
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Studio assistant is handling this chat.',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                      ),
+                      AppButton.text(
+                        onPressed: () => ref
+                            .read(previewProvider.notifier)
+                            .assign(p.id, 'You'),
+                        child: const Text('Take over'),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            Expanded(
-              child: ListView.builder(
-                reverse: true,
-                padding: const EdgeInsets.fromLTRB(16, 18, 16, 14),
-                itemCount: messages.length + 1,
-                itemBuilder: (context, reversed) {
-                  if (reversed == messages.length) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 20),
-                      child: Center(
-                        child: Pill(
-                          'TODAY · 28 OCT',
-                          color: T.muted,
-                          fill: Colors.white.withValues(alpha: .8),
+              Expanded(
+                child: ListView.builder(
+                  controller: scroll,
+                  reverse: true,
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: const EdgeInsets.fromLTRB(10, 12, 10, 8),
+                  itemCount: indices.length + 1,
+                  findChildIndexCallback: (key) {
+                    if (key is! ValueKey<String> ||
+                        !key.value.startsWith('message-')) {
+                      return null;
+                    }
+                    final index = int.tryParse(key.value.substring(8));
+                    final position = indices.indexOf(index ?? -1);
+                    return position < 0 ? null : indices.length - position - 1;
+                  },
+                  itemBuilder: (context, reversed) {
+                    if (reversed == indices.length) {
+                      return const Padding(
+                        padding: EdgeInsets.only(top: 12, bottom: 18),
+                        child: Center(child: _DayLabel()),
+                      );
+                    }
+                    final visible = indices.length - reversed - 1;
+                    final i = indices[visible];
+                    final m = messages[i];
+                    final first =
+                        visible == 0 ||
+                        messages[indices[visible - 1]].out != m.out;
+                    final reaction = reactions[i] ?? m.reaction;
+                    return MessageEntry(
+                      key: ValueKey('message-$i'),
+                      animate: entering.contains(i),
+                      onEnd: () => entering.remove(i),
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          top: first ? 10 : 5,
+                          bottom: 1,
+                        ),
+                        child: SwipeReply(
+                          onReply: () => _reply(m),
+                          child: Align(
+                            alignment: m.out
+                                ? Alignment.centerRight
+                                : Alignment.centerLeft,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: m.out
+                                  ? CrossAxisAlignment.end
+                                  : CrossAxisAlignment.start,
+                              children: [
+                                GestureDetector(
+                                  onLongPress: () => _messageActions(m, i),
+                                  child: MessageBubble(
+                                    key: bubbleKeys.putIfAbsent(
+                                      i,
+                                      () => GlobalKey(),
+                                    ),
+                                    message: m,
+                                    first: first,
+                                    starred: starred.contains(i),
+                                    maxWidth: math.min(
+                                      MediaQuery.sizeOf(context).width * .84,
+                                      520,
+                                    ),
+                                    onMenu: () => _messageActions(m, i),
+                                  ),
+                                ),
+                                if (reaction.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                      top: 3,
+                                      left: 8,
+                                      right: 8,
+                                      bottom: 1,
+                                    ),
+                                    child: InkWell(
+                                      key: ValueKey('message-reaction-$i'),
+                                      onTap: () => _messageActions(m, i),
+                                      borderRadius: BorderRadius.circular(20),
+                                      child: AnimatedSwitcher(
+                                        duration: const Duration(
+                                          milliseconds: 120,
+                                        ),
+                                        child: Container(
+                                          key: ValueKey(reaction),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 7,
+                                            vertical: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: T.wash,
+                                            border: Border.all(color: T.edge),
+                                            borderRadius: BorderRadius.circular(
+                                              16,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            reaction,
+                                            style: const TextStyle(
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     );
-                  }
-                  final i = messages.length - reversed - 1;
-                  final m = messages[i];
-                  return GestureDetector(
-                    onLongPress: () => _messageActions(m, i),
-                    child: Align(
-                      alignment: m.out
-                          ? Alignment.centerRight
-                          : Alignment.centerLeft,
-                      child: Container(
-                        constraints: BoxConstraints(
-                          maxWidth:
-                              MediaQuery.sizeOf(context).width.clamp(320, 900) *
-                              .76,
-                        ),
-                        margin: const EdgeInsets.only(bottom: 12),
-                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                        decoration: BoxDecoration(
-                          color: m.out ? T.outgoing : Colors.white,
-                          borderRadius: BorderRadius.only(
-                            topLeft: const Radius.circular(16),
-                            topRight: const Radius.circular(16),
-                            bottomLeft: Radius.circular(m.out ? 16 : 4),
-                            bottomRight: Radius.circular(m.out ? 4 : 16),
-                          ),
-                          border: Border.all(
-                            color: T.edge.withValues(alpha: .65),
-                          ),
-                        ),
+                  },
+                ),
+              ),
+              if (reply != null)
+                Container(
+                  margin: const EdgeInsets.fromLTRB(8, 4, 58, 0),
+                  padding: const EdgeInsets.only(left: 12),
+                  decoration: BoxDecoration(
+                    color: T.wash,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      const AppIcon(Icons.reply, size: 18, color: T.green),
+                      const SizedBox(width: 8),
+                      Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            if (m.reply != null)
-                              Container(
-                                margin: const EdgeInsets.only(bottom: 9),
-                                padding: const EdgeInsets.all(9),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: .5),
-                                  border: const Border(
-                                    left: BorderSide(color: T.green, width: 3),
-                                  ),
-                                ),
-                                child: Text(
-                                  m.reply!,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: T.secondary,
-                                  ),
-                                ),
+                            const Text(
+                              'Replying to message',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: T.green,
+                                fontWeight: FontWeight.w600,
                               ),
-                            if (m.type == 'document')
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.description_outlined,
-                                    color: T.brass,
-                                    size: 28,
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Flexible(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          m.text,
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                        Text(
-                                          'PDF · 248 KB',
-                                          style: mono(size: 9),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Preview document',
-                                    onPressed: () =>
-                                        context.push('/customer/${p.id}/media'),
-                                    icon: const Icon(
-                                      Icons.download_outlined,
-                                      size: 19,
-                                    ),
-                                  ),
-                                ],
-                              )
-                            else if (m.type == 'order')
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Eyebrow('Order confirmed'),
-                                  const SizedBox(height: 12),
-                                  Row(
-                                    children: [
-                                      const ProductArt(
-                                        icon: Icons.shopping_bag_outlined,
-                                        small: true,
-                                      ),
-                                      const SizedBox(width: 12),
-                                      const Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              'Everyday canvas tote',
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.w500,
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                            SizedBox(height: 5),
-                                            Text(
-                                              'Natural · 1 item',
-                                              style: TextStyle(
-                                                color: T.muted,
-                                                fontSize: 11,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    '₹1,290',
-                                    style: mono(size: 15, color: T.ink),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  InkWell(
-                                    onTap: () => context.push('/order/2048'),
-                                    child: const Padding(
-                                      padding: EdgeInsets.symmetric(
-                                        vertical: 8,
-                                      ),
-                                      child: Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          Text(
-                                            'View order',
-                                            style: TextStyle(
-                                              color: T.brass,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                          SizedBox(width: 8),
-                                          Icon(
-                                            Icons.arrow_forward,
-                                            size: 14,
-                                            color: T.brass,
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              )
-                            else if (m.type == 'audio')
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    tooltip: 'Play voice preview',
-                                    onPressed: () => notice(
-                                      context,
-                                      'Audio is a visual preview.',
-                                    ),
-                                    icon: const Icon(
-                                      Icons.play_circle_outline,
-                                      size: 30,
-                                      color: T.green,
-                                    ),
-                                  ),
-                                  const Expanded(child: VoiceWave()),
-                                  Text('0:12', style: mono(size: 10)),
-                                ],
-                              )
-                            else if (m.type == 'image')
-                              Column(
-                                children: [
-                                  const ProductArt(
-                                    icon: Icons.shopping_bag_outlined,
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    m.text,
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                ],
-                              )
-                            else if (m.type == 'location')
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Container(
-                                    height: 100,
-                                    width: 200,
-                                    decoration: BoxDecoration(
-                                      color: T.selected,
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: const Icon(
-                                      Icons.location_on_outlined,
-                                      size: 38,
-                                      color: T.green,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    m.text,
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                ],
-                              )
-                            else
-                              Text(
-                                m.text,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  height: 1.55,
-                                ),
+                            ),
+                            Text(
+                              reply!,
+                              key: const ValueKey('reply-preview'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: T.secondary,
                               ),
-                            const SizedBox(height: 6),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                if ((reactions[i] ?? m.reaction)
-                                    .isNotEmpty) ...[
-                                  Text(reactions[i] ?? m.reaction),
-                                  const SizedBox(width: 10),
-                                ],
-                                const Spacer(),
-                                Text(m.time, style: mono(size: 9)),
-                                if (m.out) ...[
-                                  const SizedBox(width: 5),
-                                  Icon(
-                                    m.time == 'Now'
-                                        ? Icons.check
-                                        : Icons.done_all,
-                                    size: 14,
-                                    color: m.time == 'Now' ? T.muted : T.blue,
-                                  ),
-                                ],
-                              ],
                             ),
                           ],
                         ),
                       ),
-                    ),
-                  );
-                },
-              ),
-            ),
-            if (reply != null)
-              Container(
-                color: Colors.white,
-                padding: const EdgeInsets.only(left: 20),
-                child: Row(
-                  children: [
-                    const Icon(Icons.reply, size: 16, color: T.green),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        reply!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12, color: T.muted),
+                      AppIconButton(
+                        tooltip: 'Cancel reply',
+                        onPressed: () => setState(() => reply = null),
+                        icon: const AppIcon(Icons.close, size: 18),
                       ),
-                    ),
-                    IconButton(
-                      tooltip: 'Cancel reply',
-                      onPressed: () => setState(() => reply = null),
-                      icon: const Icon(Icons.close, size: 18),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                border: Border(top: BorderSide(color: T.edge)),
-              ),
-              padding: const EdgeInsets.fromLTRB(8, 10, 10, 10),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      IconButton(
-                        tooltip: 'Attach',
-                        onPressed: _attachments,
-                        icon: const Icon(
-                          Icons.add_circle_outline_rounded,
-                          size: 24,
-                        ),
-                      ),
-                      Expanded(
-                        child: TextField(
-                          controller: composer,
-                          minLines: 1,
-                          maxLines: 4,
-                          onChanged: (_) => setState(() {}),
-                          decoration: InputDecoration(
-                            hintText: 'Write a reply…',
-                            filled: true,
-                            fillColor: T.wash,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 12,
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(24),
-                              borderSide: BorderSide.none,
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(24),
-                              borderSide: BorderSide.none,
-                            ),
+              Padding(
+                key: const ValueKey('chat-composer'),
+                padding: const EdgeInsets.fromLTRB(6, 6, 6, 7),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(25),
+                          border: Border.all(
+                            color: T.edge.withValues(alpha: .65),
                           ),
                         ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            _smallAction(
+                              Icons.emoji_emotions_outlined,
+                              'Emoji',
+                              _emoji,
+                            ),
+                            Expanded(
+                              child: AppTextField(
+                                controller: composer,
+                                focusNode: focus,
+                                minLines: 1,
+                                maxLines: 5,
+                                textCapitalization:
+                                    TextCapitalization.sentences,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  height: 1.35,
+                                ),
+                                onChanged: (_) => setState(() {}),
+                                decoration: const InputDecoration(
+                                  hintText: 'Message',
+                                  isDense: true,
+                                  filled: false,
+                                  contentPadding: EdgeInsets.symmetric(
+                                    vertical: 12,
+                                    horizontal: 2,
+                                  ),
+                                  border: InputBorder.none,
+                                  enabledBorder: InputBorder.none,
+                                  focusedBorder: InputBorder.none,
+                                ),
+                              ),
+                            ),
+                            _smallAction(
+                              Icons.attach_file_rounded,
+                              'Attach',
+                              _attachments,
+                            ),
+                            if (!hasText &&
+                                MediaQuery.sizeOf(context).width >= 360)
+                              _smallAction(
+                                Icons.camera_alt_outlined,
+                                'Camera',
+                                () => _sendText(
+                                  'Everyday canvas tote · Natural',
+                                  type: 'image',
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(width: 7),
-                      IconButton.filled(
-                        tooltip: composer.text.trim().isEmpty
-                            ? 'Voice message'
-                            : 'Send reply',
+                    ),
+                    const SizedBox(width: 6),
+                    SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: AppIconButton.filled(
+                        tooltip: hasText ? 'Send reply' : 'Voice message',
                         style: IconButton.styleFrom(
                           backgroundColor: T.green,
                           foregroundColor: Colors.white,
                         ),
-                        onPressed: composer.text.trim().isEmpty
-                            ? _voice
-                            : _send,
-                        icon: Icon(
-                          composer.text.trim().isEmpty
-                              ? Icons.mic_none_rounded
-                              : Icons.arrow_upward_rounded,
-                          size: 23,
+                        onPressed: hasText ? _send : _voice,
+                        icon: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 160),
+                          transitionBuilder: (child, a) =>
+                              ScaleTransition(scale: a, child: child),
+                          child: AppIcon(
+                            hasText
+                                ? Icons.send_rounded
+                                : Icons.mic_none_rounded,
+                            key: ValueKey(hasText),
+                            size: 22,
+                          ),
                         ),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const SizedBox(width: 48),
-                      _composerAction(
-                        Icons.auto_awesome_outlined,
-                        'AI assist',
-                        () async {
-                          final draft = await context.push<String>(
-                            '/ai?contact=${p.id}',
-                          );
-                          if (draft != null && mounted) {
-                            setState(() => composer.text = draft);
-                          }
-                        },
-                      ),
-                      const SizedBox(width: 18),
-                      _composerAction(
-                        Icons.bolt_outlined,
-                        'Quick replies',
-                        () async {
-                          final draft = await context.push<String>(
-                            '/quick-replies?pick=true',
-                          );
-                          if (draft != null && mounted) {
-                            setState(() => composer.text = draft);
-                          }
-                        },
-                      ),
-                      const Spacer(),
-                      TextButton(
-                        onPressed: () =>
-                            context.push('/templates?contact=${p.id}'),
-                        child: const Text(
-                          'Templates',
-                          style: TextStyle(fontSize: 10, color: T.brass),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _composerAction(IconData icon, String label, VoidCallback tap) =>
-      InkWell(
-        onTap: tap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Row(
-            children: [
-              Icon(icon, size: 13, color: T.brass),
-              const SizedBox(width: 4),
-              Text(label, style: const TextStyle(fontSize: 10, color: T.brass)),
-            ],
-          ),
+  Widget _smallAction(IconData icon, String label, VoidCallback action) =>
+      SizedBox(
+        width: 40,
+        height: 44,
+        child: AppIconButton(
+          tooltip: label,
+          padding: EdgeInsets.zero,
+          onPressed: action,
+          icon: AppIcon(icon, size: 22, color: T.muted),
         ),
       );
+
+  void _reply(Message m) {
+    HapticFeedback.selectionClick();
+    setState(() => reply = m.text);
+    focus.requestFocus();
+  }
+
   void _send() {
-    ref
-        .read(previewProvider.notifier)
-        .send(widget.id, composer.text, reply: reply);
+    final text = composer.text.trim();
+    if (text.isEmpty) return;
+    _sendText(text, quoted: reply);
     setState(() {
       composer.clear();
       reply = null;
     });
   }
 
-  void _messageActions(Message m, int i) => sheet(
+  void _sendText(String text, {String type = 'text', String? quoted}) {
+    final index = (ref.read(previewProvider).messages[widget.id] ?? []).length;
+    if (!MediaQuery.disableAnimationsOf(context)) entering.add(index);
+    ref
+        .read(previewProvider.notifier)
+        .send(widget.id, text, type: type, reply: quoted);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && scroll.hasClients) scroll.jumpTo(0);
+    });
+  }
+
+  Future<void> _messageActions(Message m, int i) async {
+    focus.unfocus();
+    final anchor = _rect(bubbleKeys[i]);
+    final selected = await showGeneralDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Dismiss message actions',
+      barrierColor: Colors.black.withValues(alpha: .12),
+      transitionDuration: const Duration(milliseconds: 160),
+      transitionBuilder: (_, a, _, child) =>
+          FadeTransition(opacity: a, child: child),
+      pageBuilder: (dialogContext, _, _) => SafeArea(
+        child: LayoutBuilder(
+          builder: (context, size) {
+            final top =
+                ((anchor?.top ?? size.maxHeight / 3) -
+                        MediaQuery.paddingOf(context).top -
+                        52)
+                    .clamp(12.0, math.max(12.0, size.maxHeight - 410))
+                    .toDouble();
+            return Stack(
+              children: [
+                Positioned(
+                  top: top,
+                  right: m.out ? 12 : null,
+                  left: m.out ? null : 12,
+                  width: math.min(270, size.maxWidth - 24),
+                  child: Material(
+                    color: T.wash,
+                    elevation: 3,
+                    shadowColor: T.ink.withValues(alpha: .15),
+                    borderRadius: BorderRadius.circular(20),
+                    clipBehavior: Clip.antiAlias,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: math.max(100, size.maxHeight - top - 12),
+                      ),
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 8,
+                              ),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceEvenly,
+                                children: [
+                                  for (final emoji in [
+                                    '👍',
+                                    '🤍',
+                                    '😊',
+                                    '🙏',
+                                    '✨',
+                                  ])
+                                    Expanded(
+                                      child: InkWell(
+                                        onTap: () => Navigator.pop(
+                                          dialogContext,
+                                          'emoji:$emoji',
+                                        ),
+                                        borderRadius: BorderRadius.circular(24),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 8,
+                                          ),
+                                          child: Center(
+                                            child: Text(
+                                              emoji,
+                                              style: const TextStyle(
+                                                fontSize: 23,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const Divider(height: 1),
+                            for (final (value, label, icon) in [
+                              ('reply', 'Reply', Icons.reply_rounded),
+                              ('copy', 'Copy', Icons.content_copy_rounded),
+                              ('forward', 'Forward', Icons.forward_rounded),
+                              (
+                                'star',
+                                starred.contains(i) ? 'Unstar' : 'Star',
+                                Icons.star_border_rounded,
+                              ),
+                              if ((reactions[i] ?? m.reaction).isNotEmpty)
+                                (
+                                  'remove-reaction',
+                                  'Remove reaction',
+                                  Icons.emoji_emotions_outlined,
+                                ),
+                              (
+                                'info',
+                                'Message info',
+                                Icons.info_outline_rounded,
+                              ),
+                              (
+                                'delete',
+                                'Delete for me',
+                                Icons.delete_outline_rounded,
+                              ),
+                            ])
+                              InkWell(
+                                onTap: () =>
+                                    Navigator.pop(dialogContext, value),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 18,
+                                    vertical: 10,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          label,
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: value == 'delete'
+                                                ? T.danger
+                                                : T.ink,
+                                          ),
+                                        ),
+                                      ),
+                                      AppIcon(
+                                        icon,
+                                        size: 19,
+                                        color: value == 'delete'
+                                            ? T.danger
+                                            : T.secondary,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(height: 5),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    if (selected.startsWith('emoji:')) {
+      HapticFeedback.selectionClick();
+      setState(() => reactions[i] = selected.substring(6));
+      return;
+    }
+    switch (selected) {
+      case 'reply':
+        _reply(m);
+      case 'copy':
+        await Clipboard.setData(ClipboardData(text: m.text));
+        if (mounted) notice(context, 'Message copied');
+      case 'forward':
+        _forward(m);
+      case 'star':
+        setState(
+          () => starred.contains(i) ? starred.remove(i) : starred.add(i),
+        );
+      case 'remove-reaction':
+        setState(() => reactions[i] = '');
+      case 'info':
+        sheet(
+          context,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Message info',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 20),
+              Text(m.text),
+              const SizedBox(height: 20),
+              InfoLine(m.out ? 'Sent' : 'Received', m.time),
+              if (m.out)
+                const InfoLine('Delivery', 'Delivered · sample status'),
+            ],
+          ),
+        );
+      case 'delete':
+        if (await confirm(
+              context,
+              'Delete this message?',
+              'Remove it from this preview conversation.',
+              action: 'Delete for me',
+            ) &&
+            mounted) {
+          setState(() => deleted.add(i));
+        }
+    }
+  }
+
+  void _forward(Message m) => sheet(
     context,
     Column(
-      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            for (final emoji in ['🤍', '👍', '😊', '🙏', '✨'])
-              TextButton(
-                onPressed: () {
-                  setState(() => reactions[i] = emoji);
-                  Navigator.pop(context);
-                },
-                child: Text(emoji, style: const TextStyle(fontSize: 26)),
-              ),
-          ],
-        ),
-        MenuRow(
-          'Reply to message',
-          Icons.reply_rounded,
-          onTap: () {
-            setState(() => reply = m.text);
-            Navigator.pop(context);
-          },
-        ),
-        MenuRow(
-          'Remove reaction',
-          Icons.emoji_emotions_outlined,
-          onTap: () {
-            setState(() => reactions[i] = '');
-            Navigator.pop(context);
-          },
-        ),
+        Text('Forward to', style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 12),
+        for (final p
+            in ref.read(previewProvider).people.where((p) => p.id != widget.id))
+          AppListTile(
+            leading: Avatar(p.name, size: 36, color: p.color),
+            title: Text(p.name),
+            subtitle: Text(p.phone, style: mono(size: 10)),
+            onTap: () {
+              ref
+                  .read(previewProvider.notifier)
+                  .send(p.id, m.text, type: m.type);
+              Navigator.pop(context);
+              notice(context, 'Forwarded to ${p.name} in preview.');
+            },
+          ),
       ],
     ),
   );
+
+  void _emoji() => sheet(
+    context,
+    Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final emoji in [
+          '😊',
+          '🤍',
+          '👍',
+          '🙏',
+          '✨',
+          '🎉',
+          '👋',
+          '❤️',
+          '🙌',
+          '🙂',
+          '✅',
+          '📦',
+        ])
+          AppIconButton(
+            tooltip: 'Insert $emoji',
+            onPressed: () {
+              final selection = composer.selection;
+              final start = selection.isValid
+                  ? selection.start
+                  : composer.text.length;
+              final end = selection.isValid ? selection.end : start;
+              composer.value = TextEditingValue(
+                text: composer.text.replaceRange(start, end, emoji),
+                selection: TextSelection.collapsed(
+                  offset: start + emoji.length,
+                ),
+              );
+              setState(() {});
+              Navigator.pop(context);
+              focus.requestFocus();
+            },
+            icon: Text(emoji, style: const TextStyle(fontSize: 25)),
+          ),
+      ],
+    ),
+  );
+
+  Future<void> _draftTool(String route) async {
+    Navigator.pop(context);
+    final draft = await context.push<String>(route);
+    if (draft != null && mounted) {
+      setState(() => composer.text = draft);
+      focus.requestFocus();
+    }
+  }
+
   void _attachments() => sheet(
     context,
     Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Share something', style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 8),
-        const Text(
-          'Sample attachments for this preview.',
-          style: TextStyle(color: T.muted, fontSize: 12),
-        ),
-        const SizedBox(height: 22),
+        Text('Share & compose', style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 18),
         Wrap(
           spacing: 12,
           runSpacing: 16,
           children: [
-            for (final (icon, label, type, content) in [
+            for (final (icon, label, type, text) in [
               (
                 Icons.image_outlined,
                 'Photo',
@@ -692,26 +813,24 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               ),
             ])
               SizedBox(
-                width: 92,
+                width: 86,
                 child: InkWell(
                   onTap: () {
                     Navigator.pop(context);
-                    ref
-                        .read(previewProvider.notifier)
-                        .send(widget.id, content, type: type);
+                    _sendText(text, type: type);
                   },
                   child: Column(
                     children: [
                       Container(
-                        width: 54,
-                        height: 54,
+                        width: 48,
+                        height: 48,
                         decoration: const BoxDecoration(
-                          color: T.wash,
+                          color: T.selected,
                           shape: BoxShape.circle,
                         ),
-                        child: Icon(icon, color: T.brass),
+                        child: AppIcon(icon, color: T.green),
                       ),
-                      const SizedBox(height: 9),
+                      const SizedBox(height: 7),
                       Text(label, style: const TextStyle(fontSize: 11)),
                     ],
                   ),
@@ -719,7 +838,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 16),
+        MenuRow(
+          'Quick replies',
+          Icons.bolt_outlined,
+          onTap: () => _draftTool('/quick-replies?pick=true'),
+        ),
+        MenuRow(
+          'AI assist',
+          Icons.auto_awesome_outlined,
+          onTap: () => _draftTool('/ai?contact=${widget.id}'),
+        ),
+        MenuRow(
+          'Templates',
+          Icons.article_outlined,
+          onTap: () {
+            Navigator.pop(context);
+            context.push('/templates?contact=${widget.id}');
+          },
+        ),
         MenuRow(
           'Share a product',
           Icons.shopping_bag_outlined,
@@ -728,9 +865,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             context.push('/catalogue?contact=${widget.id}');
           },
         ),
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text(
+            'Attachments use sample content in this preview.',
+            style: TextStyle(fontSize: 11, color: T.muted),
+          ),
+        ),
       ],
     ),
   );
+
   void _voice() => sheet(
     context,
     Column(
@@ -742,28 +887,477 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           'Preview a sample voice message.',
           style: TextStyle(color: T.muted),
         ),
-        const SizedBox(height: 30),
-        const SizedBox(height: 50, child: VoiceWave()),
+        const SizedBox(height: 24),
+        const SizedBox(height: 45, child: VoiceWave()),
         const SizedBox(height: 12),
         Center(child: Text('0:12', style: mono(size: 16))),
-        const SizedBox(height: 24),
-        FilledButton.icon(
+        const SizedBox(height: 20),
+        AppButton.filledIcon(
           onPressed: () {
             Navigator.pop(context);
-            ref
-                .read(previewProvider.notifier)
-                .send(widget.id, 'Voice message', type: 'audio');
+            _sendText('Voice message', type: 'audio');
           },
-          icon: const Icon(Icons.send_outlined, size: 18),
+          icon: const AppIcon(Icons.send_outlined, size: 18),
           label: const Text('Add to conversation'),
         ),
-        TextButton(
+        AppButton.text(
           onPressed: () => Navigator.pop(context),
           child: const Text('Discard'),
         ),
       ],
     ),
   );
+}
+
+class _DayLabel extends StatelessWidget {
+  const _DayLabel();
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+    decoration: BoxDecoration(
+      color: T.wash.withValues(alpha: .94),
+      borderRadius: BorderRadius.circular(7),
+    ),
+    child: const Text(
+      'Today',
+      style: TextStyle(fontSize: 10, color: T.secondary),
+    ),
+  );
+}
+
+class MessageBubble extends StatelessWidget {
+  const MessageBubble({
+    super.key,
+    required this.message,
+    this.first = false,
+    this.starred = false,
+    this.maxWidth = 320,
+    this.onMenu,
+  });
+  final Message message;
+  final bool first, starred;
+  final double maxWidth;
+  final VoidCallback? onMenu;
+  @override
+  Widget build(BuildContext context) {
+    final m = message;
+    final color = m.out ? T.outgoing : Colors.white;
+    return CustomPaint(
+      painter: first ? _BubbleTail(m.out, color) : null,
+      child: Container(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        padding: EdgeInsets.fromLTRB(
+          m.type == 'image' || m.type == 'order' ? 5 : 11,
+          9,
+          9,
+          7,
+        ),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(first && !m.out ? 3 : 10),
+            topRight: Radius.circular(first && m.out ? 3 : 10),
+            bottomLeft: const Radius.circular(10),
+            bottomRight: const Radius.circular(10),
+          ),
+          border: Border.all(
+            color: m.out
+                ? T.green.withValues(alpha: .18)
+                : T.control.withValues(alpha: .65),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: T.ink.withValues(alpha: .08),
+              offset: const Offset(0, 2),
+              blurRadius: 5,
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (m.reply != null)
+              Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                decoration: BoxDecoration(
+                  color: T.green.withValues(alpha: .07),
+                  border: const Border(
+                    left: BorderSide(color: T.green, width: 3),
+                  ),
+                  borderRadius: BorderRadius.circular(5),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Reply',
+                      style: TextStyle(
+                        color: T.green,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      m.reply!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12, color: T.secondary),
+                    ),
+                  ],
+                ),
+              ),
+            if (m.type == 'image' || m.type == 'order') ...[
+              SizedBox(
+                width: maxWidth - 12,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: const SizedBox(
+                    height: 122,
+                    child: ProductArt(icon: Icons.shopping_bag_outlined),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+            ],
+            if (m.type == 'document')
+              Container(
+                padding: const EdgeInsets.all(9),
+                margin: const EdgeInsets.only(bottom: 4),
+                decoration: BoxDecoration(
+                  color: T.green.withValues(alpha: .06),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const AppIcon(
+                      Icons.description_outlined,
+                      color: T.brass,
+                      size: 28,
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            m.text,
+                            style: const TextStyle(fontSize: 12),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const Text(
+                            'PDF · 248 KB',
+                            style: TextStyle(fontSize: 9, color: T.muted),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    const AppIcon(
+                      Icons.download_rounded,
+                      size: 20,
+                      color: T.brass,
+                    ),
+                  ],
+                ),
+              ),
+            if (m.type == 'audio')
+              SizedBox(
+                width: maxWidth - 18,
+                child: Row(
+                  children: [
+                    const AppIcon(
+                      Icons.play_arrow_rounded,
+                      color: T.green,
+                      size: 30,
+                    ),
+                    const SizedBox(width: 4),
+                    const Expanded(
+                      child: SizedBox(height: 32, child: VoiceWave()),
+                    ),
+                    const SizedBox(width: 8),
+                    Text('0:12', style: mono(size: 9)),
+                  ],
+                ),
+              ),
+            if (m.type == 'location')
+              Container(
+                height: 88,
+                width: maxWidth - 18,
+                margin: const EdgeInsets.only(bottom: 6),
+                decoration: BoxDecoration(
+                  color: T.selected,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Center(
+                  child: AppIcon(Icons.location_on, color: T.green, size: 32),
+                ),
+              ),
+            Stack(
+              children: [
+                if (m.type != 'document' && m.type != 'audio')
+                  Padding(
+                    padding: const EdgeInsets.only(right: 1),
+                    child: Text.rich(
+                      TextSpan(
+                        text: m.text,
+                        children: [
+                          WidgetSpan(
+                            child: SizedBox(
+                              width: starred ? 97 : 83,
+                              height: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                      textWidthBasis: TextWidthBasis.longestLine,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        height: 1.35,
+                        color: T.ink,
+                      ),
+                    ),
+                  )
+                else
+                  SizedBox(width: maxWidth - 18, height: 17),
+                Positioned(
+                  right: 0,
+                  bottom: -2,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (starred)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 3),
+                          child: AppIcon(
+                            Icons.star_rounded,
+                            size: 10,
+                            color: T.brass,
+                          ),
+                        ),
+                      Text(
+                        m.time == 'Now' ? 'now' : m.time,
+                        style: mono(size: 8, color: T.muted),
+                      ),
+                      if (m.out)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 3),
+                          child: AppIcon(
+                            m.time == 'Now' ? Icons.check : Icons.done_all,
+                            size: 13,
+                            color: m.time == 'Now' ? T.muted : T.blue,
+                          ),
+                        ),
+                      if (onMenu != null)
+                        SizedBox(
+                          width: 25,
+                          height: 23,
+                          child: AppIconButton(
+                            tooltip: 'Message options',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            onPressed: onMenu,
+                            icon: const AppIcon(
+                              Icons.keyboard_arrow_down_rounded,
+                              size: 16,
+                              color: T.muted,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BubbleTail extends CustomPainter {
+  _BubbleTail(this.out, this.color);
+  final bool out;
+  final Color color;
+  @override
+  void paint(Canvas canvas, Size size) {
+    final x = out ? size.width - 2 : 2.0;
+    final direction = out ? 1.0 : -1.0;
+    canvas.drawPath(
+      Path()
+        ..moveTo(x, 0)
+        ..lineTo(x + 7 * direction, 0)
+        ..quadraticBezierTo(x + 8 * direction, 0, x + 5 * direction, 4)
+        ..lineTo(x, 10)
+        ..close(),
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _BubbleTail old) =>
+      old.out != out || old.color != color;
+}
+
+class SwipeReply extends StatefulWidget {
+  const SwipeReply({super.key, required this.child, required this.onReply});
+  final Widget child;
+  final VoidCallback onReply;
+  @override
+  State<SwipeReply> createState() => _SwipeReplyState();
+}
+
+class _SwipeReplyState extends State<SwipeReply> {
+  double distance = 0;
+  bool dragging = false;
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onHorizontalDragStart: (_) => setState(() => dragging = true),
+    onHorizontalDragUpdate: (d) =>
+        setState(() => distance = (distance + d.delta.dx).clamp(0, 64)),
+    onHorizontalDragEnd: (_) {
+      if (distance >= 38) widget.onReply();
+      setState(() {
+        dragging = false;
+        distance = 0;
+      });
+    },
+    onHorizontalDragCancel: () => setState(() {
+      dragging = false;
+      distance = 0;
+    }),
+    child: Stack(
+      alignment: Alignment.centerLeft,
+      children: [
+        if (distance > 8)
+          Opacity(
+            opacity: (distance / 48).clamp(0, 1),
+            child: const Padding(
+              padding: EdgeInsets.only(left: 12),
+              child: AppIcon(Icons.reply_rounded, color: T.green, size: 22),
+            ),
+          ),
+        AnimatedContainer(
+          duration: Duration(milliseconds: dragging ? 0 : 180),
+          curve: Curves.easeOutCubic,
+          transform: Matrix4.translationValues(distance, 0, 0),
+          child: widget.child,
+        ),
+      ],
+    ),
+  );
+}
+
+class MessageEntry extends StatefulWidget {
+  const MessageEntry({
+    super.key,
+    required this.child,
+    required this.animate,
+    required this.onEnd,
+  });
+  final Widget child;
+  final bool animate;
+  final VoidCallback onEnd;
+  @override
+  State<MessageEntry> createState() => _MessageEntryState();
+}
+
+class _MessageEntryState extends State<MessageEntry>
+    with SingleTickerProviderStateMixin {
+  late final controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 140),
+    value: widget.animate ? 0 : 1,
+  );
+  @override
+  void initState() {
+    super.initState();
+    if (widget.animate) controller.forward().whenComplete(widget.onEnd);
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = controller.drive(CurveTween(curve: Curves.easeOutCubic));
+    return FadeTransition(
+      opacity: progress,
+      child: ScaleTransition(
+        scale: Tween<double>(begin: .99, end: 1).animate(progress),
+        alignment: Alignment.bottomRight,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+class ChatWallpaper extends CustomPainter {
+  const ChatWallpaper();
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [T.paper, Color(0xFFE5EDE4)],
+        ).createShader(Offset.zero & size),
+    );
+    final line = Paint()
+      ..color = T.brass.withValues(alpha: .085)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.1
+      ..strokeCap = StrokeCap.round;
+    for (var y = -24.0; y < size.height + 80; y += 108) {
+      for (var x = -10.0; x < size.width + 80; x += 116) {
+        canvas.save();
+        canvas.translate(x + ((y ~/ 108).isEven ? 0 : 50), y);
+        canvas.rotate(-.20);
+        // Small chat, leaf and spark motifs echo the Telvox mark and earthy palette.
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            const Rect.fromLTWH(8, 8, 27, 19),
+            const Radius.circular(6),
+          ),
+          line,
+        );
+        canvas.drawPath(
+          Path()
+            ..moveTo(15, 27)
+            ..lineTo(13, 32)
+            ..lineTo(22, 27),
+          line,
+        );
+        canvas.drawLine(const Offset(15, 16), const Offset(28, 16), line);
+        canvas.drawLine(const Offset(15, 21), const Offset(23, 21), line);
+        canvas.drawPath(
+          Path()
+            ..moveTo(66, 69)
+            ..quadraticBezierTo(43, 46, 72, 42)
+            ..quadraticBezierTo(84, 61, 66, 69)
+            ..moveTo(63, 76)
+            ..lineTo(72, 49),
+          line,
+        );
+        canvas.drawLine(const Offset(82, 15), const Offset(82, 25), line);
+        canvas.drawLine(const Offset(77, 20), const Offset(87, 20), line);
+        canvas.drawCircle(const Offset(25, 76), 2.5, line);
+        canvas.restore();
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant ChatWallpaper oldDelegate) => false;
 }
 
 class VoiceWave extends StatelessWidget {
@@ -806,7 +1400,7 @@ class ProductArt extends StatelessWidget {
       borderRadius: BorderRadius.circular(small ? 9 : 14),
     ),
     alignment: Alignment.center,
-    child: Icon(
+    child: AppIcon(
       icon,
       size: small ? 30 : 76,
       color: T.brass.withValues(alpha: .8),
@@ -824,10 +1418,10 @@ class CustomerPage extends ConsumerWidget {
     return PageFrame(
       title: 'Contact details',
       actions: [
-        IconButton(
+        AppIconButton(
           tooltip: 'Edit contact',
           onPressed: () => context.push('/contact/$id/edit'),
-          icon: const Icon(Icons.edit_outlined, size: 20),
+          icon: const AppIcon(Icons.edit_outlined, size: 20),
         ),
       ],
       child: Column(
@@ -845,17 +1439,17 @@ class CustomerPage extends ConsumerWidget {
           Row(
             children: [
               Expanded(
-                child: OutlinedButton.icon(
+                child: AppButton.outlinedIcon(
                   onPressed: () => context.push('/chat/$id'),
-                  icon: const Icon(Icons.chat_bubble_outline, size: 17),
+                  icon: const AppIcon(Icons.chat_bubble_outline, size: 17),
                   label: const Text('Message'),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: OutlinedButton.icon(
+                child: AppButton.outlinedIcon(
                   onPressed: () => context.push('/call/$id'),
-                  icon: const Icon(Icons.call_outlined, size: 17),
+                  icon: const AppIcon(Icons.call_outlined, size: 17),
                   label: const Text('Call'),
                 ),
               ),
@@ -888,7 +1482,7 @@ class CustomerPage extends ConsumerWidget {
                 MenuRow(
                   'Favourite',
                   Icons.star_border_rounded,
-                  trailing: Switch(
+                  trailing: Switch.adaptive(
                     value: p.favorite,
                     onChanged: (_) =>
                         ref.read(previewProvider.notifier).favorite(id),
@@ -947,7 +1541,7 @@ class CustomerPage extends ConsumerWidget {
                   'Do not disturb',
                   Icons.notifications_off_outlined,
                   subtitle: 'Pause outbound marketing',
-                  trailing: Switch(
+                  trailing: Switch.adaptive(
                     value: state.preferences['dnd$id'] ?? false,
                     onChanged: (v) => ref
                         .read(previewProvider.notifier)
@@ -959,7 +1553,7 @@ class CustomerPage extends ConsumerWidget {
                   'Block contact',
                   Icons.block_outlined,
                   danger: true,
-                  trailing: Switch(
+                  trailing: Switch.adaptive(
                     value: state.preferences['block$id'] ?? false,
                     onChanged: (v) async {
                       if (await confirm(
@@ -1013,7 +1607,7 @@ class _ContactFormPageState extends ConsumerState<ContactFormPage> {
   Widget build(BuildContext context) => PageFrame(
     title: widget.id == null ? 'New contact' : 'Edit contact',
     subtitle: 'A few details to make every conversation personal.',
-    bottom: FilledButton(
+    bottom: AppButton.filled(
       onPressed: () {
         if (!form.currentState!.validate()) return;
         ref
@@ -1112,7 +1706,7 @@ class _ContactToolPageState extends ConsumerState<ContactToolPage> {
               'Studio assistant',
               'Unassigned',
             ])
-              ListTile(
+              AppListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Avatar(member, size: 40),
                 title: Text(member, style: const TextStyle(fontSize: 14)),
@@ -1125,7 +1719,7 @@ class _ContactToolPageState extends ConsumerState<ContactToolPage> {
                   style: const TextStyle(fontSize: 11, color: T.muted),
                 ),
                 selected: p.assignee == member,
-                trailing: Icon(
+                trailing: AppIcon(
                   p.assignee == member
                       ? Icons.radio_button_checked
                       : Icons.radio_button_unchecked,
@@ -1142,7 +1736,7 @@ class _ContactToolPageState extends ConsumerState<ContactToolPage> {
               color: T.wash,
               child: Row(
                 children: [
-                  Icon(Icons.lock_outline, color: T.brass, size: 17),
+                  AppIcon(Icons.lock_outline, color: T.brass, size: 17),
                   SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -1160,7 +1754,7 @@ class _ContactToolPageState extends ConsumerState<ContactToolPage> {
               hint: 'Leave useful context for your team…',
               lines: 4,
             ),
-            FilledButton(
+            AppButton.filled(
               onPressed: () {
                 if (note.text.trim().isEmpty) return;
                 control.note(p.id, note.text.trim());
@@ -1222,8 +1816,9 @@ class _ContactToolPageState extends ConsumerState<ContactToolPage> {
                   'Wholesale',
                   'Resolved',
                 ])
-                  FilterChip(
+                  AppFilterChip(
                     label: Text(tag),
+                    labelStyle: const TextStyle(fontSize: 12, color: T.ink),
                     selected: p.tags.contains(tag),
                     onSelected: (value) => control.tags(
                       p.id,
@@ -1235,7 +1830,7 @@ class _ContactToolPageState extends ConsumerState<ContactToolPage> {
               ],
             ),
             const SizedBox(height: 30),
-            FilledButton(
+            AppButton.filled(
               onPressed: () => context.pop(),
               child: const Text('Done'),
             ),
@@ -1251,7 +1846,7 @@ class _ContactToolPageState extends ConsumerState<ContactToolPage> {
               hint: 'DD / MM / YYYY',
               keyboard: TextInputType.datetime,
             ),
-            FilledButton(
+            AppButton.filled(
               onPressed: () {
                 notice(context, 'Fields saved in preview.');
                 context.pop();
@@ -1264,7 +1859,7 @@ class _ContactToolPageState extends ConsumerState<ContactToolPage> {
               spacing: 8,
               children: [
                 for (final value in ['Photos', 'Documents', 'Links'])
-                  ChoiceChip(
+                  AppChoiceChip(
                     label: Text(value),
                     selected: value == tab,
                     onSelected: (_) => setState(() => tab = value),
@@ -1299,7 +1894,7 @@ class _ContactToolPageState extends ConsumerState<ContactToolPage> {
                   context,
                   const Column(
                     children: [
-                      Icon(
+                      AppIcon(
                         Icons.description_outlined,
                         size: 60,
                         color: T.brass,

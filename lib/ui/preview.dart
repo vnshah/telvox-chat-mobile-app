@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'management.dart';
@@ -6,7 +7,6 @@ import 'theme.dart';
 
 const reviewScreens = <(String, String, String)>[
   ('Access', 'Sign in', '/login'),
-  ('Access', 'Create account', '/register'),
   ('Access', 'Forgot password', '/forgot-password'),
   ('Access', 'Verification', '/verify'),
   ('Access', 'Reset password', '/reset-password'),
@@ -62,13 +62,13 @@ const reviewScreens = <(String, String, String)>[
   ('States', 'Offline state', '/preview/states?state=offline'),
 ];
 
-class PreviewPage extends StatefulWidget {
+class PreviewPage extends ConsumerStatefulWidget {
   const PreviewPage({super.key});
   @override
-  State<PreviewPage> createState() => _PreviewPageState();
+  ConsumerState<PreviewPage> createState() => _PreviewPageState();
 }
 
-class _PreviewPageState extends State<PreviewPage> {
+class _PreviewPageState extends ConsumerState<PreviewPage> {
   String search = '';
   @override
   Widget build(BuildContext context) => PageFrame(
@@ -77,7 +77,30 @@ class _PreviewPageState extends State<PreviewPage> {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const Eyebrow('Preview appearance'),
+        const SizedBox(height: 12),
+        PlatformFilters(
+          options: const ['Device', 'Android', 'iOS'],
+          selected: switch (ref.watch(platformPreviewProvider)) {
+            TargetPlatform.android => 'Android',
+            TargetPlatform.iOS => 'iOS',
+            _ => 'Device',
+          },
+          onSelected: (value) =>
+              ref.read(platformPreviewProvider.notifier).select(switch (value) {
+                'Android' => TargetPlatform.android,
+                'iOS' => TargetPlatform.iOS,
+                _ => null,
+              }),
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          'Device follows your phone. Choose a style to review the screens below.',
+          style: TextStyle(fontSize: 12, color: T.muted),
+        ),
+        const SizedBox(height: 22),
         SearchBox(
+          value: search,
           hint: 'Find a screen',
           onChanged: (v) => setState(() => search = v),
         ),
@@ -131,7 +154,7 @@ class _StatePreviewPageState extends State<StatePreviewPage> {
           runSpacing: 7,
           children: [
             for (final s in ['empty', 'loading', 'error', 'offline'])
-              ChoiceChip(
+              AppChoiceChip(
                 label: Text('${s[0].toUpperCase()}${s.substring(1)}'),
                 selected: state == s,
                 onSelected: (_) => setState(() => state = s),
@@ -159,7 +182,7 @@ class _StatePreviewPageState extends State<StatePreviewPage> {
             color: T.wash,
             child: Row(
               children: [
-                Icon(Icons.wifi_off_rounded, color: T.brass),
+                AppIcon(Icons.wifi_off_rounded, color: T.brass),
                 SizedBox(width: 12),
                 Expanded(
                   child: Text(

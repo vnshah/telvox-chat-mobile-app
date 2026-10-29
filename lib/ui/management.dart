@@ -498,16 +498,17 @@ class _ModulePageState extends ConsumerState<ModulePage> {
       subtitle: spec.description,
       actions: [
         if (!readOnly)
-          IconButton(
+          AppIconButton(
             tooltip: 'Create ${spec.title.toLowerCase()} entry',
             onPressed: () => context.push('/manage/${widget.id}/new'),
-            icon: const Icon(Icons.add),
+            icon: const AppIcon(Icons.add),
           ),
       ],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SearchBox(
+            value: search,
             hint: 'Search ${spec.title.toLowerCase()}',
             onChanged: (v) => setState(() => search = v),
           ),
@@ -530,7 +531,7 @@ class _ModulePageState extends ConsumerState<ModulePage> {
                             color: T.wash,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Icon(spec.icon, color: T.brass, size: 21),
+                          child: AppIcon(spec.icon, color: T.brass, size: 21),
                         ),
                         const SizedBox(width: 13),
                         Expanded(
@@ -557,7 +558,7 @@ class _ModulePageState extends ConsumerState<ModulePage> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        const Icon(
+                        const AppIcon(
                           Icons.chevron_right_rounded,
                           color: T.brass,
                           size: 18,
@@ -606,16 +607,16 @@ class ModuleDetailPage extends ConsumerWidget {
       title: item.$1,
       subtitle: spec.title,
       actions: [
-        IconButton(
+        AppIconButton(
           tooltip: 'Edit entry',
           onPressed: () => context.push('/manage/$section/$index/edit'),
-          icon: const Icon(Icons.edit_outlined, size: 20),
+          icon: const AppIcon(Icons.edit_outlined, size: 20),
         ),
       ],
       bottom: workflow
-          ? FilledButton.icon(
+          ? AppButton.filledIcon(
               onPressed: () => context.push('/workflow/$section-$index'),
-              icon: const Icon(Icons.account_tree_outlined, size: 18),
+              icon: const AppIcon(Icons.account_tree_outlined, size: 18),
               label: const Text('View flow'),
             )
           : null,
@@ -626,7 +627,7 @@ class ModuleDetailPage extends ConsumerWidget {
             color: T.wash,
             child: Row(
               children: [
-                Icon(spec.icon, color: T.brass, size: 34),
+                AppIcon(spec.icon, color: T.brass, size: 34),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(
@@ -665,7 +666,7 @@ class ModuleDetailPage extends ConsumerWidget {
               'Manage tickets',
               'View reports',
             ])
-              CheckboxListTile(
+              AppCheckboxTile(
                 value: true,
                 onChanged: (_) =>
                     notice(context, 'Use Edit entry to preview role changes.'),
@@ -697,7 +698,7 @@ class ModuleDetailPage extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 24),
-            OutlinedButton(
+            AppButton.outlined(
               onPressed: () => notice(
                 context,
                 'Connection testing is a preview; no request is sent.',
@@ -713,7 +714,7 @@ class ModuleDetailPage extends ConsumerWidget {
                 color: T.wash,
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: const Icon(
+              child: const AppIcon(
                 Icons.qr_code_2_rounded,
                 size: 140,
                 color: T.ink,
@@ -763,7 +764,7 @@ class _ModuleFormPageState extends ConsumerState<ModuleFormPage> {
     return PageFrame(
       title: widget.index == null ? 'New entry' : 'Edit entry',
       subtitle: spec.title,
-      bottom: FilledButton(
+      bottom: AppButton.filled(
         onPressed: () {
           if (!form.currentState!.validate()) return;
           ref
@@ -827,7 +828,7 @@ class _ModuleFormPageState extends ConsumerState<ModuleFormPage> {
                 'View reports',
                 'Manage team',
               ])
-                CheckboxListTile(
+                AppCheckboxTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text(permission, style: const TextStyle(fontSize: 13)),
                   value: chosenPermissions.contains(permission),
@@ -840,7 +841,7 @@ class _ModuleFormPageState extends ConsumerState<ModuleFormPage> {
                   }),
                 ),
             ],
-            SwitchListTile(
+            AppSwitchTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Active', style: TextStyle(fontSize: 14)),
               subtitle: const Text(
@@ -904,7 +905,7 @@ class _FlowPageState extends State<FlowPage> {
         : 'Welcome automation',
     subtitle: 'A simple journey, one thoughtful step at a time.',
     actions: [
-      TextButton(
+      AppButton.text(
         onPressed: () => notice(context, 'Flow saved as a preview draft.'),
         child: const Text('Save draft'),
       ),
@@ -933,7 +934,7 @@ class _FlowPageState extends State<FlowPage> {
                       color: i == 0 ? T.selected : T.wash,
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Icon(
+                    child: AppIcon(
                       nodes[i].$3,
                       color: i == 0 ? T.green : T.brass,
                       size: 21,
@@ -959,7 +960,7 @@ class _FlowPageState extends State<FlowPage> {
                       ],
                     ),
                   ),
-                  const Icon(Icons.edit_outlined, size: 17, color: T.brass),
+                  const AppIcon(Icons.edit_outlined, size: 17, color: T.brass),
                 ],
               ),
             ),
@@ -967,11 +968,11 @@ class _FlowPageState extends State<FlowPage> {
           if (i < nodes.length - 1)
             const SizedBox(
               height: 42,
-              child: Icon(Icons.south_rounded, color: T.control, size: 20),
+              child: AppIcon(Icons.south_rounded, color: T.control, size: 20),
             ),
         ],
         const SizedBox(height: 24),
-        OutlinedButton.icon(
+        AppButton.outlinedIcon(
           onPressed: () => setState(
             () => nodes.add((
               'New step',
@@ -979,7 +980,7 @@ class _FlowPageState extends State<FlowPage> {
               Icons.add,
             )),
           ),
-          icon: const Icon(Icons.add, size: 18),
+          icon: const AppIcon(Icons.add, size: 18),
           label: const Text('Add step'),
         ),
         const SizedBox(height: 20),
@@ -1013,10 +1014,10 @@ class CampaignsPage extends StatelessWidget {
     title: 'Campaigns',
     subtitle: 'Reach out with something worth opening.',
     actions: [
-      IconButton(
+      AppIconButton(
         tooltip: 'Create campaign',
         onPressed: () => context.push('/campaign/new'),
-        icon: const Icon(Icons.add),
+        icon: const AppIcon(Icons.add),
       ),
     ],
     child: Column(
@@ -1026,7 +1027,7 @@ class CampaignsPage extends StatelessWidget {
           color: T.selected,
           child: Row(
             children: [
-              Icon(Icons.campaign_outlined, color: T.green, size: 28),
+              AppIcon(Icons.campaign_outlined, color: T.green, size: 28),
               SizedBox(width: 16),
               Expanded(
                 child: Text(
@@ -1135,14 +1136,14 @@ class _CampaignFormPageState extends State<CampaignFormPage> {
     bottom: Row(
       children: [
         if (step > 0) ...[
-          OutlinedButton(
+          AppButton.outlined(
             onPressed: () => setState(() => step--),
             child: const Text('Back'),
           ),
           const SizedBox(width: 12),
         ],
         Expanded(
-          child: FilledButton(
+          child: AppButton.filled(
             onPressed: () {
               if (step == 0 && !form.currentState!.validate()) return;
               if (step < 2) {
@@ -1212,7 +1213,7 @@ class _CampaignFormPageState extends State<CampaignFormPage> {
                       'New leads',
                       'Wholesale',
                     ])
-                      ChoiceChip(
+                      AppChoiceChip(
                         label: Text(a),
                         selected: audience == a,
                         onSelected: (_) => setState(() => audience = a),
@@ -1233,9 +1234,9 @@ class _CampaignFormPageState extends State<CampaignFormPage> {
               const Eyebrow('Choose a template'),
               const SizedBox(height: 16),
               for (final t in templates.where((t) => t.status == 'Approved'))
-                ListTile(
+                AppListTile(
                   selected: template == t.id,
-                  leading: Icon(
+                  leading: AppIcon(
                     template == t.id
                         ? Icons.radio_button_checked
                         : Icons.radio_button_unchecked,
@@ -1249,20 +1250,20 @@ class _CampaignFormPageState extends State<CampaignFormPage> {
                   onTap: () => setState(() => template = t.id),
                 ),
               const Section('Delivery'),
-              ChoiceChip(
+              AppChoiceChip(
                 label: const Text('Save as draft'),
                 selected: schedule == 'Draft',
                 onSelected: (_) => setState(() => schedule = 'Draft'),
               ),
-              ChoiceChip(
+              AppChoiceChip(
                 label: const Text('Schedule later'),
                 selected: schedule == 'Send later',
                 onSelected: (_) => setState(() => schedule = 'Send later'),
               ),
               if (schedule == 'Send later')
-                TextButton.icon(
+                AppButton.textIcon(
                   onPressed: () async {
-                    final value = await showDatePicker(
+                    final value = await showAppDatePicker(
                       context: context,
                       initialDate: date,
                       firstDate: DateTime(2026, 10, 28),
@@ -1270,7 +1271,7 @@ class _CampaignFormPageState extends State<CampaignFormPage> {
                     );
                     if (value != null) setState(() => date = value);
                   },
-                  icon: const Icon(Icons.event_outlined, size: 18),
+                  icon: const AppIcon(Icons.event_outlined, size: 18),
                   label: Text('${date.day}/${date.month}/${date.year} · 11:00'),
                 ),
             ],
@@ -1353,7 +1354,7 @@ class CampaignDetailPage extends StatelessWidget {
         const InfoLine('Sent', '27 October · 10:00'),
         const InfoLine('Template', 'new_collection'),
         const SizedBox(height: 20),
-        OutlinedButton(
+        AppButton.outlined(
           onPressed: () => context.push('/reports?type=Broadcast'),
           child: const Text('View campaign report'),
         ),
@@ -1550,19 +1551,19 @@ class _ReportsPageState extends State<ReportsPage> {
     title: 'Reports',
     subtitle: 'A clearer view of the conversations that matter.',
     actions: [
-      IconButton(
+      AppIconButton(
         tooltip: 'Export report preview',
         onPressed: () => notice(
           context,
           'Report export is a preview. No customer data is exported.',
         ),
-        icon: const Icon(Icons.file_download_outlined, size: 20),
+        icon: const AppIcon(Icons.file_download_outlined, size: 20),
       ),
     ],
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        DropdownButtonFormField<String>(
+        AppDropdownField<String>(
           initialValue: report,
           isExpanded: true,
           decoration: const InputDecoration(labelText: 'Report'),
@@ -1573,7 +1574,7 @@ class _ReportsPageState extends State<ReportsPage> {
           onChanged: (v) => setState(() => report = v!),
         ),
         const SizedBox(height: 14),
-        OutlinedButton.icon(
+        AppButton.outlinedIcon(
           onPressed: () async {
             final chosen = await showDateRangePicker(
               context: context,
@@ -1583,7 +1584,7 @@ class _ReportsPageState extends State<ReportsPage> {
             );
             if (chosen != null) setState(() => range = chosen);
           },
-          icon: const Icon(Icons.date_range_outlined, size: 17),
+          icon: const AppIcon(Icons.date_range_outlined, size: 17),
           label: Text(
             '${range.start.day}/${range.start.month} – ${range.end.day}/${range.end.month}/${range.end.year}',
           ),
@@ -1648,9 +1649,9 @@ class _ReportsPageState extends State<ReportsPage> {
               : 'Report breakdown',
         ),
         for (final (name, detail, total) in breakdown)
-          ListTile(
+          AppListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.insights_outlined, color: T.brass),
+            leading: const AppIcon(Icons.insights_outlined, color: T.brass),
             title: Text(name, style: const TextStyle(fontSize: 13)),
             subtitle: Text(detail, style: mono(size: 10)),
             trailing: Text(total, style: mono(size: 11, color: T.green)),
@@ -1688,7 +1689,7 @@ class BillingPage extends StatelessWidget {
               const SizedBox(height: 18),
               Text('₹4,820.00', style: mono(size: 32, color: T.paper)),
               const SizedBox(height: 22),
-              FilledButton(
+              AppButton.filled(
                 onPressed: () => sheet(
                   context,
                   Column(
@@ -1709,7 +1710,7 @@ class BillingPage extends StatelessWidget {
                         style: TextStyle(color: T.muted, fontSize: 12),
                       ),
                       const SizedBox(height: 20),
-                      FilledButton(
+                      AppButton.filled(
                         onPressed: () => Navigator.pop(context),
                         child: const Text('Done'),
                       ),
@@ -1742,7 +1743,7 @@ class BillingPage extends StatelessWidget {
                 style: TextStyle(color: T.secondary, fontSize: 13, height: 1.6),
               ),
               const SizedBox(height: 16),
-              OutlinedButton(
+              AppButton.outlined(
                 onPressed: () => context.push('/manage/plans'),
                 child: const Text('View plans'),
               ),
@@ -1755,9 +1756,9 @@ class BillingPage extends StatelessWidget {
           ('Messaging usage', '27 OCT · DEBIT', '− ₹180'),
           ('Plan renewal', '01 OCT · INVOICE', '₹1,999'),
         ])
-          ListTile(
+          AppListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.receipt_long_outlined, color: T.brass),
+            leading: const AppIcon(Icons.receipt_long_outlined, color: T.brass),
             title: Text(title, style: const TextStyle(fontSize: 13)),
             subtitle: Text(date, style: mono(size: 9)),
             trailing: Text(

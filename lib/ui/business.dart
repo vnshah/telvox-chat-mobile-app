@@ -21,16 +21,17 @@ class _TemplatesPageState extends State<TemplatesPage> {
     title: 'Message templates',
     subtitle: 'A thoughtful start to every conversation.',
     actions: [
-      IconButton(
+      AppIconButton(
         tooltip: 'Create template',
         onPressed: () => context.push('/template/new'),
-        icon: const Icon(Icons.add),
+        icon: const AppIcon(Icons.add),
       ),
     ],
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SearchBox(
+          value: search,
           hint: 'Search templates',
           onChanged: (v) => setState(() => search = v),
         ),
@@ -39,7 +40,7 @@ class _TemplatesPageState extends State<TemplatesPage> {
           spacing: 8,
           children: [
             for (final c in ['All', 'Utility', 'Marketing'])
-              ChoiceChip(
+              AppChoiceChip(
                 label: Text(c),
                 selected: c == category,
                 onSelected: (_) => setState(() => category = c),
@@ -99,7 +100,7 @@ class _TemplatesPageState extends State<TemplatesPage> {
                         const SizedBox(width: 8),
                         Text('English', style: mono(size: 10)),
                         const Spacer(),
-                        const Icon(
+                        const AppIcon(
                           Icons.arrow_forward_rounded,
                           size: 17,
                           color: T.brass,
@@ -153,7 +154,7 @@ class _TemplatePreviewPageState extends ConsumerState<TemplatePreviewPage> {
     return PageFrame(
       title: template.title,
       subtitle: template.name,
-      bottom: FilledButton.icon(
+      bottom: AppButton.filledIcon(
         onPressed: template.status != 'Approved'
             ? null
             : () {
@@ -170,7 +171,7 @@ class _TemplatePreviewPageState extends ConsumerState<TemplatePreviewPage> {
                   context.push('/contacts?template=${widget.id}');
                 }
               },
-        icon: const Icon(Icons.send_outlined, size: 18),
+        icon: const AppIcon(Icons.send_outlined, size: 18),
         label: Text(
           widget.contact == null
               ? 'Choose a conversation'
@@ -226,7 +227,7 @@ class _TemplatePreviewPageState extends ConsumerState<TemplatePreviewPage> {
                       ),
                       const SizedBox(height: 12),
                       const Divider(),
-                      TextButton(
+                      AppButton.text(
                         onPressed: () => context.push('/order/2048'),
                         child: const Text(
                           'View order',
@@ -264,7 +265,7 @@ class _TemplateFormPageState extends State<TemplateFormPage> {
   Widget build(BuildContext context) => PageFrame(
     title: 'Create template',
     subtitle: 'Clear, personal messages your customers will appreciate.',
-    bottom: FilledButton(
+    bottom: AppButton.filled(
       onPressed: () {
         if (!form.currentState!.validate()) return;
         sheet(
@@ -281,7 +282,7 @@ class _TemplateFormPageState extends State<TemplateFormPage> {
                 style: TextStyle(color: T.muted, fontSize: 12),
               ),
               const SizedBox(height: 20),
-              FilledButton(
+              AppButton.filled(
                 onPressed: () => Navigator.pop(context),
                 child: const Text('Back to draft'),
               ),
@@ -307,7 +308,7 @@ class _TemplateFormPageState extends State<TemplateFormPage> {
             spacing: 8,
             children: [
               for (final c in ['Utility', 'Marketing', 'Authentication'])
-                ChoiceChip(
+                AppChoiceChip(
                   label: Text(c),
                   selected: category == c,
                   onSelected: (_) => setState(() => category = c),
@@ -372,15 +373,16 @@ class _QuickRepliesPageState extends State<QuickRepliesPage> {
     title: 'Quick replies',
     subtitle: 'A little less typing. The same personal touch.',
     actions: [
-      IconButton(
+      AppIconButton(
         tooltip: 'Add quick reply',
         onPressed: _add,
-        icon: const Icon(Icons.add),
+        icon: const AppIcon(Icons.add),
       ),
     ],
     child: Column(
       children: [
         SearchBox(
+          value: search,
           hint: 'Search saved replies',
           onChanged: (v) => setState(() => search = v),
         ),
@@ -405,7 +407,7 @@ class _QuickRepliesPageState extends State<QuickRepliesPage> {
                           const SizedBox(height: 20),
                           Text(r.$2),
                           const SizedBox(height: 24),
-                          FilledButton(
+                          AppButton.filled(
                             onPressed: () {
                               Navigator.pop(context);
                               context.push(
@@ -474,7 +476,7 @@ class _AiPageState extends State<AiPage> {
     subtitle: 'A helping hand. Your voice, always.',
     bottom: result.isEmpty
         ? null
-        : FilledButton(
+        : AppButton.filled(
             onPressed: () {
               if (widget.returnDraft) {
                 context.pop(result);
@@ -491,7 +493,7 @@ class _AiPageState extends State<AiPage> {
           color: T.selected,
           child: Row(
             children: [
-              Icon(Icons.auto_awesome_outlined, size: 24, color: T.green),
+              AppIcon(Icons.auto_awesome_outlined, size: 24, color: T.green),
               SizedBox(width: 14),
               Expanded(
                 child: Text(
@@ -515,7 +517,7 @@ class _AiPageState extends State<AiPage> {
               'Suggest template',
               'Extract fields',
             ])
-              ChoiceChip(
+              AppChoiceChip(
                 label: Text(value),
                 selected: mode == value,
                 onSelected: (_) => setState(() {
@@ -539,7 +541,7 @@ class _AiPageState extends State<AiPage> {
           spacing: 8,
           children: [
             for (final value in ['Warm', 'Professional', 'Concise'])
-              ChoiceChip(
+              AppChoiceChip(
                 label: Text(value),
                 selected: tone == value,
                 onSelected: (_) => setState(() => tone = value),
@@ -547,7 +549,7 @@ class _AiPageState extends State<AiPage> {
           ],
         ),
         const SizedBox(height: 24),
-        FilledButton.icon(
+        AppButton.filledIcon(
           onPressed: () => setState(
             () => result = switch (mode) {
               'Translate' => 'आपके संदेश के लिए धन्यवाद! आपका ऑर्डर पैक हो गया है और शुक्रवार तक पहुँच जाएगा।',
@@ -560,14 +562,14 @@ class _AiPageState extends State<AiPage> {
                     : 'Hi Ananya! Your order is packed with care and should arrive by Friday. We’ve also shared your invoice. Let us know if there’s anything else we can help with. 🌿',
             },
           ),
-          icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+          icon: const AppIcon(Icons.auto_awesome_outlined, size: 18),
           label: const Text('Generate preview'),
         ),
         if (result.isNotEmpty) ...[
           const Section('Suggested response'),
           Panel(child: Text(result, style: const TextStyle(height: 1.7))),
           const SizedBox(height: 12),
-          TextButton(
+          AppButton.text(
             onPressed: () => setState(() {
               draft.text = result;
               result = '';
@@ -610,6 +612,7 @@ class _CataloguePageState extends State<CataloguePage> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SearchBox(
+            value: search,
             hint: 'Search products',
             onChanged: (v) => setState(() => search = v),
           ),
@@ -624,7 +627,7 @@ class _CataloguePageState extends State<CataloguePage> {
                 'Desk essentials',
                 'Home & living',
               ])
-                ChoiceChip(
+                AppChoiceChip(
                   label: Text(c),
                   selected: category == c,
                   onSelected: (_) => setState(() => category = c),
@@ -698,7 +701,7 @@ class ProductPage extends ConsumerWidget {
     );
     return PageFrame(
       title: 'Product details',
-      bottom: FilledButton.icon(
+      bottom: AppButton.filledIcon(
         onPressed: () {
           if (contact != null) {
             ref
@@ -710,7 +713,7 @@ class ProductPage extends ConsumerWidget {
             context.push('/contacts?product=$id');
           }
         },
-        icon: const Icon(Icons.share_outlined, size: 18),
+        icon: const AppIcon(Icons.share_outlined, size: 18),
         label: const Text('Share in a conversation'),
       ),
       child: Column(
@@ -811,10 +814,10 @@ class OrderPage extends StatelessWidget {
   Widget build(BuildContext context) => PageFrame(
     title: 'Order #ST-$id',
     actions: [
-      IconButton(
+      AppIconButton(
         tooltip: 'Message customer',
         onPressed: () => context.push('/chat/ananya'),
-        icon: const Icon(Icons.chat_bubble_outline, size: 20),
+        icon: const AppIcon(Icons.chat_bubble_outline, size: 20),
       ),
     ],
     child: Column(
@@ -889,7 +892,7 @@ class OrderPage extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 20),
             child: Row(
               children: [
-                Icon(
+                AppIcon(
                   step.$3 ? Icons.check_circle : Icons.circle_outlined,
                   color: step.$3 ? T.green : T.control,
                   size: 22,
@@ -940,57 +943,36 @@ class _TicketsPageState extends ConsumerState<TicketsPage> {
         .toList();
     return Scaffold(
       backgroundColor: Colors.white,
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: AppFab(
         tooltip: 'Create ticket',
-        backgroundColor: T.green,
-        foregroundColor: Colors.white,
-        shape: const CircleBorder(),
+
         onPressed: () => context.push('/ticket/new'),
-        child: const Icon(Icons.add),
+        child: const AppIcon(Icons.add),
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 22, 20, 12),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Text(
-                      'Tickets',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const Spacer(),
-                    const Pill('Support', color: T.brass, fill: T.wash),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Every issue deserves a little care.',
-                  style: TextStyle(color: T.muted, fontSize: 12),
-                ),
-                const SizedBox(height: 20),
                 SearchBox(
+                  value: search,
                   hint: 'Search tickets or customers',
+                  dense: true,
                   onChanged: (v) => setState(() => search = v),
                 ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 7,
-                  children: [
-                    for (final s in ['Open', 'Pending', 'Resolved', 'All'])
-                      ChoiceChip(
-                        label: Text(s),
-                        selected: status == s,
-                        onSelected: (_) => setState(() => status = s),
-                      ),
-                  ],
+                const SizedBox(height: 8),
+                PlatformFilters(
+                  options: const ['Open', 'Pending', 'Resolved', 'All'],
+                  selected: status,
+                  onSelected: (value) => setState(() => status = value),
                 ),
               ],
             ),
           ),
+          const Divider(),
           Expanded(
             child: tickets.isEmpty
                 ? const EmptyView(
@@ -998,96 +980,89 @@ class _TicketsPageState extends ConsumerState<TicketsPage> {
                     description: 'Your team is keeping things moving.',
                     icon: Icons.task_alt_rounded,
                   )
-                : ListView(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 90),
-                    children: [
-                      for (final t in tickets)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 14),
-                          child: Panel(
-                            child: InkWell(
-                              onTap: () => context.push('/ticket/${t.id}'),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Text('#${t.id}', style: mono(size: 11)),
-                                      const Spacer(),
-                                      Pill(
-                                        t.priority,
-                                        color: t.priority == 'High'
-                                            ? T.danger
-                                            : T.brass,
-                                        fill: t.priority == 'High'
-                                            ? const Color(0xFFF6E0E7)
-                                            : T.wash,
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    t.title,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Row(
-                                    children: [
-                                      Avatar(
-                                        person(state, t.personId).name,
-                                        size: 28,
-                                        color: person(state, t.personId).color,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          person(state, t.personId).name,
-                                          style: const TextStyle(fontSize: 12),
+                : ListView.separated(
+                    padding: const EdgeInsets.only(bottom: 80),
+                    itemCount: tickets.length,
+                    separatorBuilder: (_, _) => const Padding(
+                      padding: EdgeInsets.only(left: 72),
+                      child: Divider(),
+                    ),
+                    itemBuilder: (context, i) {
+                      final t = tickets[i];
+                      final p = person(state, t.personId);
+                      return InkWell(
+                        key: ValueKey('ticket-row-${t.id}'),
+                        onTap: () => context.push('/ticket/${t.id}'),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          child: Row(
+                            children: [
+                              Avatar(p.name, size: 40, color: p.color),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            t.title,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                      Pill(t.status),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 16),
-                                  const Divider(),
-                                  const SizedBox(height: 10),
-                                  Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.schedule,
-                                        size: 13,
-                                        color: T.brass,
-                                      ),
-                                      const SizedBox(width: 5),
-                                      Text(
-                                        t.priority == 'High'
-                                            ? 'Response due in 24m'
-                                            : 'Within response target',
-                                        style: mono(
-                                          size: 9,
-                                          color: t.priority == 'High'
-                                              ? T.danger
-                                              : T.muted,
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          t.priority,
+                                          style: mono(
+                                            size: 10,
+                                            color: t.priority == 'High'
+                                                ? T.danger
+                                                : T.muted,
+                                          ),
                                         ),
-                                      ),
-                                      const Spacer(),
-                                      Text(
-                                        t.department,
-                                        style: const TextStyle(
-                                          fontSize: 10,
-                                          color: T.muted,
+                                      ],
+                                    ),
+                                    const SizedBox(height: 5),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            '${p.name} · #${t.id}',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              color: T.muted,
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          t.status,
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            color: T.green,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
+                            ],
                           ),
                         ),
-                    ],
+                      );
+                    },
                   ),
           ),
         ],
@@ -1110,9 +1085,9 @@ class TicketDetailPage extends ConsumerWidget {
     return PageFrame(
       title: 'Ticket #${t.id}',
       subtitle: t.title,
-      bottom: FilledButton.icon(
+      bottom: AppButton.filledIcon(
         onPressed: () => context.push('/chat/${p.id}'),
-        icon: const Icon(Icons.chat_bubble_outline, size: 18),
+        icon: const AppIcon(Icons.chat_bubble_outline, size: 18),
         label: const Text('Open conversation'),
       ),
       child: Column(
@@ -1147,10 +1122,10 @@ class TicketDetailPage extends ConsumerWidget {
                     ],
                   ),
                 ),
-                IconButton(
+                AppIconButton(
                   tooltip: 'Customer details',
                   onPressed: () => context.push('/customer/${p.id}'),
-                  icon: const Icon(Icons.arrow_forward, size: 18),
+                  icon: const AppIcon(Icons.arrow_forward, size: 18),
                 ),
               ],
             ),
@@ -1172,7 +1147,7 @@ class TicketDetailPage extends ConsumerWidget {
             spacing: 8,
             children: [
               for (final s in ['Open', 'Pending', 'Resolved'])
-                ChoiceChip(
+                AppChoiceChip(
                   label: Text(s),
                   selected: t.status == s,
                   onSelected: (_) =>
@@ -1280,7 +1255,7 @@ class _TicketFormPageState extends ConsumerState<TicketFormPage> {
   Widget build(BuildContext context) => PageFrame(
     title: 'Create ticket',
     subtitle: 'Give your customer’s question a place to land.',
-    bottom: FilledButton(
+    bottom: AppButton.filled(
       onPressed: () {
         if (!form.currentState!.validate()) return;
         ref
@@ -1302,7 +1277,7 @@ class _TicketFormPageState extends ConsumerState<TicketFormPage> {
             hint: 'What does the customer need?',
             required: true,
           ),
-          DropdownButtonFormField<String>(
+          AppDropdownField<String>(
             initialValue: customer,
             decoration: const InputDecoration(labelText: 'Customer'),
             items: [
@@ -1319,7 +1294,7 @@ class _TicketFormPageState extends ConsumerState<TicketFormPage> {
             spacing: 8,
             children: [
               for (final p in ['Low', 'Medium', 'High'])
-                ChoiceChip(
+                AppChoiceChip(
                   label: Text(p),
                   selected: priority == p,
                   onSelected: (_) => setState(() => priority = p),
@@ -1352,10 +1327,10 @@ class _CallsPageState extends State<CallsPage> {
     title: 'Calls',
     subtitle: 'Some things are better said out loud.',
     actions: [
-      IconButton(
+      AppIconButton(
         tooltip: 'New call',
         onPressed: () => context.push('/contacts?pick=call'),
-        icon: const Icon(Icons.add_call),
+        icon: const AppIcon(Icons.add_call),
       ),
     ],
     child: Column(
@@ -1365,7 +1340,7 @@ class _CallsPageState extends State<CallsPage> {
           spacing: 8,
           children: [
             for (final f in ['All', 'Missed'])
-              ChoiceChip(
+              AppChoiceChip(
                 label: Text(f),
                 selected: filter == f,
                 onSelected: (_) => setState(() => filter = f),
@@ -1379,7 +1354,7 @@ class _CallsPageState extends State<CallsPage> {
           ('Rohan Mehta', 'rohan', '09:10 · 1m 42s', false),
         ])
           if (filter == 'All' || c.$4)
-            ListTile(
+            AppListTile(
               contentPadding: const EdgeInsets.symmetric(vertical: 10),
               leading: Avatar(c.$1),
               title: Text(
@@ -1393,7 +1368,7 @@ class _CallsPageState extends State<CallsPage> {
                 padding: const EdgeInsets.only(top: 6),
                 child: Row(
                   children: [
-                    Icon(
+                    AppIcon(
                       c.$4 ? Icons.call_missed : Icons.call_made,
                       size: 14,
                       color: c.$4 ? T.danger : T.green,
@@ -1406,10 +1381,10 @@ class _CallsPageState extends State<CallsPage> {
                   ],
                 ),
               ),
-              trailing: IconButton(
+              trailing: AppIconButton(
                 tooltip: 'Call ${c.$1}',
                 onPressed: () => context.push('/call/${c.$2}'),
-                icon: const Icon(Icons.call_outlined, size: 21),
+                icon: const AppIcon(Icons.call_outlined, size: 21),
               ),
             ),
         const Section('Call previews'),
@@ -1455,10 +1430,10 @@ class _CallPageState extends ConsumerState<CallPage> {
               children: [
                 Row(
                   children: [
-                    IconButton(
+                    AppIconButton(
                       tooltip: 'Back',
                       onPressed: () => context.pop(),
-                      icon: const Icon(
+                      icon: const AppIcon(
                         Icons.keyboard_arrow_down,
                         color: T.paper,
                       ),
@@ -1530,7 +1505,7 @@ class _CallPageState extends ConsumerState<CallPage> {
                   children: [
                     Column(
                       children: [
-                        IconButton.filled(
+                        AppIconButton.filled(
                           tooltip: incoming ? 'Decline call' : 'End call',
                           style: IconButton.styleFrom(
                             backgroundColor: T.danger,
@@ -1543,7 +1518,7 @@ class _CallPageState extends ConsumerState<CallPage> {
                               context.go('/more');
                             }
                           },
-                          icon: const Icon(
+                          icon: const AppIcon(
                             Icons.call_end,
                             color: Colors.white,
                             size: 28,
@@ -1562,14 +1537,14 @@ class _CallPageState extends ConsumerState<CallPage> {
                     if (incoming)
                       Column(
                         children: [
-                          IconButton.filled(
+                          AppIconButton.filled(
                             tooltip: 'Accept call',
                             style: IconButton.styleFrom(
                               backgroundColor: T.green,
                               fixedSize: const Size(66, 66),
                             ),
                             onPressed: () => setState(() => accepted = true),
-                            icon: const Icon(
+                            icon: const AppIcon(
                               Icons.call,
                               color: Colors.white,
                               size: 28,
@@ -1604,14 +1579,14 @@ class _CallPageState extends ConsumerState<CallPage> {
     VoidCallback action,
   ) => Column(
     children: [
-      IconButton(
+      AppIconButton(
         tooltip: title,
         style: IconButton.styleFrom(
           backgroundColor: selected ? T.paper : T.secondary,
           fixedSize: const Size(52, 52),
         ),
         onPressed: action,
-        icon: Icon(icon, color: selected ? T.ink : T.paper),
+        icon: AppIcon(icon, color: selected ? T.ink : T.paper),
       ),
       const SizedBox(height: 9),
       Text(title, style: const TextStyle(color: T.control, fontSize: 11)),

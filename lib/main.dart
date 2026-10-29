@@ -12,6 +12,9 @@ void main() {
       'Geist',
       'Geist Mono',
     ], await rootBundle.loadString('assets/fonts/OFL.txt'));
+    yield LicenseEntryWithLineBreaks([
+      'Roboto',
+    ], await rootBundle.loadString('assets/fonts/Roboto-OFL.txt'));
   });
   runApp(const ProviderScope(child: TelvoxApp()));
 }

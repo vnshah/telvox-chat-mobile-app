@@ -1,4 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
@@ -26,7 +29,6 @@ GoRouter createRouter({String initialLocation = '/login'}) => GoRouter(
   routes: [
     for (final (path, mode) in [
       ('/login', 'login'),
-      ('/register', 'register'),
       ('/forgot-password', 'forgot'),
       ('/verify', 'verify'),
       ('/reset-password', 'reset'),
@@ -213,14 +215,15 @@ GoRouter createRouter({String initialLocation = '/login'}) => GoRouter(
   ],
 );
 
-class TelvoxApp extends StatefulWidget {
-  const TelvoxApp({super.key, this.router});
+class TelvoxApp extends ConsumerStatefulWidget {
+  const TelvoxApp({super.key, this.router, this.platform});
+  final TargetPlatform? platform;
   final GoRouter? router;
   @override
-  State<TelvoxApp> createState() => _TelvoxAppState();
+  ConsumerState<TelvoxApp> createState() => _TelvoxAppState();
 }
 
-class _TelvoxAppState extends State<TelvoxApp> {
+class _TelvoxAppState extends ConsumerState<TelvoxApp> {
   late final router = widget.router ?? createRouter();
   @override
   void dispose() {
@@ -229,16 +232,27 @@ class _TelvoxAppState extends State<TelvoxApp> {
   }
 
   @override
-  Widget build(BuildContext context) => MaterialApp.router(
-    title: 'Telvox Chat',
-    debugShowCheckedModeBanner: false,
-    theme: T.theme,
-    builder: (_, child) => AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.dark.copyWith(
-        systemNavigationBarColor: T.paper,
+  Widget build(BuildContext context) {
+    final platform =
+        widget.platform ??
+        ref.watch(platformPreviewProvider) ??
+        defaultTargetPlatform;
+    return MaterialApp.router(
+      title: 'Telvox Chat',
+      debugShowCheckedModeBanner: false,
+      theme: T.themeFor(platform),
+      builder: (_, child) => CupertinoTheme(
+        data: T.cupertino,
+        child: AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle.dark.copyWith(
+            systemNavigationBarColor: platform == TargetPlatform.iOS
+                ? Colors.white
+                : T.paper,
+          ),
+          child: child!,
+        ),
       ),
-      child: child!,
-    ),
-    routerConfig: router,
-  );
+      routerConfig: router,
+    );
+  }
 }

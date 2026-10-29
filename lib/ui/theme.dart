@@ -1,168 +1,295 @@
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
-abstract final class T {
-  static const paper = Color(0xFFF0ECE5);
-  static const wash = Color(0xFFF7F4EE);
-  static const ink = Color(0xFF221C16);
-  static const secondary = Color(0xFF4F4A44);
-  static const muted = Color(0xFF7A7268);
-  static const green = Color(0xFF1E7A4F);
-  static const brass = Color(0xFF8A7355);
-  static const edge = Color(0xFFE3DED4);
-  static const control = Color(0xFFD5CFC4);
-  static const selected = Color(0xFFE4EEE4);
-  static const outgoing = Color(0xFFD5E8D6);
-  static const firm = Color(0xFF1C1B1A);
-  static const danger = Color(0xFFC2335E);
-  static const blue = Color(0xFF1B9BD8);
+import 'platform.dart';
+export 'platform.dart';
 
-  static ThemeData get theme => ThemeData(
-    useMaterial3: true,
-    fontFamily: 'Geist',
-    fontFamilyFallback: const ['Noto Color Emoji'],
-    floatingActionButtonTheme: const FloatingActionButtonThemeData(
-      elevation: 0,
-      focusElevation: 0,
-      hoverElevation: 0,
-      highlightElevation: 0,
-    ),
-    scaffoldBackgroundColor: Colors.white,
-    colorScheme: ColorScheme.fromSeed(seedColor: green).copyWith(
-      primary: green,
-      onPrimary: Colors.white,
-      surface: Colors.white,
-      onSurface: ink,
-      outline: control,
-      error: danger,
-    ),
-    textTheme: const TextTheme(
-      headlineLarge: TextStyle(
-        fontSize: 34,
-        height: 1.12,
-        fontWeight: FontWeight.w600,
-        letterSpacing: -1.2,
+abstract final class T {
+  static const paper = Color(0xFFEAF2EB);
+  static const wash = Color(0xFFF4F7F3);
+  static const ink = Color(0xFF1B2922);
+  static const secondary = Color(0xFF405047);
+  static const muted = Color(0xFF566258);
+  static const green = Color(0xFF176B46);
+  static const forest = Color(0xFF173D2E);
+  static const mint = Color(0xFFB8DCC7);
+  static const brass = Color(0xFF5F7365);
+  static const edge = Color(0xFFDCE5DC);
+  static const control = Color(0xFFB6C7BA);
+  static const selected = Color(0xFFC8E4D1);
+  static const outgoing = Color(0xFFC9E3D2);
+  static const firm = Color(0xFF173D2E);
+  static const danger = Color(0xFFC2335E);
+  static const blue = Color(0xFF137BA4);
+
+  // iOS uses its system face. Previewing that UI elsewhere uses our bundled face.
+  static String get cupertinoFamily =>
+      defaultTargetPlatform == TargetPlatform.iOS ? '.SF Pro Text' : 'Geist';
+  static String get cupertinoDisplayFamily =>
+      defaultTargetPlatform == TargetPlatform.iOS ? '.SF Pro Display' : 'Geist';
+
+  static CupertinoThemeData get cupertino => CupertinoThemeData(
+    brightness: Brightness.light,
+    primaryColor: green,
+    scaffoldBackgroundColor: Color(0xFFF2F2F7),
+    barBackgroundColor: Color(0xFAFCFCFC),
+    textTheme: CupertinoTextThemeData(
+      primaryColor: green,
+      textStyle: TextStyle(
+        fontFamily: cupertinoFamily,
+        fontFamilyFallback: ['Geist', 'Noto Color Emoji'],
+        fontSize: 15,
         color: ink,
       ),
-      headlineMedium: TextStyle(
-        fontSize: 26,
-        height: 1.2,
-        fontWeight: FontWeight.w600,
-        letterSpacing: -.7,
-        color: ink,
-      ),
-      titleLarge: TextStyle(
-        fontSize: 22,
-        fontWeight: FontWeight.w600,
-        letterSpacing: -.5,
-        color: ink,
-      ),
-      titleMedium: TextStyle(
+      actionTextStyle: TextStyle(
+        fontFamily: cupertinoFamily,
+        fontFamilyFallback: ['Geist'],
         fontSize: 16,
+        color: green,
+      ),
+      navActionTextStyle: TextStyle(
+        fontFamily: cupertinoFamily,
+        fontFamilyFallback: ['Geist'],
+        fontSize: 16,
+        color: green,
+      ),
+      navTitleTextStyle: TextStyle(
+        fontFamily: cupertinoFamily,
+        fontFamilyFallback: ['Geist'],
+        fontSize: 17,
         fontWeight: FontWeight.w600,
-        letterSpacing: -.2,
         color: ink,
       ),
-      bodyLarge: TextStyle(fontSize: 15, height: 1.5, color: ink),
-      bodyMedium: TextStyle(fontSize: 14, height: 1.45, color: ink),
-      bodySmall: TextStyle(fontSize: 12, height: 1.4, color: muted),
-      labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-    ),
-    appBarTheme: const AppBarTheme(
-      backgroundColor: Colors.white,
-      foregroundColor: ink,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      centerTitle: false,
-      titleTextStyle: TextStyle(
-        fontFamily: 'Geist',
+      navLargeTitleTextStyle: TextStyle(
+        fontFamily: cupertinoDisplayFamily,
+        fontFamilyFallback: ['Geist'],
+        fontSize: 32,
+        fontWeight: FontWeight.w700,
         color: ink,
-        fontSize: 18,
-        fontWeight: FontWeight.w600,
       ),
-    ),
-    dividerTheme: const DividerThemeData(color: edge, thickness: 1, space: 1),
-    inputDecorationTheme: InputDecorationTheme(
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      hintStyle: const TextStyle(color: muted, fontSize: 14),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: control),
+      tabLabelTextStyle: TextStyle(
+        fontFamily: cupertinoFamily,
+        fontFamilyFallback: ['Geist'],
+        fontSize: 10,
+        color: muted,
       ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: control),
+      pickerTextStyle: TextStyle(
+        fontFamily: cupertinoFamily,
+        fontFamilyFallback: ['Geist'],
+        fontSize: 20,
+        color: ink,
       ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: green, width: 1.5),
+      dateTimePickerTextStyle: TextStyle(
+        fontFamily: cupertinoFamily,
+        fontFamilyFallback: ['Geist'],
+        fontSize: 20,
+        color: ink,
       ),
-    ),
-    filledButtonTheme: FilledButtonThemeData(
-      style: FilledButton.styleFrom(
-        backgroundColor: green,
-        foregroundColor: Colors.white,
-        minimumSize: const Size(0, 48),
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-        shape: const StadiumBorder(),
-        textStyle: const TextStyle(
-          fontFamily: 'Geist',
-          fontWeight: FontWeight.w600,
-          fontSize: 14,
-        ),
-      ),
-    ),
-    outlinedButtonTheme: OutlinedButtonThemeData(
-      style: OutlinedButton.styleFrom(
-        foregroundColor: ink,
-        minimumSize: const Size(0, 46),
-        side: const BorderSide(color: control),
-        shape: const StadiumBorder(),
-      ),
-    ),
-    textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(foregroundColor: green),
-    ),
-    iconButtonTheme: IconButtonThemeData(
-      style: IconButton.styleFrom(
-        foregroundColor: brass,
-        minimumSize: const Size(44, 44),
-      ),
-    ),
-    chipTheme: ChipThemeData(
-      backgroundColor: wash,
-      selectedColor: selected,
-      side: const BorderSide(color: edge),
-      shape: const StadiumBorder(),
-      labelStyle: const TextStyle(
-        fontFamily: 'Geist',
-        fontSize: 12,
-        color: T.ink,
-      ),
-    ),
-    switchTheme: SwitchThemeData(
-      thumbColor: WidgetStateProperty.resolveWith(
-        (s) => s.contains(WidgetState.selected) ? Colors.white : muted,
-      ),
-      trackColor: WidgetStateProperty.resolveWith(
-        (s) => s.contains(WidgetState.selected) ? green : paper,
-      ),
-    ),
-    bottomSheetTheme: const BottomSheetThemeData(
-      backgroundColor: Colors.white,
-      surfaceTintColor: Colors.transparent,
-      showDragHandle: true,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-    ),
-    snackBarTheme: const SnackBarThemeData(
-      backgroundColor: ink,
-      behavior: SnackBarBehavior.floating,
     ),
   );
+
+  static ThemeData themeFor(TargetPlatform platform) {
+    final apple = platform == TargetPlatform.iOS;
+    final family = apple ? cupertinoFamily : 'Roboto';
+    return ThemeData(
+      useMaterial3: true,
+      platform: platform,
+      brightness: Brightness.light,
+      fontFamily: family,
+      fontFamilyFallback: const ['Geist', 'Noto Color Emoji'],
+      cupertinoOverrideTheme: cupertino,
+      splashFactory: apple ? NoSplash.splashFactory : InkSparkle.splashFactory,
+      highlightColor: apple ? Colors.transparent : null,
+      scaffoldBackgroundColor: apple ? const Color(0xFFF2F2F7) : wash,
+      colorScheme: ColorScheme.fromSeed(seedColor: green).copyWith(
+        primary: green,
+        onPrimary: Colors.white,
+        primaryContainer: selected,
+        onPrimaryContainer: forest,
+        secondary: green,
+        secondaryContainer: selected,
+        onSecondaryContainer: forest,
+        surface: Colors.white,
+        onSurface: ink,
+        onSurfaceVariant: muted,
+        surfaceContainer: paper,
+        surfaceContainerLow: wash,
+        surfaceContainerHighest: paper,
+        outline: control,
+        outlineVariant: edge,
+        error: danger,
+      ),
+      textTheme: const TextTheme(
+        headlineLarge: TextStyle(
+          fontSize: 32,
+          height: 1.12,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -.8,
+          color: ink,
+        ),
+        headlineMedium: TextStyle(
+          fontSize: 26,
+          height: 1.2,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -.4,
+          color: ink,
+        ),
+        titleLarge: TextStyle(
+          fontSize: 22,
+          fontWeight: FontWeight.w500,
+          letterSpacing: -.3,
+          color: ink,
+        ),
+        titleMedium: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+          color: ink,
+        ),
+        bodyLarge: TextStyle(fontSize: 15, height: 1.45, color: ink),
+        bodyMedium: TextStyle(fontSize: 14, height: 1.4, color: ink),
+        bodySmall: TextStyle(fontSize: 12, height: 1.4, color: muted),
+        labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+      ),
+      appBarTheme: AppBarTheme(
+        toolbarHeight: 64,
+        backgroundColor: apple ? Colors.white : paper,
+        foregroundColor: forest,
+        iconTheme: const IconThemeData(color: green),
+        actionsIconTheme: const IconThemeData(color: green),
+        systemOverlayStyle: SystemUiOverlayStyle.dark,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        centerTitle: apple,
+        titleTextStyle: TextStyle(
+          fontFamily: family,
+          fontFamilyFallback: const ['Geist'],
+          fontSize: 20,
+          fontWeight: FontWeight.w500,
+          color: ink,
+        ),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: paper,
+        indicatorColor: selected,
+        surfaceTintColor: Colors.transparent,
+        height: 80,
+        labelTextStyle: WidgetStateProperty.resolveWith(
+          (states) => TextStyle(
+            fontFamily: family,
+            fontSize: 11,
+            fontWeight: states.contains(WidgetState.selected)
+                ? FontWeight.w600
+                : FontWeight.w500,
+            color: states.contains(WidgetState.selected) ? forest : muted,
+          ),
+        ),
+      ),
+      navigationRailTheme: const NavigationRailThemeData(
+        backgroundColor: paper,
+        indicatorColor: selected,
+        selectedIconTheme: IconThemeData(color: forest),
+        unselectedIconTheme: IconThemeData(color: muted),
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: selected,
+        foregroundColor: forest,
+        elevation: 2,
+        focusElevation: 2,
+        hoverElevation: 3,
+        highlightElevation: 1,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+      dividerTheme: const DividerThemeData(
+        color: edge,
+        thickness: .7,
+        space: 1,
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: wash,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 14,
+        ),
+        hintStyle: const TextStyle(color: muted, fontSize: 14),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: control),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: control),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: green, width: 2),
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(0, 48),
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 46),
+          side: const BorderSide(color: control),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: green),
+      ),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          foregroundColor: green,
+          minimumSize: const Size(44, 44),
+        ),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: Colors.white,
+        selectedColor: selected,
+        secondarySelectedColor: selected,
+        checkmarkColor: forest,
+        side: WidgetStateBorderSide.resolveWith(
+          (states) => BorderSide(
+            color: states.contains(WidgetState.selected) ? selected : control,
+          ),
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        labelStyle: TextStyle(
+          fontFamily: family,
+          fontFamilyFallback: const ['Geist'],
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          color: ink,
+        ),
+        secondaryLabelStyle: TextStyle(
+          fontFamily: family,
+          fontFamilyFallback: const ['Geist'],
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: forest,
+        ),
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        showDragHandle: true,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+      ),
+      snackBarTheme: const SnackBarThemeData(
+        backgroundColor: forest,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
 }
 
 TextStyle mono({
@@ -183,23 +310,17 @@ void notice(BuildContext context, String text) {
 }
 
 class Brand extends StatelessWidget {
-  const Brand({super.key, this.large = false});
-  final bool large;
+  const Brand({super.key, this.large = false, this.onDark = false});
+  final bool large, onDark;
   @override
   Widget build(BuildContext context) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      Image.asset(
-        'assets/brand/mark.png',
-        width: large ? 42 : 30,
-        height: large ? 42 : 30,
-      ),
-      const SizedBox(width: 10),
       Text(
         'telvox',
         style: mono(
           size: large ? 24 : 19,
-          color: T.ink,
+          color: onDark ? Colors.white : T.ink,
           weight: FontWeight.w500,
         ),
       ),
@@ -207,12 +328,15 @@ class Brand extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 7),
         child: Text(
           '|',
-          style: mono(size: large ? 23 : 18, color: T.control),
+          style: mono(
+            size: large ? 23 : 18,
+            color: onDark ? T.mint.withValues(alpha: .5) : T.control,
+          ),
         ),
       ),
       Text(
         'chat',
-        style: mono(size: large ? 24 : 19, color: T.green),
+        style: mono(size: large ? 24 : 19, color: onDark ? T.mint : T.green),
       ),
     ],
   );
@@ -313,10 +437,17 @@ class Pill extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (dot) ...[
-          Icon(Icons.circle, size: 6, color: color),
+          AppIcon(Icons.circle, size: 6, color: color),
           const SizedBox(width: 5),
         ],
-        Text(text, style: mono(size: 10, color: color)),
+        Flexible(
+          child: Text(
+            text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: mono(size: 10, color: color),
+          ),
+        ),
       ],
     ),
   );
@@ -333,15 +464,32 @@ class Panel extends StatelessWidget {
   final EdgeInsetsGeometry padding;
   final Color color;
   @override
-  Widget build(BuildContext context) => Material(
-    color: color,
-    clipBehavior: Clip.antiAlias,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(16),
-      side: const BorderSide(color: T.edge),
-    ),
-    child: Padding(padding: padding, child: child),
-  );
+  Widget build(BuildContext context) {
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(isCupertino(context) ? 12 : 16),
+      side: BorderSide(
+        color: color == Colors.white
+            ? T.edge
+            : Colors.white.withValues(alpha: .12),
+        width: .7,
+      ),
+    );
+    if (!isCupertino(context)) {
+      return Card.filled(
+        margin: EdgeInsets.zero,
+        color: color,
+        shape: shape,
+        clipBehavior: Clip.antiAlias,
+        child: Padding(padding: padding, child: child),
+      );
+    }
+    return Material(
+      color: color,
+      shape: shape,
+      clipBehavior: Clip.antiAlias,
+      child: Padding(padding: padding, child: child),
+    );
+  }
 }
 
 class Section extends StatelessWidget {
@@ -395,7 +543,11 @@ class PageFrame extends StatelessWidget {
   final bool scroll;
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(title), actions: actions),
+    appBar: platformAppBar(
+      context,
+      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      actions: actions,
+    ),
     floatingActionButton: fab,
     bottomNavigationBar: bottom == null
         ? null
@@ -434,36 +586,74 @@ class PageFrame extends StatelessWidget {
   );
 }
 
-class SearchBox extends StatelessWidget {
+class SearchBox extends StatefulWidget {
   const SearchBox({
     super.key,
     this.hint = 'Search',
     this.onChanged,
     this.controller,
+    this.dense = false,
+    this.value,
   });
   final String hint;
+  final String? value;
+  final bool dense;
   final ValueChanged<String>? onChanged;
   final TextEditingController? controller;
   @override
-  Widget build(BuildContext context) => TextField(
-    controller: controller,
-    onChanged: onChanged,
-    decoration: InputDecoration(
-      hintText: hint,
-      prefixIcon: const Icon(Icons.search_rounded, size: 21, color: T.muted),
-      filled: true,
-      fillColor: T.wash,
-      contentPadding: const EdgeInsets.symmetric(vertical: 12),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(30),
-        borderSide: BorderSide.none,
+  State<SearchBox> createState() => _SearchBoxState();
+}
+
+class _SearchBoxState extends State<SearchBox> {
+  late final owned = TextEditingController(text: widget.value);
+  TextEditingController get controller => widget.controller ?? owned;
+  @override
+  void didUpdateWidget(covariant SearchBox oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.value != null && widget.value != controller.text) {
+      controller.value = TextEditingValue(
+        text: widget.value!,
+        selection: TextSelection.collapsed(offset: widget.value!.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    owned.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (isCupertino(context)) {
+      return CupertinoSearchTextField(
+        controller: controller,
+        onChanged: widget.onChanged,
+        placeholder: widget.hint,
+        style: Theme.of(context).textTheme.bodyMedium,
+        backgroundColor: const Color(0xFFEFEFF1),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        borderRadius: BorderRadius.circular(10),
+      );
+    }
+    return SearchBar(
+      controller: controller,
+      onChanged: widget.onChanged,
+      hintText: widget.hint,
+      leading: const AppIcon(Icons.search_rounded, size: 22, color: T.muted),
+      constraints: BoxConstraints(minHeight: widget.dense ? 44 : 48),
+      elevation: const WidgetStatePropertyAll(0),
+      backgroundColor: const WidgetStatePropertyAll(T.paper),
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 16),
       ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(30),
-        borderSide: BorderSide.none,
+      textStyle: WidgetStatePropertyAll(Theme.of(context).textTheme.bodyMedium),
+      hintStyle: WidgetStatePropertyAll(
+        Theme.of(context).textTheme.bodyMedium?.copyWith(color: T.muted),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class MenuRow extends StatelessWidget {
@@ -485,7 +675,7 @@ class MenuRow extends StatelessWidget {
   final Widget? trailing;
   final bool danger;
   @override
-  Widget build(BuildContext context) => ListTile(
+  Widget build(BuildContext context) => AppListTile(
     contentPadding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
     leading: Container(
       width: 38,
@@ -495,7 +685,7 @@ class MenuRow extends StatelessWidget {
         color: danger ? const Color(0xFFF6E0E7) : T.wash,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Icon(icon, size: 19, color: danger ? T.danger : T.brass),
+      child: AppIcon(icon, size: 19, color: danger ? T.danger : T.brass),
     ),
     title: Text(
       title,
@@ -510,7 +700,7 @@ class MenuRow extends StatelessWidget {
         : Text(subtitle!, style: const TextStyle(fontSize: 12, color: T.muted)),
     trailing:
         trailing ??
-        const Icon(Icons.chevron_right_rounded, size: 20, color: T.muted),
+        const AppIcon(Icons.chevron_right_rounded, size: 20, color: T.muted),
     onTap: onTap ?? (route == null ? null : () => context.push(route!)),
   );
 }
@@ -548,7 +738,7 @@ class LabeledField extends StatelessWidget {
           style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
         ),
         const SizedBox(height: 8),
-        TextFormField(
+        AppTextFormField(
           controller: controller,
           initialValue: controller == null ? value : null,
           obscureText: obscure,
@@ -595,7 +785,7 @@ class EmptyView extends StatelessWidget {
               color: T.wash,
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, color: T.brass, size: 32),
+            child: AppIcon(icon, color: T.brass, size: 32),
           ),
           const SizedBox(height: 22),
           Text(
@@ -611,7 +801,7 @@ class EmptyView extends StatelessWidget {
           ),
           if (action != null) ...[
             const SizedBox(height: 22),
-            FilledButton(onPressed: onAction, child: Text(action!)),
+            AppButton.filled(onPressed: onAction, child: Text(action!)),
           ],
         ],
       ),
@@ -619,46 +809,121 @@ class EmptyView extends StatelessWidget {
   );
 }
 
-Future<Result?> sheet<Result>(BuildContext context, Widget child) =>
-    showModalBottomSheet<Result>(
+Future<Result?> sheet<Result>(BuildContext context, Widget child) {
+  if (isCupertino(context)) {
+    return showCupertinoModalPopup<Result>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          22,
-          0,
-          22,
-          24 + MediaQuery.viewInsetsOf(context).bottom,
-        ),
-        child: SingleChildScrollView(child: child),
-      ),
+      builder: (popup) {
+        final inset = MediaQuery.viewInsetsOf(popup).bottom;
+        return Padding(
+          padding: EdgeInsets.only(bottom: inset),
+          child: CupertinoPopupSurface(
+            child: Material(
+              color: Colors.white,
+              child: SafeArea(
+                top: false,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: (MediaQuery.sizeOf(popup).height - inset - 70)
+                        .clamp(160, 1000),
+                  ),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 34,
+                            height: 4,
+                            margin: const EdgeInsets.only(bottom: 20),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFD1D1D6),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                          ),
+                        ),
+                        child,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
+  }
+  return showModalBottomSheet<Result>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (popup) => Padding(
+      padding: EdgeInsets.fromLTRB(
+        22,
+        0,
+        22,
+        24 + MediaQuery.viewInsetsOf(popup).bottom,
+      ),
+      child: SingleChildScrollView(child: child),
+    ),
+  );
+}
 
 Future<bool> confirm(
   BuildContext context,
   String title,
   String body, {
   String action = 'Confirm',
-}) async =>
-    await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(body),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+}) async {
+  final destructive =
+      action.toLowerCase().contains('delete') ||
+      action.toLowerCase().contains('remove');
+  if (isCupertino(context)) {
+    return await showCupertinoDialog<bool>(
+          context: context,
+          builder: (dialog) => CupertinoAlertDialog(
+            title: Text(title),
+            content: Text(body),
+            actions: [
+              CupertinoDialogAction(
+                onPressed: () => Navigator.pop(dialog, false),
+                child: const Text('Cancel'),
+              ),
+              CupertinoDialogAction(
+                isDestructiveAction: destructive,
+                isDefaultAction: !destructive,
+                onPressed: () => Navigator.pop(dialog, true),
+                child: Text(action),
+              ),
+            ],
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(action),
-          ),
-        ],
-      ),
-    ) ??
-    false;
+        ) ??
+        false;
+  }
+  return await showDialog<bool>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+          title: Text(title),
+          content: Text(body),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialog, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialog, true),
+              style: TextButton.styleFrom(
+                foregroundColor: destructive ? T.danger : T.green,
+              ),
+              child: Text(action),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+}
 
 class InfoLine extends StatelessWidget {
   const InfoLine(this.label, this.value, {super.key});
@@ -731,7 +996,7 @@ class _EditorSheetState extends State<EditorSheet> {
             required: true,
             lines: i == 0 ? 1 : 3,
           ),
-        FilledButton(
+        AppButton.filled(
           onPressed: () {
             if (!form.currentState!.validate()) return;
             widget.onSave([for (final c in controllers) c.text.trim()]);

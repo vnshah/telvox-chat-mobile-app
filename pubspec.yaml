@@ -99,7 +99,18 @@ flutter:
   assets:
     - assets/brand/
     - assets/fonts/OFL.txt
+    - assets/fonts/Roboto-OFL.txt
   fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto.ttf
+          weight: 400
+        - asset: assets/fonts/Roboto.ttf
+          weight: 500
+        - asset: assets/fonts/Roboto.ttf
+          weight: 600
+        - asset: assets/fonts/Roboto.ttf
+          weight: 700
     - family: Geist
       fonts:
         - asset: assets/fonts/Geist-400.ttf
