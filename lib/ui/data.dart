@@ -61,10 +61,12 @@ class Message {
     this.replyAuthor,
     this.reaction = '',
     this.read = true,
+    this.deliveryStatus,
   });
   final String text, time, type, reaction;
   final String? reply, replyAuthor;
   final bool out, read;
+  final int? deliveryStatus;
 }
 
 class TicketItem {

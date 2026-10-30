@@ -88,7 +88,12 @@ class _MessageText extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(left: 3),
             child: AppIcon(
-              message.read ? Icons.done_all : Icons.check,
+              switch (message.deliveryStatus) {
+                0 => Icons.schedule,
+                2 || 3 => Icons.done_all,
+                4 || 5 => Icons.error_outline,
+                _ => message.read ? Icons.done_all : Icons.check,
+              },
               size: 15,
               color: message.read ? T.blue : T.muted,
               semanticLabel: message.read ? 'Read' : 'Sent',
@@ -479,8 +484,11 @@ class MessageBubble extends StatelessWidget {
     this.first = false,
     this.starred = false,
     this.maxWidth = 320,
+    this.contentBefore,
+    this.contentAfter,
   });
   final Message message;
+  final Widget? contentBefore, contentAfter;
   final bool first, starred;
   final double maxWidth;
   @override
@@ -554,6 +562,7 @@ class MessageBubble extends StatelessWidget {
                   ],
                 ),
               ),
+            ?contentBefore,
             if (m.type == 'image' || m.type == 'order') ...[
               SizedBox(
                 width: width - 8,
@@ -641,11 +650,20 @@ class MessageBubble extends StatelessWidget {
                   child: AppIcon(Icons.location_on, color: T.green, size: 32),
                 ),
               ),
+            if (contentAfter != null) ...[
+              if (m.text.isNotEmpty)
+                Text(m.text, style: const TextStyle(fontSize: 15, height: 1.3)),
+              contentAfter!,
+            ],
             _MessageText(
               message: m,
               starred: starred,
               emojiCount: emojiCount,
-              metadataOnly: m.type == 'document' || m.type == 'audio',
+              metadataOnly:
+                  contentAfter != null ||
+                  (contentBefore != null && m.text.isEmpty) ||
+                  m.type == 'document' ||
+                  m.type == 'audio',
             ),
           ],
         ),

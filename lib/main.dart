@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app.dart';
+import 'core/config/app_config.dart';
+import 'mobile/app.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,5 +18,9 @@ void main() {
       'Roboto',
     ], await rootBundle.loadString('assets/fonts/Roboto-OFL.txt'));
   });
-  runApp(const ProviderScope(child: TelvoxApp()));
+  runApp(
+    const ProviderScope(
+      child: AppConfig.preview ? TelvoxApp() : MobileApplication(),
+    ),
+  );
 }

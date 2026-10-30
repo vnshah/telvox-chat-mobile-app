@@ -68,7 +68,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           icon: const AppIcon(Icons.arrow_back_rounded, size: 22),
         ),
         titleSpacing: 0,
-        title: InkWell(
+        title: GestureDetector(
           onTap: () => context.push('/customer/${p.id}'),
           child: Row(
             children: [

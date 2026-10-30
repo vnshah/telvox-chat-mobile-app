@@ -1,0 +1,19 @@
+{
+  "copied_on": "2026-10-30",
+  "source_directory": "/Users/renav/Herd/themessenger/postman/mobile-api",
+  "request_count": 107,
+  "redacted_literal_credential_fields": 17,
+  "environment_changes": "base_url set to development; login/token/account scope values blank",
+  "files": [
+    {
+      "file": "mobile-api.postman_collection.json",
+      "source_sha256": "6ee5d527deb531c7bc244a2f288a6f2dfb3a3f01a6988e719582af570221fa66",
+      "handoff_sha256": "723f72339835770656a422905f631ce6de1b7776aa969e478efac58cd4392ab8"
+    },
+    {
+      "file": "mobile-api.postman_environment.json",
+      "source_sha256": "e94b9a0ab7f20c76ecc1430c167b6978e5896abe9604724f5cd5fd1063bf8be5",
+      "handoff_sha256": "d13dc3164df8ed06948c6348a0cf5013bbd9e3bc79cd4c44206495d581a3a97d"
+    }
+  ]
+}

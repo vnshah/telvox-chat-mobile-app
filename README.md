@@ -1,7 +1,96 @@
 # Telvox Chat mobile app
 
-Flutter mobile UI preview with Android Material 3 and iOS Cupertino-style
+Flutter mobile application with Android Material 3 and iOS Cupertino-style
 appearances, both using Telvox branding.
+
+## Project handoff
+
+Read [HANDOFF.md](HANDOFF.md) for the complete architecture, scope, Git state,
+verification evidence, known blockers and continuation instructions. A sanitized
+[Postman package](postman/mobile-api/README.md) is included locally.
+
+## API integration
+
+Normal startup uses the development API with no sample accounts or messages.
+The design preview is opt-in: `flutter run --dart-define=UI_PREVIEW=true`.
+
+Implemented:
+
+- Secure session restore, existing-account login and second-factor verification,
+  business/number selection, paged inbox and contacts, and contact creation.
+- Conversation history and catch-up, text sends with stable retry keys, quoted
+  replies, reactions, and quick-reply selection.
+- Image, video and document picking/sending, upload progress, size/type validation,
+  and retries with a fresh multipart stream and the original idempotency key.
+- Image viewing, video/audio playback and external document opening; shared media
+  galleries for contacts and tickets. Remote media receives no API bearer token.
+- Existing-template sending with body variables, text/media/location headers,
+  authentication codes, dynamic URL/coupon buttons, carousel cards and offer expiry.
+  Uncertain sends retain the original payload and key for manual retry.
+- Contact name editing, assignment, favourites, close/reopen, block/DND,
+  notes, tags and custom-field values.
+- Ticket creation (existing/new contact), detail/history, subject, status, priority,
+  assignment, disposition, notes and tags.
+
+The live navigator excludes administration/reporting/billing screens and does not
+provide template or quick-reply management. Voice recording/sending still needs
+backend audio support; incoming audio can be played. Push, complete realtime and
+call history remain deferred. Visible chats poll every 5 seconds and lists every
+30 seconds; polling pauses in the background. Pending sends currently live in
+memory, not a persistent offline outbox.
+
+The single API origin setting is `AppConfig.apiBaseUrl` in
+`lib/core/config/app_config.dart`, defaulting to `https://dev.themessenger.app`.
+Every endpoint uses `MobileApi`; no screen hardcodes the host. An optional
+`API_BASE_URL` build define overrides the default for the whole app. Example:
+
+```bash
+flutter build apk --debug --dart-define=API_BASE_URL=https://dev.themessenger.app
+```
+
+Display timezone defaults to `Asia/Kolkata` in that same configuration and uses
+IANA timezone data. `DATABASE_UTC_OFFSET_MINUTES` separately controls how unlabelled
+server timestamps are interpreted (currently assumes India; confirm with backend).
+Session credentials are encrypted in platform secure storage and scoped by API host.
+
+Integration checks include `test/mobile_api_test.dart`, `test/mobile_ui_test.dart`,
+`test/mobile_actions_test.dart`, `test/mobile_conversation_test.dart` and
+`test/mobile_screens_test.dart`. On 29 October 2026, pinned Flutter 3.47.8 / Dart
+3.13.7 passed static analysis and all 60 regression tests on Forge. Nine live
+screen areas were additionally rendered from captured development API responses
+on both Android and iOS styles, without layout errors. Private captures remain
+outside source control. The debug APK builds with non-blocking plugin Kotlin
+migration and Android SDK metadata warnings.
+
+Conversation rendering decodes templates, interactive messages and form responses,
+uses actual media, and strips activity-log HTML. It never substitutes the JSON
+transport payload for a chat bubble. The inbox uses the same readable summaries.
+Messages are built lazily; session-only caches retain lists/history when returning
+to a page. Text sends appear immediately with a brief fade, independently of the
+network response; background refreshes do not flash a loading indicator.
+
+Free-form sends require an open service/referral window, a manageable assignee,
+and an open, human-owned conversation/ticket. Blocked contacts cannot be sent to.
+Templates bypass only the messaging-window restriction. DND blocks marketing
+rather than legitimate service replies or utility/authentication templates,
+matching the backend. Permissions are checked again when sending a template;
+server-side checks remain authoritative.
+
+Live checks: login, configuration, inbox/history, contact details, template listing
+and details, quick replies, custom fields, ticket listing/create metadata, contact
+search and all shared-media tabs succeeded. A temporary internal contact note was
+created, edited and removed successfully. Measured reads took approximately
+0.24–0.43 seconds; the attempted template send returned in 1.04 seconds.
+
+The approved contact still has an expired service window in the API. The approved
+list includes `test_by_ravin`, but Meta rejected the test send with error 132001:
+the template does not exist in English. Its failed row is displayed with the
+provider's reason. No successful test delivery is claimed. This account also has
+no tickets and no configured ticket departments/statuses, so ticket mutation UI
+is covered by contract tests rather than a successful live ticket lifecycle.
+
+No physical Android device was attached for native file-picker/codec validation.
+Credentials and test tokens are not stored in source or embedded in the APK.
 
 ## Environment
 
@@ -43,7 +132,7 @@ and store publication are separate tasks.
 
 ## UI preview
 
-The app opens the sign-in preview with sample values already filled in. Tap
+With `UI_PREVIEW=true`, the app opens the sign-in preview with sample values already filled in. Tap
 **Sign in**, select **Studio North**, and explore the inbox. These screens do
 not authenticate against a server or send WhatsApp messages.
 
@@ -92,9 +181,9 @@ system. The preview selection applies to all routes and resets when the app
 restarts. Search text is retained when the appearance changes.
 
 The project is still Android-first: Cupertino UI is implemented and covered by
-widget tests, and can be reviewed in the Android APK. There is no iOS runner or
-signed iPhone binary in this repository yet; an actual iOS build needs an iOS
-host project, a supported Mac/Xcode setup, and device testing.
+widget tests, and can be reviewed in the Android APK. An iOS runner/Xcode project exists, but no signed iPhone binary or physical iOS
+verification has been established. An actual iOS build needs a supported
+Mac/Xcode setup, signing configuration, and device testing.
 
 Sign-in is for existing accounts only; there is no account-creation screen or route.
 Workspace rows and inbox, contact, and ticket lists stay compact. Chat retains
@@ -128,7 +217,7 @@ confirmation dialogs, and key preview journeys.
 ## Public configuration
 
 `lib/core/config/app_config.dart` reads `APP_ENV` and `API_BASE_URL` from Dart
-defines. No backend URL is set by default.
+defines. The default API origin is `https://dev.themessenger.app`.
 
 ```sh
 cp config/development.example.json config/development.json
@@ -139,8 +228,8 @@ The copied configuration is ignored by Git. Defines are embedded in the app;
 Meta tokens, Firebase service-account credentials, and Laravel secrets belong
 on the backend. Confirm the app identifier before Firebase registration.
 
-Keep `pubspec.lock` in version control. The next stage is the Laravel mobile
-authentication/API contract, followed by the first app flow.
+Keep `pubspec.lock` in version control. The integration status and remaining work
+are listed above.
 
 ## Verified on this Linux checkout
 
