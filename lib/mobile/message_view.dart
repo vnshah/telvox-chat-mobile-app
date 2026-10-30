@@ -42,15 +42,30 @@ class LiveMessageView extends StatelessWidget {
   Widget build(BuildContext context) {
     final m = message, c = m.content;
     if (m.log) {
+      // Activity rows as a centred translucent pill, like the web inbox.
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 25),
-        child: Text(
-          c.summary,
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 11, color: T.muted),
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 28),
+        child: Center(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: .78),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              child: Text(
+                c.summary,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 11.5, color: T.secondary),
+              ),
+            ),
+          ),
         ),
       );
     }
+    final sender = m.outgoing && first
+        ? readableText(m.json['sender_name'])
+        : '';
     Widget bubble = Builder(
       builder: (anchor) => GestureDetector(
         onLongPress: onActions == null ? null : () => onActions!(anchor),
@@ -140,6 +155,21 @@ class LiveMessageView extends StatelessWidget {
               ? CrossAxisAlignment.end
               : CrossAxisAlignment.start,
           children: [
+            // Which agent sent it, once per group, as the web inbox shows.
+            if (sender.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(right: 6, bottom: 2),
+                child: Text(
+                  sender,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: T.green,
+                  ),
+                ),
+              ),
             bubble,
             if (m.status == 4 || m.status == 5)
               Padding(
@@ -161,9 +191,16 @@ class LiveMessageView extends StatelessWidget {
                 margin: const EdgeInsets.only(top: 2),
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                 decoration: BoxDecoration(
-                  color: T.paper,
+                  color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: T.edge),
+                  boxShadow: [
+                    BoxShadow(
+                      color: T.ink.withValues(alpha: .1),
+                      offset: const Offset(0, 1),
+                      blurRadius: 2,
+                    ),
+                  ],
                 ),
                 child: Text(
                   m.reactions.map((r) => r['emoji'] ?? '').join(' '),

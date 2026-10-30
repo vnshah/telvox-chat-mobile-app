@@ -7,10 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:telvox_chat_mobile_app/app/app.dart';
 import 'package:telvox_chat_mobile_app/ui/data.dart';
 import 'package:telvox_chat_mobile_app/ui/conversation.dart';
-import 'package:telvox_chat_mobile_app/ui/management.dart';
-import 'package:telvox_chat_mobile_app/ui/preview.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
+import 'support/preview_routes.dart';
 import 'support/ui.dart';
 
 void main() {
@@ -24,17 +23,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final paths = [
-      for (final screen in reviewScreens) screen.$3,
-      for (final hub in hubs.keys) '/hub/$hub',
-      for (final module in modules.keys) ...[
-        '/manage/$module',
-        '/manage/$module/0',
-        '/manage/$module/new',
-        '/manage/$module/0/edit',
-      ],
-      '/preview',
-    ];
+    final paths = previewRoutes;
     for (final path in paths) {
       final router = createRouter(initialLocation: path);
       await tester.pumpWidget(
@@ -188,31 +177,15 @@ void main() {
   );
 
   testWidgets(
-    'Cupertino editor sheets and destructive confirmations close safely',
+    'Cupertino destructive confirmations close safely',
     (tester) async {
-      final router = createRouter(initialLocation: '/quick-replies');
+      final router = createRouter(initialLocation: '/chat/ananya');
       addTearDown(router.dispose);
       await tester.pumpWidget(
         ProviderScope(
           child: TelvoxApp(router: router, platform: TargetPlatform.iOS),
         ),
       );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Add quick reply'));
-      await tester.pumpAndSettle();
-      expect(find.byType(CupertinoPopupSurface), findsOneWidget);
-      await tester.enterText(find.byType(CupertinoTextField).at(0), '/hours');
-      await tester.enterText(
-        find.byType(CupertinoTextField).at(1),
-        'We are here from 9 to 6.',
-      );
-      tester.testTextInput.hide();
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Save'));
-      await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
-      expect(find.text('/hours'), findsOneWidget);
-      router.go('/chat/ananya');
       await tester.pumpAndSettle();
       await tester.longPress(find.byType(MessageBubble).first);
       await tester.pumpAndSettle();
@@ -228,46 +201,6 @@ void main() {
         ),
         findsOneWidget,
       );
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'screen library changes appearance across routes and restores device style',
-    (tester) async {
-      final router = createRouter(initialLocation: '/preview');
-      addTearDown(router.dispose);
-      await tester.pumpWidget(ProviderScope(child: TelvoxApp(router: router)));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Inbox');
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('iOS'));
-      await tester.tap(find.text('iOS'));
-      await tester.pumpAndSettle();
-      expect(find.byType(CupertinoNavigationBar), findsOneWidget);
-      expect(
-        tester
-            .widget<CupertinoSearchTextField>(
-              find.byType(CupertinoSearchTextField),
-            )
-            .controller!
-            .text,
-        'Inbox',
-      );
-      await tester.ensureVisible(find.widgetWithText(MenuRow, 'Inbox'));
-      await tester.tap(find.widgetWithText(MenuRow, 'Inbox'));
-      await tester.pumpAndSettle();
-      expect(find.byType(CupertinoTabBar), findsOneWidget);
-      router.go('/preview');
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Device'));
-      await tester.tap(find.text('Device'));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.widgetWithText(MenuRow, 'Inbox'));
-      await tester.tap(find.widgetWithText(MenuRow, 'Inbox'));
-      await tester.pumpAndSettle();
-      expect(find.byType(NavigationBar), findsOneWidget);
-      expect(find.byType(CupertinoTabBar), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
@@ -290,9 +223,7 @@ void main() {
             '/contacts',
             '/tickets',
             '/chat/ananya',
-            '/more',
             '/settings',
-            '/preview',
           ]) {
             final router = createRouter(initialLocation: path);
             await tester.pumpWidget(
@@ -331,12 +262,8 @@ void main() {
         ('tickets', '/tickets'),
         ('ticket-form', '/ticket/new'),
         ('workspace', '/workspaces'),
-        ('more', '/more'),
         ('settings', '/settings'),
         ('preferences', '/settings/notifications'),
-        ('catalogue', '/catalogue'),
-        ('reports', '/reports'),
-        ('screen-library', '/preview'),
       ]) {
         final router = createRouter(initialLocation: path);
         final boundary = GlobalKey();

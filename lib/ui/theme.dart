@@ -20,7 +20,8 @@ abstract final class T {
   static const edge = Color(0xFFDCE5DC);
   static const control = Color(0xFFB6C7BA);
   static const selected = Color(0xFFC8E4D1);
-  static const outgoing = Color(0xFFC9E3D2);
+  // Brighter than the chat wallpaper so outgoing bubbles lift off it.
+  static const outgoing = Color(0xFFD5F1DD);
   static const firm = Color(0xFF173D2E);
   static const danger = Color(0xFFC2335E);
   static const blue = Color(0xFF137BA4);

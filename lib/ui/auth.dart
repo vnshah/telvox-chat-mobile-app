@@ -25,7 +25,7 @@ class _AuthPageState extends State<AuthPage> {
     final title = login
         ? 'Welcome back.'
         : verify
-        ? 'Check your inbox.'
+        ? 'Verify your sign-in.'
         : reset
         ? 'A fresh start.'
         : 'Let’s get you back in.';
@@ -169,14 +169,6 @@ class _AuthPageState extends State<AuthPage> {
                                     ),
                                   ],
                                 ),
-                                AppButton.text(
-                                  onPressed: () =>
-                                      context.push('/forgot-password'),
-                                  child: const Text(
-                                    'Forgot password?',
-                                    style: TextStyle(fontSize: 12),
-                                  ),
-                                ),
                               ],
                             ),
                           const SizedBox(height: 14),
@@ -186,7 +178,7 @@ class _AuthPageState extends State<AuthPage> {
                               if (login) {
                                 context.go('/workspaces');
                               } else if (verify) {
-                                context.go('/reset-password');
+                                context.go('/workspaces');
                               } else if (reset) {
                                 notice(
                                   context,

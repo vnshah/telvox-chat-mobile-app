@@ -520,9 +520,9 @@ class MessageBubble extends StatelessWidget {
           ),
           boxShadow: [
             BoxShadow(
-              color: T.ink.withValues(alpha: .08),
+              color: T.ink.withValues(alpha: .14),
               offset: const Offset(0, 1),
-              blurRadius: 1,
+              blurRadius: 2,
             ),
           ],
         ),

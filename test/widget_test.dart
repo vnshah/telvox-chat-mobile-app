@@ -8,8 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:telvox_chat_mobile_app/app/app.dart';
 import 'package:telvox_chat_mobile_app/ui/conversation.dart';
 import 'package:telvox_chat_mobile_app/ui/data.dart';
-import 'package:telvox_chat_mobile_app/ui/management.dart';
-import 'package:telvox_chat_mobile_app/ui/preview.dart';
+
+import 'support/preview_routes.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -23,17 +23,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final routes = [
-      for (final screen in reviewScreens) screen.$3,
-      for (final hub in hubs.keys) '/hub/$hub',
-      for (final id in modules.keys) ...[
-        '/manage/$id',
-        '/manage/$id/0',
-        '/manage/$id/new',
-        '/manage/$id/0/edit',
-      ],
-      '/preview',
-    ];
+    final routes = previewRoutes;
     for (final path in routes) {
       final router = createRouter(initialLocation: path);
       await tester.pumpWidget(ProviderScope(child: TelvoxApp(router: router)));
@@ -91,8 +81,8 @@ void main() {
     expect(find.textContaining('Create account'), findsNothing);
     expect(find.textContaining('Create an account'), findsNothing);
     expect(find.text('Sign in'), findsOneWidget);
-    expect(find.text('Forgot password?'), findsOneWidget);
-    expect(reviewScreens.any((screen) => screen.$3 == '/register'), isFalse);
+    expect(find.text('Forgot password?'), findsNothing);
+    expect(previewRoutes.contains('/register'), isFalse);
     router.go('/register');
     await tester.pumpAndSettle();
     expect(find.text('Page not found'), findsOneWidget);
@@ -406,11 +396,7 @@ void main() {
         '/inbox',
         '/chat/ananya',
         '/tickets',
-        '/catalogue',
-        '/more',
-        '/reports',
         '/settings',
-        '/call/incoming',
       ]) {
         final router = createRouter(initialLocation: path);
         await tester.pumpWidget(
@@ -424,22 +410,13 @@ void main() {
     }
   });
 
-  testWidgets('quick reply sheet saves and closes cleanly', (tester) async {
+  testWidgets('quick replies are pick-only in mobile scope', (tester) async {
     final router = createRouter(initialLocation: '/quick-replies');
     addTearDown(router.dispose);
     await tester.pumpWidget(ProviderScope(child: TelvoxApp(router: router)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Add quick reply'));
-    await tester.pumpAndSettle();
-    final fields = find.byType(TextFormField);
-    await tester.enterText(fields.at(0), '/hours');
-    await tester.enterText(fields.at(1), 'We are here from 9 to 6.');
-    tester.testTextInput.hide();
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Save'));
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-    expect(find.text('/hours'), findsOneWidget);
+    expect(find.text('/hello'), findsOneWidget);
+    expect(find.byTooltip('Add quick reply'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -475,7 +452,6 @@ void main() {
         '/contacts',
         '/tickets',
         '/chat/ananya',
-        '/more',
         '/settings',
       ]) {
         final router = createRouter(initialLocation: path);
@@ -505,11 +481,8 @@ void main() {
         ('contact', '/customer/ananya'),
         ('tickets', '/tickets'),
         ('workspace', '/workspaces'),
-        ('more', '/more'),
+        ('settings', '/settings'),
         ('contacts', '/contacts'),
-        ('catalogue', '/catalogue'),
-        ('reports', '/reports'),
-        ('call', '/call/incoming'),
       ]) {
         final router = createRouter(initialLocation: path);
         final boundary = GlobalKey();

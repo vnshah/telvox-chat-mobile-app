@@ -5,161 +5,12 @@ import 'package:go_router/go_router.dart';
 import 'data.dart';
 import 'theme.dart';
 
-class MorePage extends ConsumerWidget {
-  const MorePage({super.key});
-  @override
-  Widget build(BuildContext context, WidgetRef ref) => SingleChildScrollView(
-    padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Panel(
-          color: T.firm,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'TODAY, AT A GLANCE',
-                style: mono(
-                  size: 10,
-                  color: T.control,
-                ).copyWith(letterSpacing: 1.2),
-              ),
-              const SizedBox(height: 22),
-              Row(
-                children: [
-                  Expanded(child: _metric('24', 'Conversations')),
-                  Expanded(child: _metric('3m', 'Avg. reply')),
-                  Expanded(child: _metric('94%', 'Resolved')),
-                ],
-              ),
-              const SizedBox(height: 20),
-              const Divider(color: T.secondary),
-              const SizedBox(height: 14),
-              InkWell(
-                onTap: () => context.push('/reports'),
-                child: const Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'A closer look at your day',
-                        style: TextStyle(fontSize: 12, color: T.paper),
-                      ),
-                    ),
-                    SizedBox(width: 10),
-                    AppIcon(
-                      Icons.arrow_forward_rounded,
-                      size: 18,
-                      color: T.paper,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const Section('Conversations'),
-        MenuRow(
-          'Calls',
-          Icons.call_outlined,
-          subtitle: 'Your recent conversations, out loud',
-          route: '/calls',
-        ),
-        MenuRow(
-          'Message templates',
-          Icons.article_outlined,
-          route: '/templates',
-        ),
-        MenuRow('Quick replies', Icons.bolt_outlined, route: '/quick-replies'),
-        MenuRow('AI assist', Icons.auto_awesome_outlined, route: '/ai'),
-        MenuRow(
-          'Media library',
-          Icons.photo_library_outlined,
-          route: '/customer/ananya/media',
-        ),
-        const Section('Grow & connect'),
-        MenuRow(
-          'Campaigns',
-          Icons.campaign_outlined,
-          subtitle: 'Broadcasts & customer updates',
-          route: '/campaigns',
-        ),
-        MenuRow(
-          'Automation',
-          Icons.account_tree_outlined,
-          subtitle: 'Automations, chatbots & flows',
-          route: '/hub/automation',
-        ),
-        MenuRow(
-          'Commerce',
-          Icons.shopping_bag_outlined,
-          subtitle: 'Catalogue, orders & store connections',
-          route: '/hub/commerce',
-        ),
-        const Section('Manage your business'),
-        MenuRow('Reports', Icons.bar_chart_outlined, route: '/reports'),
-        MenuRow(
-          'Organization',
-          Icons.groups_outlined,
-          route: '/hub/organization',
-        ),
-        MenuRow(
-          'Integrations',
-          Icons.extension_outlined,
-          route: '/hub/integrations',
-        ),
-        MenuRow(
-          'Ticket configuration',
-          Icons.confirmation_number_outlined,
-          route: '/hub/ticket-config',
-        ),
-        MenuRow(
-          'Billing & plans',
-          Icons.account_balance_wallet_outlined,
-          route: '/billing',
-        ),
-        MenuRow('System', Icons.tune_outlined, route: '/hub/system'),
-        MenuRow('Settings', Icons.settings_outlined, route: '/settings'),
-        const SizedBox(height: 20),
-        const Divider(),
-        const SizedBox(height: 16),
-        Wrap(
-          alignment: WrapAlignment.spaceBetween,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            const Pill('Preview workspace', color: T.brass, fill: T.wash),
-            AppButton.text(
-              onPressed: () => context.push('/preview'),
-              child: const Text(
-                'View screens',
-                style: TextStyle(color: T.brass, fontSize: 11),
-              ),
-            ),
-          ],
-        ),
-      ],
-    ),
-  );
-  Widget _metric(String value, String title) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        value,
-        style: mono(size: 25, color: T.paper, weight: FontWeight.w500),
-      ),
-      const SizedBox(height: 6),
-      Text(title, style: const TextStyle(color: T.control, fontSize: 10)),
-    ],
-  );
-}
-
+/// Settings tab. It lives in the main shell, which already draws the header.
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
   @override
-  Widget build(BuildContext context) => PageFrame(
-    title: 'Settings',
+  Widget build(BuildContext context) => SingleChildScrollView(
+    padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -215,21 +66,10 @@ class SettingsPage extends StatelessWidget {
           Icons.storefront_outlined,
           route: '/settings/business',
         ),
-        MenuRow('Team members', Icons.people_outline, route: '/manage/users'),
         MenuRow(
           'Connected numbers',
           Icons.phone_android_outlined,
           route: '/workspaces',
-        ),
-        MenuRow(
-          'Calling preferences',
-          Icons.call_outlined,
-          route: '/settings/calls',
-        ),
-        MenuRow(
-          'Business hours',
-          Icons.schedule_outlined,
-          route: '/manage/business-hours',
         ),
         const Section('Support'),
         MenuRow('Help & support', Icons.help_outline, route: '/settings/help'),
@@ -393,13 +233,6 @@ class NotificationsPage extends ConsumerWidget {
               'shipping_update is ready to use.',
               '09:10',
               '/template/shipping',
-            ),
-            (
-              Icons.people_outline,
-              'Meera joined your workspace',
-              'A little more help for your customer team.',
-              '08:50',
-              '/manage/users',
             ),
           ])
             Container(
@@ -627,18 +460,6 @@ class SecurityPage extends StatelessWidget {
               ),
             ],
           ),
-        ),
-        const Section('Account security'),
-        MenuRow(
-          'Change password',
-          Icons.lock_outline,
-          route: '/reset-password',
-        ),
-        MenuRow(
-          'Two-step verification',
-          Icons.shield_outlined,
-          subtitle: 'Add an extra layer of protection',
-          route: '/verify',
         ),
         const Section('Active devices'),
         const Panel(

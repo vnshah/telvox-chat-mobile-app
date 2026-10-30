@@ -36,11 +36,11 @@ class MainShell extends ConsumerWidget {
         active: CupertinoIcons.ticket_fill,
       ),
       (
-        path: '/more',
-        title: 'More',
-        icon: Icons.grid_view_rounded,
-        apple: CupertinoIcons.square_grid_2x2,
-        active: CupertinoIcons.square_grid_2x2_fill,
+        path: '/settings',
+        title: 'Settings',
+        icon: Icons.settings_outlined,
+        apple: CupertinoIcons.settings,
+        active: CupertinoIcons.settings_solid,
       ),
     ];
     final index = destinations
@@ -522,16 +522,9 @@ class ConversationRow extends ConsumerWidget {
 }
 
 class ContactsPage extends ConsumerStatefulWidget {
-  const ContactsPage({
-    super.key,
-    this.pick = false,
-    this.call = false,
-    this.template,
-    this.product,
-    this.draft,
-  });
-  final bool pick, call;
-  final String? template, product, draft;
+  const ContactsPage({super.key, this.pick = false, this.template, this.draft});
+  final bool pick;
+  final String? template, draft;
   @override
   ConsumerState<ContactsPage> createState() => _ContactsPageState();
 }
@@ -539,12 +532,8 @@ class ContactsPage extends ConsumerStatefulWidget {
 class _ContactsPageState extends ConsumerState<ContactsPage> {
   String search = '';
   String destination(Person p) {
-    if (widget.call) return '/call/${p.id}';
     if (widget.template != null) {
       return '/template/${widget.template}?contact=${p.id}';
-    }
-    if (widget.product != null) {
-      return '/product/${widget.product}?contact=${p.id}';
     }
     if (widget.pick || widget.draft != null) {
       return Uri(
@@ -558,11 +547,7 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
   @override
   Widget build(BuildContext context) {
     final selecting =
-        widget.pick ||
-        widget.call ||
-        widget.template != null ||
-        widget.product != null ||
-        widget.draft != null;
+        widget.pick || widget.template != null || widget.draft != null;
     final state = ref.watch(previewProvider);
     final people =
         state.people
@@ -603,7 +588,7 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
                       child: SearchBox(
                         value: search,
                         hint: selecting
-                            ? 'Find a contact to ${widget.call ? 'call' : 'message'}'
+                            ? 'Find a contact to message'
                             : 'Search contacts',
                         dense: true,
                         onChanged: (v) => setState(() => search = v),

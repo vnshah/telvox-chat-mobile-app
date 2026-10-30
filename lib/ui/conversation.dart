@@ -103,11 +103,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           ),
         ),
         actions: [
-          AppIconButton(
-            tooltip: 'Voice call',
-            onPressed: () => context.push('/call/${p.id}'),
-            icon: const AppIcon(Icons.call_outlined, size: 21, color: T.green),
-          ),
           AppMenuButton<String>(
             tooltip: 'Conversation options',
             icon: const AppIcon(Icons.more_vert, size: 22, color: T.green),
@@ -822,24 +817,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           onTap: () => _draftTool('/quick-replies?pick=true'),
         ),
         MenuRow(
-          'AI assist',
-          Icons.auto_awesome_outlined,
-          onTap: () => _draftTool('/ai?contact=${widget.id}'),
-        ),
-        MenuRow(
           'Templates',
           Icons.article_outlined,
           onTap: () {
             Navigator.pop(context);
             context.push('/templates?contact=${widget.id}');
-          },
-        ),
-        MenuRow(
-          'Share a product',
-          Icons.shopping_bag_outlined,
-          onTap: () {
-            Navigator.pop(context);
-            context.push('/catalogue?contact=${widget.id}');
           },
         ),
         const Padding(
@@ -1022,11 +1004,12 @@ class ChatWallpaper extends CustomPainter {
         ..shader = const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [T.paper, Color(0xFFE5EDE4)],
+          // Deeper than both bubble colours, so bubbles read as raised.
+          colors: [Color(0xFFDFE8DD), Color(0xFFD3DFD3)],
         ).createShader(Offset.zero & size),
     );
     final line = Paint()
-      ..color = T.brass.withValues(alpha: .085)
+      ..color = T.brass.withValues(alpha: .11)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.1
       ..strokeCap = StrokeCap.round;
@@ -1110,14 +1093,6 @@ class CustomerPage extends ConsumerWidget {
                   label: const Text('Message'),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: AppButton.outlinedIcon(
-                  onPressed: () => context.push('/call/$id'),
-                  icon: const AppIcon(Icons.call_outlined, size: 17),
-                  label: const Text('Call'),
-                ),
-              ),
             ],
           ),
           Section(
@@ -1187,12 +1162,6 @@ class CustomerPage extends ConsumerWidget {
                   'Media & documents',
                   Icons.photo_library_outlined,
                   route: '/customer/$id/media',
-                ),
-                const Divider(),
-                MenuRow(
-                  'Order history',
-                  Icons.shopping_bag_outlined,
-                  route: '/orders',
                 ),
               ],
             ),
@@ -1541,13 +1510,7 @@ class _ContactToolPageState extends ConsumerState<ContactToolPage> {
                 crossAxisSpacing: 12,
                 children: [
                   for (final product in products)
-                    InkWell(
-                      onTap: () => context.push('/product/${product.id}'),
-                      child: ProductArt(
-                        icon: product.icon,
-                        color: product.color,
-                      ),
-                    ),
+                    ProductArt(icon: product.icon, color: product.color),
                 ],
               )
             else if (tab == 'Documents') ...[
@@ -1577,14 +1540,12 @@ class _ContactToolPageState extends ConsumerState<ContactToolPage> {
                 'Product_catalogue.pdf',
                 Icons.description_outlined,
                 subtitle: 'PDF · 1.2 MB · Yesterday',
-                route: '/catalogue',
               ),
             ] else
               MenuRow(
                 'Studio North catalogue',
                 Icons.link_rounded,
                 subtitle: 'Shared today',
-                route: '/catalogue',
               ),
           ],
         ],

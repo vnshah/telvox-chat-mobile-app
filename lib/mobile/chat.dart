@@ -38,7 +38,10 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   bool picking = false;
   Json? detail, ticket;
   bool detailsBusy = false, showLoading = false;
-  bool windowRejected = false;
+  bool windowRejected = false, reopening = false;
+  bool get closed =>
+      widget.ticketId == null &&
+      number(object(detail?['contact'])['conversation_status']) == 0;
   String get cacheKey =>
       "chat:${widget.session.api.wabaId}:$contactId:${widget.ticketId}";
   String get detailKey => 'detail:$cacheKey';
@@ -436,6 +439,21 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> reopen() async {
+    if (reopening) return;
+    setState(() => reopening = true);
+    try {
+      await widget.session.api.post('inbox/conversation/reopen', {
+        'contact_id': contactId,
+      });
+      await details();
+    } catch (e) {
+      if (mounted) mobileNotice(context, e);
+    } finally {
+      if (mounted) setState(() => reopening = false);
+    }
+  }
+
   Future<void> openContact() async {
     await openPage(
       context,
@@ -596,20 +614,31 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       children: [
         if (day != previousDay && day.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 14),
+            padding: const EdgeInsets.symmetric(vertical: 12),
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: T.paper,
+                color: Colors.white,
                 borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: T.ink.withValues(alpha: .1),
+                    offset: const Offset(0, 1),
+                    blurRadius: 2,
+                  ),
+                ],
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
+                  horizontal: 11,
+                  vertical: 5,
                 ),
                 child: Text(
-                  day,
-                  style: const TextStyle(fontSize: 11, color: T.muted),
+                  const MobileClock().dayLabel(m.json['created_at']),
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                    color: T.secondary,
+                  ),
                 ),
               ),
             ),
@@ -681,25 +710,27 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          LoadingBar(showLoading),
-          if (error != null)
-            MaterialBanner(
-              content: Text(error!),
-              actions: [
-                AppButton.text(
-                  onPressed: () {
-                    load();
-                    details();
-                  },
-                  child: const Text('Retry'),
-                ),
-              ],
-            ),
-          Expanded(
-            child: CustomPaint(
-              painter: ChatWallpaper(),
+      // The wallpaper runs behind the composer too, so the input floats on
+      // the conversation the way WhatsApp's does.
+      body: CustomPaint(
+        painter: const ChatWallpaper(),
+        child: Column(
+          children: [
+            LoadingBar(showLoading),
+            if (error != null)
+              MaterialBanner(
+                content: Text(error!),
+                actions: [
+                  AppButton.text(
+                    onPressed: () {
+                      load();
+                      details();
+                    },
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            Expanded(
               child: messages.isEmpty && pending.isEmpty && !showLoading
                   ? const Center(child: Text('No messages yet.'))
                   : Stack(
@@ -735,132 +766,192 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                       ],
                     ),
             ),
-          ),
-          // While permissions load, keep the composer's shape but disabled,
-          // so the bottom of the screen does not swap layouts a moment later.
-          if (!permission.canSend && detail != null)
-            SafeArea(
-              top: false,
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-                decoration: const BoxDecoration(
-                  color: T.paper,
-                  border: Border(top: BorderSide(color: T.edge)),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      permission.reason!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 12, color: T.secondary),
-                    ),
-                    if (permission.canTemplate)
-                      AppButton.filled(
-                        onPressed: templates,
-                        child: const Text('Send template'),
-                      ),
-                  ],
-                ),
-              ),
-            )
-          else ...[
-            LoadingBar(picking),
-            if (attachment != null)
-              ListTile(
-                dense: true,
-                leading: const Icon(Icons.attach_file),
-                title: Text(
-                  attachment!.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: AppIconButton(
-                  tooltip: 'Remove attachment',
-                  onPressed: () => setState(() => attachment = null),
-                  icon: const Icon(Icons.close),
-                ),
-              ),
-            if (reply != null)
-              ListTile(
-                dense: true,
-                leading: const Icon(Icons.reply),
-                title: Text(
-                  reply!.text,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: AppIconButton(
-                  tooltip: 'Cancel reply',
-                  onPressed: () => setState(() => reply = null),
-                  icon: const Icon(Icons.close),
-                ),
-              ),
-            SafeArea(
-              top: false,
-              child: IgnorePointer(
-                ignoring: !permission.canSend,
-                child: AnimatedOpacity(
-                  opacity: permission.canSend ? 1 : .45,
-                  duration: const Duration(milliseconds: 150),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 5, 4, 5),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        AppMenuButton<String>(
-                          tooltip: 'Message tools',
-                          onSelected: (v) {
-                            if (v == 'attach') {
-                              pickAttachment();
-                            } else if (v == 'quick') {
-                              quickReplies();
-                            } else {
-                              templates();
-                            }
-                          },
-                          itemBuilder: (_) => [
-                            const PopupMenuItem(
-                              value: 'attach',
-                              child: Text('Image, video or document'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'quick',
-                              child: Text('Quick replies'),
-                            ),
-                            if (permission.canTemplate)
-                              const PopupMenuItem(
-                                value: 'templates',
-                                child: Text('Templates'),
-                              ),
-                          ],
-                          icon: const Icon(Icons.add),
+            // While permissions load, keep the composer's shape but disabled,
+            // so the bottom of the screen does not swap layouts a moment later.
+            if (!permission.canSend && detail != null)
+              SafeArea(
+                top: false,
+                child: _ComposerCard(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        permission.reason!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: T.secondary,
                         ),
-                        Expanded(
-                          child: AppTextField(
-                            controller: composer,
-                            minLines: 1,
-                            maxLines: 5,
-                            decoration: const InputDecoration(
-                              hintText: 'Message',
-                              isDense: true,
-                            ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (closed)
+                        AppButton.outlined(
+                          onPressed: reopening ? null : reopen,
+                          child: Text(
+                            reopening ? 'Reopening…' : 'Reopen conversation',
                           ),
                         ),
-                        AppIconButton(
-                          tooltip: 'Send message',
-                          onPressed: picking ? null : send,
-                          icon: const Icon(Icons.send, color: T.green),
+                      if (permission.canTemplate)
+                        AppButton.filled(
+                          onPressed: templates,
+                          child: const Text('Send template'),
                         ),
-                      ],
+                    ],
+                  ),
+                ),
+              )
+            else ...[
+              LoadingBar(picking),
+              if (attachment != null)
+                _ComposerCard(
+                  padding: EdgeInsets.zero,
+                  child: ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.attach_file),
+                    title: Text(
+                      attachment!.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: AppIconButton(
+                      tooltip: 'Remove attachment',
+                      onPressed: () => setState(() => attachment = null),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ),
+                ),
+              if (reply != null)
+                _ComposerCard(
+                  padding: EdgeInsets.zero,
+                  child: ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.reply, color: T.green),
+                    title: Text(
+                      reply!.text,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: AppIconButton(
+                      tooltip: 'Cancel reply',
+                      onPressed: () => setState(() => reply = null),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ),
+                ),
+              SafeArea(
+                top: false,
+                child: IgnorePointer(
+                  ignoring: !permission.canSend,
+                  child: AnimatedOpacity(
+                    opacity: permission.canSend ? 1 : .45,
+                    duration: const Duration(milliseconds: 150),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: _ComposerCard(
+                              margin: EdgeInsets.zero,
+                              padding: const EdgeInsets.only(right: 12),
+                              radius: 24,
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  AppMenuButton<String>(
+                                    tooltip: 'Message tools',
+                                    onSelected: (v) {
+                                      if (v == 'attach') {
+                                        pickAttachment();
+                                      } else if (v == 'quick') {
+                                        quickReplies();
+                                      } else {
+                                        templates();
+                                      }
+                                    },
+                                    itemBuilder: (_) => [
+                                      const PopupMenuItem(
+                                        value: 'attach',
+                                        child: Text('Image, video or document'),
+                                      ),
+                                      const PopupMenuItem(
+                                        value: 'quick',
+                                        child: Text('Quick replies'),
+                                      ),
+                                      if (permission.canTemplate)
+                                        const PopupMenuItem(
+                                          value: 'templates',
+                                          child: Text('Templates'),
+                                        ),
+                                    ],
+                                    icon: const Icon(Icons.add, color: T.brass),
+                                  ),
+                                  Expanded(
+                                    child: AppTextField(
+                                      controller: composer,
+                                      minLines: 1,
+                                      maxLines: 5,
+                                      // "/" opens quick replies, as in the
+                                      // web ticket inbox.
+                                      onChanged: (v) {
+                                        if (v == '/') {
+                                          composer.clear();
+                                          quickReplies();
+                                        }
+                                      },
+                                      decoration: const InputDecoration(
+                                        hintText: 'Message  ·  / quick replies',
+                                        isDense: true,
+                                        border: InputBorder.none,
+                                        enabledBorder: InputBorder.none,
+                                        focusedBorder: InputBorder.none,
+                                        filled: false,
+                                        contentPadding: EdgeInsets.symmetric(
+                                          vertical: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Tooltip(
+                            message: 'Send message',
+                            child: Semantics(
+                              button: true,
+                              label: 'Send message',
+                              child: Material(
+                                color: T.green,
+                                shape: const CircleBorder(),
+                                elevation: 1,
+                                child: InkWell(
+                                  customBorder: const CircleBorder(),
+                                  onTap: picking ? null : send,
+                                  child: const SizedBox(
+                                    width: 46,
+                                    height: 46,
+                                    child: Icon(
+                                      Icons.send,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -1007,4 +1098,34 @@ class _WindowStatusState extends State<WindowStatus> {
       style: const TextStyle(fontSize: 11, color: T.muted),
     );
   }
+}
+
+/// White raised surface floating on the chat wallpaper (composer, banners).
+class _ComposerCard extends StatelessWidget {
+  const _ComposerCard({
+    required this.child,
+    this.margin = const EdgeInsets.fromLTRB(8, 4, 8, 4),
+    this.padding = const EdgeInsets.all(12),
+    this.radius = 14,
+  });
+  final Widget child;
+  final EdgeInsets margin, padding;
+  final double radius;
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: margin,
+    padding: padding,
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(radius),
+      boxShadow: [
+        BoxShadow(
+          color: T.ink.withValues(alpha: .12),
+          offset: const Offset(0, 1),
+          blurRadius: 3,
+        ),
+      ],
+    ),
+    child: child,
+  );
 }

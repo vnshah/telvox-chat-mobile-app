@@ -60,6 +60,29 @@ class MobileClock {
     return '${two(date.day)}/${two(date.month)}/${two(date.year % 100)}';
   }
 
+  /// Date separator label: Today, Yesterday, weekday, then "30 Oct 2026".
+  String dayLabel(Object? raw, {DateTime? now}) {
+    final value = instant(raw);
+    if (value == null) return '';
+    _ensure();
+    final location = tz.getLocation(timezone);
+    final date = tz.TZDateTime.from(value, location);
+    final today = tz.TZDateTime.from(now ?? DateTime.now(), location);
+    final days = DateTime(
+      today.year,
+      today.month,
+      today.day,
+    ).difference(DateTime(date.year, date.month, date.day)).inDays;
+    if (days <= 0) return 'Today';
+    if (days == 1) return 'Yesterday';
+    if (days < 7) return listTime(raw, now: now);
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${date.day} ${months[date.month - 1]} ${date.year}';
+  }
+
   String day(Object? raw) {
     final value = instant(raw);
     if (value == null) return '';

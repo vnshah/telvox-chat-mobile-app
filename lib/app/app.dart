@@ -9,8 +9,6 @@ import '../ui/auth.dart';
 import '../ui/business.dart';
 import '../ui/conversation.dart';
 import '../ui/inbox.dart';
-import '../ui/management.dart';
-import '../ui/preview.dart';
 import '../ui/settings.dart';
 import '../ui/theme.dart';
 
@@ -26,13 +24,10 @@ GoRouter createRouter({String initialLocation = '/login'}) => GoRouter(
       onAction: () => context.go('/inbox'),
     ),
   ),
+  // Preview scope matches the live app: shared inbox, ticket inbox,
+  // settings and notifications only.
   routes: [
-    for (final (path, mode) in [
-      ('/login', 'login'),
-      ('/forgot-password', 'forgot'),
-      ('/verify', 'verify'),
-      ('/reset-password', 'reset'),
-    ])
+    for (final (path, mode) in [('/login', 'login'), ('/verify', 'verify')])
       GoRoute(path: path, builder: (_, _) => AuthPage(mode)),
     GoRoute(path: '/', redirect: (_, _) => '/login'),
     GoRoute(path: '/workspaces', builder: (_, _) => const WorkspacePage()),
@@ -44,14 +39,12 @@ GoRouter createRouter({String initialLocation = '/login'}) => GoRouter(
           path: '/contacts',
           builder: (_, state) => ContactsPage(
             pick: state.uri.queryParameters['pick'] == 'true',
-            call: state.uri.queryParameters['pick'] == 'call',
             template: state.uri.queryParameters['template'],
-            product: state.uri.queryParameters['product'],
             draft: state.uri.queryParameters['draft'],
           ),
         ),
         GoRoute(path: '/tickets', builder: (_, _) => const TicketsPage()),
-        GoRoute(path: '/more', builder: (_, _) => const MorePage()),
+        GoRoute(path: '/settings', builder: (_, _) => const SettingsPage()),
       ],
     ),
     GoRoute(
@@ -80,7 +73,6 @@ GoRouter createRouter({String initialLocation = '/login'}) => GoRouter(
       builder: (_, s) =>
           TemplatesPage(contact: s.uri.queryParameters['contact']),
     ),
-    GoRoute(path: '/template/new', builder: (_, _) => const TemplateFormPage()),
     GoRoute(
       path: '/template/:id',
       builder: (_, s) => TemplatePreviewPage(
@@ -90,46 +82,13 @@ GoRouter createRouter({String initialLocation = '/login'}) => GoRouter(
     ),
     GoRoute(
       path: '/quick-replies',
-      builder: (_, s) =>
-          QuickRepliesPage(pick: s.uri.queryParameters['pick'] == 'true'),
-    ),
-    GoRoute(
-      path: '/ai',
-      builder: (_, s) =>
-          AiPage(returnDraft: s.uri.queryParameters['contact'] != null),
-    ),
-    GoRoute(
-      path: '/catalogue',
-      builder: (_, s) =>
-          CataloguePage(contact: s.uri.queryParameters['contact']),
-    ),
-    GoRoute(
-      path: '/product/:id',
-      builder: (_, s) => ProductPage(
-        s.pathParameters['id']!,
-        contact: s.uri.queryParameters['contact'],
-      ),
-    ),
-    GoRoute(path: '/orders', builder: (_, _) => const OrdersPage()),
-    GoRoute(
-      path: '/order/:id',
-      builder: (_, s) => OrderPage(s.pathParameters['id']!),
+      builder: (_, _) => const QuickRepliesPage(),
     ),
     GoRoute(path: '/ticket/new', builder: (_, _) => const TicketFormPage()),
     GoRoute(
       path: '/ticket/:id',
       builder: (_, s) => TicketDetailPage(s.pathParameters['id']!),
     ),
-    GoRoute(path: '/calls', builder: (_, _) => const CallsPage()),
-    GoRoute(
-      path: '/call/incoming',
-      builder: (_, _) => const CallPage('ananya', incoming: true),
-    ),
-    GoRoute(
-      path: '/call/:id',
-      builder: (_, s) => CallPage(s.pathParameters['id']!),
-    ),
-    GoRoute(path: '/settings', builder: (_, _) => const SettingsPage()),
     GoRoute(path: '/profile', builder: (_, _) => const ProfilePage()),
     GoRoute(
       path: '/notifications',
@@ -142,10 +101,6 @@ GoRouter createRouter({String initialLocation = '/login'}) => GoRouter(
     GoRoute(
       path: '/settings/notifications',
       builder: (_, _) => const PreferencePage('notifications'),
-    ),
-    GoRoute(
-      path: '/settings/calls',
-      builder: (_, _) => const PreferencePage('calls'),
     ),
     GoRoute(
       path: '/settings/business',
@@ -163,54 +118,6 @@ GoRouter createRouter({String initialLocation = '/login'}) => GoRouter(
     GoRoute(
       path: '/legal/:id',
       builder: (_, s) => HelpPage(legal: s.pathParameters['id']),
-    ),
-    GoRoute(
-      path: '/hub/:id',
-      builder: (_, s) => HubPage(s.pathParameters['id']!),
-    ),
-    GoRoute(
-      path: '/manage/:id/new',
-      builder: (_, s) => ModuleFormPage(s.pathParameters['id']!),
-    ),
-    GoRoute(
-      path: '/manage/:id/:index/edit',
-      builder: (_, s) => ModuleFormPage(
-        s.pathParameters['id']!,
-        index: int.parse(s.pathParameters['index']!),
-      ),
-    ),
-    GoRoute(
-      path: '/manage/:id/:index',
-      builder: (_, s) => ModuleDetailPage(
-        s.pathParameters['id']!,
-        int.parse(s.pathParameters['index']!),
-      ),
-    ),
-    GoRoute(
-      path: '/manage/:id',
-      builder: (_, s) => ModulePage(s.pathParameters['id']!),
-    ),
-    GoRoute(
-      path: '/workflow/:id',
-      builder: (_, s) => FlowPage(s.pathParameters['id']!),
-    ),
-    GoRoute(path: '/campaigns', builder: (_, _) => const CampaignsPage()),
-    GoRoute(path: '/campaign/new', builder: (_, _) => const CampaignFormPage()),
-    GoRoute(
-      path: '/campaign/:id',
-      builder: (_, s) => CampaignDetailPage(s.pathParameters['id']!),
-    ),
-    GoRoute(
-      path: '/reports',
-      builder: (_, s) =>
-          ReportsPage(initial: s.uri.queryParameters['type'] ?? 'Delivery'),
-    ),
-    GoRoute(path: '/billing', builder: (_, _) => const BillingPage()),
-    GoRoute(path: '/preview', builder: (_, _) => const PreviewPage()),
-    GoRoute(
-      path: '/preview/states',
-      builder: (_, s) =>
-          StatePreviewPage(initial: s.uri.queryParameters['state'] ?? 'empty'),
     ),
   ],
 );

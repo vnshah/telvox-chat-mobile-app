@@ -242,4 +242,56 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });
+
+  test('date separators read Today, Yesterday, weekday, then full date', () {
+    final now = DateTime.utc(2026, 10, 30, 6, 30);
+    const clock = MobileClock();
+    expect(clock.dayLabel('2026-10-30T04:35:00Z', now: now), 'Today');
+    expect(clock.dayLabel('2026-10-29T04:35:00Z', now: now), 'Yesterday');
+    expect(clock.dayLabel('2026-10-26T04:35:00Z', now: now), 'Monday');
+    expect(clock.dayLabel('2026-10-20T04:35:00Z', now: now), '20 Oct 2026');
+  });
+
+  testWidgets('ticket rows show status, priority and assignee', (tester) async {
+    final session = MobileSession(fakeApi((r, h) => answer(r, h, {})), MemoryStore())
+      ..user = {'id': 1};
+    await tester.pumpWidget(
+      app(
+        Scaffold(
+          body: Column(
+            children: [
+              LiveConversationRow(
+                session: session,
+                ticket: true,
+                onTap: () {},
+                people: const {2: 'Priya Shah'},
+                item: {
+                  'id': 7,
+                  'subject': 'Refund request',
+                  'assign_user_id': 2,
+                  'status': {'name': 'Open'},
+                  'priority': {'name': 'High'},
+                  'contact': {'profile_name': 'Alex'},
+                },
+              ),
+              LiveConversationRow(
+                session: session,
+                ticket: true,
+                onTap: () {},
+                item: {'id': 8, 'subject': 'Login issue', 'contact': {}},
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Refund request'), findsOneWidget);
+    expect(find.text('Open'), findsOneWidget);
+    expect(find.text('High'), findsOneWidget);
+    expect(find.byTooltip('Assigned to Priya Shah'), findsOneWidget);
+    expect(find.text('PS'), findsOneWidget);
+    expect(find.text('UNASSIGNED'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
 }

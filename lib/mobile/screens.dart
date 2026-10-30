@@ -484,6 +484,8 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   bool busy = false, more = true;
   Timer? debounce, poll;
   int serial = 0;
+  // Agent names by id, for the assignee initials on each row.
+  Map<int, String> people = {};
   // Same tabs and order as the web inbox; tickets have no favourites.
   Map<String, String> get filters => {
     'mychats': 'My chats',
@@ -511,7 +513,30 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     items = (widget.session.viewCache[cacheKey] as List<Json>?) ?? [];
     load(quiet: items.isNotEmpty);
+    loadPeople();
     startPoll();
+  }
+
+  /// One request per session and number; rows show initials without names
+  /// until it answers, and simply omit them if it fails.
+  Future<void> loadPeople() async {
+    final key = 'users:${widget.session.api.wabaId}';
+    final cached = widget.session.viewCache[key] as Map<int, String>?;
+    if (cached != null) {
+      people = cached;
+      return;
+    }
+    try {
+      final list = rows(await widget.session.api.request('inbox/users'));
+      final next = {
+        for (final u in list)
+          if (number(u['id']) case final int id) id: '${u['name'] ?? ''}',
+      };
+      widget.session.viewCache[key] = next;
+      if (mounted) setState(() => people = next);
+    } catch (_) {
+      /* Assignee initials are optional decoration. */
+    }
   }
 
   void startPoll() {
@@ -678,6 +703,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
                       session: widget.session,
                       item: item,
                       ticket: ticket,
+                      people: people,
                       onTap: () async {
                         if (ticket) {
                           await openPage(
@@ -780,10 +806,12 @@ class LiveConversationRow extends StatelessWidget {
     required this.item,
     required this.onTap,
     this.ticket = false,
+    this.people = const {},
   });
   final MobileSession session;
   final Json item;
   final bool ticket;
+  final Map<int, String> people;
   final VoidCallback onTap;
 
   @override
@@ -795,7 +823,7 @@ class LiveConversationRow extends StatelessWidget {
     final unread =
         number(item[ticket ? 'unread_message' : 'unread_message_count']) ?? 0;
     final outgoing = last.isNotEmpty && number(last['type']) == 1;
-    final status = number(last['message_status']) ?? 0;
+    final receipt = number(last['message_status']) ?? 0;
     final me = number(session.user?['id']);
     final favourites = decoded(contact['favourite']);
     final favourite =
@@ -804,7 +832,7 @@ class LiveConversationRow extends StatelessWidget {
         favourites is List &&
         favourites.map(number).contains(me);
     final preview = ticket
-        ? '$name · ${object(item['status'])['name'] ?? ''}'
+        ? name
         : last.isNotEmpty
         ? MessageContent(last).summary.replaceAll('\n', ' ')
         : 'No messages yet';
@@ -812,6 +840,21 @@ class LiveConversationRow extends StatelessWidget {
       last['created_at'] ?? item['last_message_date'],
     );
     final strong = unread > 0;
+    final assignedIds = (contact['assigned_user_ids'] as List?) ?? const [];
+    final assigneeId = ticket
+        ? number(item['assign_user_id'])
+        : assignedIds.isNotEmpty
+        ? number(assignedIds.first)
+        : number(contact['assigned_to']);
+    final assignee = assigneeId == null
+        ? null
+        : assigneeId == me
+        ? 'You'
+        : '${object(item['assign_user'])['name'] ?? people[assigneeId] ?? ''}';
+    final status = ticket
+        ? '${object(item['status'])['name'] ?? item['status_name'] ?? ''}'
+        : '';
+    final priority = ticket ? '${object(item['priority'])['name'] ?? ''}' : '';
     Widget marker(IconData icon, String label, Color color) => Padding(
       padding: const EdgeInsets.only(left: 5),
       child: Tooltip(
@@ -869,14 +912,14 @@ class LiveConversationRow extends StatelessWidget {
                           Padding(
                             padding: const EdgeInsets.only(right: 4),
                             child: AppIcon(
-                              switch (status) {
+                              switch (receipt) {
                                 0 => Icons.schedule,
                                 1 => Icons.check,
                                 4 || 5 => Icons.error_outline,
                                 _ => Icons.done_all,
                               },
                               size: 15,
-                              color: switch (status) {
+                              color: switch (receipt) {
                                 3 => T.blue,
                                 4 || 5 => T.danger,
                                 _ => T.muted,
@@ -909,6 +952,28 @@ class LiveConversationRow extends StatelessWidget {
                           ),
                         if (favourite)
                           marker(Icons.star_rounded, 'Favourite', T.muted),
+                        if (status.isNotEmpty)
+                          _RowChip(
+                            status,
+                            flag(item['status_is_closed']) ? T.muted : T.green,
+                          ),
+                        if (priority.isNotEmpty) _RowChip(priority, T.brass),
+                        if (assignee != null && assignee.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Tooltip(
+                              message: 'Assigned to $assignee',
+                              child: _Initials(assignee),
+                            ),
+                          )
+                        else if (ticket && assigneeId == null)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Text(
+                              'UNASSIGNED',
+                              style: mono(size: 9, color: T.muted),
+                            ),
+                          ),
                         if (unread > 0)
                           Container(
                             margin: const EdgeInsets.only(left: 7),
@@ -941,4 +1006,55 @@ class LiveConversationRow extends StatelessWidget {
       ),
     );
   }
+}
+
+class _Initials extends StatelessWidget {
+  const _Initials(this.name);
+  final String name;
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 20,
+    height: 20,
+    alignment: Alignment.center,
+    decoration: const BoxDecoration(color: T.selected, shape: BoxShape.circle),
+    child: Text(
+      name == 'You'
+          ? 'Y'
+          : name
+                .trim()
+                .split(RegExp(r'\s+'))
+                .where((s) => s.isNotEmpty)
+                .take(2)
+                .map((s) => s[0])
+                .join()
+                .toUpperCase(),
+      style: const TextStyle(
+        fontSize: 9,
+        fontWeight: FontWeight.w700,
+        color: T.forest,
+      ),
+    ),
+  );
+}
+
+class _RowChip extends StatelessWidget {
+  const _RowChip(this.text, this.color);
+  final String text;
+  final Color color;
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(left: 6),
+    constraints: const BoxConstraints(maxWidth: 90),
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: .12),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Text(
+      text,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color),
+    ),
+  );
 }
