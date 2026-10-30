@@ -10,11 +10,15 @@ TheMessenger WhatsApp Business shared inbox. Continue the existing implementatio
 do not recreate the application, replace its design, or substitute preview data
 for real API data. Read this document first, then inspect the actual files.
 
-The latest user instruction was to **pull the code locally and prepare this
-handoff without running the application**. That pull and documentation work are
-complete. No application, Flutter analysis/tests/build, or live API mutation was
-run for this documentation task. Commands in this document are instructions for
-future work, not newly executed verification.
+Current state (30 October): the pull, API integration, tests, this handoff and the
+sanitized Postman snapshot are committed and pushed as `48e1705` on `main`, and the
+Forge checkout is synchronized to the same commit. No application, Flutter
+analysis/tests/build, or live API mutation was run while writing this document.
+Commands here are instructions for future work, not newly executed verification.
+
+"Running the application" means launching it or sending live API mutations.
+Formatting, analysis, unit/widget tests and APK builds on the pinned SDK are
+routine validation and may be run without separate approval.
 
 When the user later says “continue,” use the next-work sequence in section 16.
 Preserve the agreed scope, distinguish backend limitations from app bugs, and
@@ -31,9 +35,8 @@ questions for already-authorized testing. Do not invent credentials or approvals
 - Development API origin: `https://dev.themessenger.app`.
 - API prefix: `/api/mobile/v1/`.
 - Normal launch is the **live mobile application**. Preview is opt-in.
-- The API integration, tests, handoff and sanitized Postman snapshot are included
-  in the commit containing this document. Check `git status` and `git log` for
-  subsequent changes; the Forge checkout may require a separate synchronization.
+- Local and Forge are both at `48e1705`. Check `git status` and `git log` on each
+  for later changes before assuming they are still in sync.
 - Last full verification, 29 October: analysis clean, **60 regression tests passed**,
   debug APK built on the pinned Forge SDK.
 - Additional captured-response rendering check: nine integrated screen areas in
@@ -94,13 +97,14 @@ read conversation history; it does not add Flow/commerce management to scope.
 | Local backend | `/Users/renav/Herd/themessenger` |
 | Git remote | `git@github.com:vnshah/telvox-chat-mobile-app.git` |
 | Branch | `main` |
-| Pulled commit | `b8f03d98dbb4772ca6b63dd4c5acdf2494d19da7` |
-| Commit subject | Refine chat interactions and adopt themed Telvox launcher icon |
+| Current commit | `48e1705` — Integrate mobile API flows and add continuation handoff |
+| Commit pulled before integration | `b8f03d9` — Refine chat interactions and adopt themed Telvox launcher icon |
 | Forge SSH | `ssh forge@122.179.143.220` |
-| Forge Flutter project | `/home/forge/telvox-chat-mobile-app` |
+| Forge Flutter project | `/home/forge/telvox-chat-mobile-app`, synchronized to `48e1705` |
+| Forge stash | `stash@{0}` “Backup Forge integration before syncing 48e1705” — see below |
 | Backend on Forge, observed | `/home/forge/dev.themessenger.app` |
 | Old machine | `192.168.29.59`; superseded, do not use as the default build target |
-| Handoff source archive | `build/handoff/telvox-chat-handoff-2026-10-30.zip` |
+| Handoff source archive | `build/handoff/telvox-chat-handoff-2026-10-30.zip` — **stale**, predates `48e1705`; use Git instead |
 
 ### Pull completed on 30 October
 
@@ -118,23 +122,22 @@ To preserve work, the documentation task:
 5. Verified every pre-existing saved file matched its pre-pull bytes, and that no
    unresolved Git index entries remained.
 
-The backup and stash were retained. The initial handoff operation did not commit
-or push. The user subsequently authorized committing and pushing from the local
-checkout on 30 October. The integration, tests, documentation and sanitized Postman
-snapshot are included together in the commit containing this update. Verify the
-remote branch before assuming another checkout is synchronized. The previously
-generated source archive predates this documentation update.
+The local backup and stash were retained. The user then authorized committing and
+pushing; everything was committed as `48e1705` and pushed to `origin/main`.
 
-The source archive includes the current code, this document and Postman copies.
-It excludes `.git`, dependency/build caches, APKs, machine-local SDK settings,
-credentials, signing keys and private live-response captures. It is not Git
-history. Use it in a fresh directory or compare it carefully with a checkout;
-do not overwrite someone else's newer work blindly. The document supplies
-context; the accompanying current source is still required to continue coding.
+### Forge synchronization
 
-There is a pre-existing whitespace-only difference in `assets/fonts/Roboto-OFL.txt`
-which was preserved. A broad `git diff --check` can report its trailing whitespace;
-this does not originate in new app logic or this handoff text.
+Forge was then synchronized to `48e1705`. Its uncommitted integration work was
+first saved as `stash@{0}` (“Backup Forge integration before syncing 48e1705”).
+That stash's 28 files match `48e1705` except `README.md`, which was superseded by
+the committed README. **Do not pop the stash** onto the current tree; keep it as a
+backup until it is clearly no longer needed, then drop it deliberately.
+
+### Source archive (stale)
+
+`build/handoff/telvox-chat-handoff-2026-10-30.zip` was generated before `48e1705`
+and does not contain the final code or this document. Clone or pull from Git
+instead. Regenerate the archive only if a non-Git transfer is required.
 
 ## 4. Runtime architecture and source map
 
@@ -470,7 +473,7 @@ network delay. Do not automatically enable production signing or publish it.
 | Login / restore / number selection | Implemented | Live login/me/config passed; unit/widget coverage; native secure-storage lifecycle still merits phone testing |
 | 2FA challenge | Implemented | Automated coverage; not a full live 2FA-device exercise |
 | Inbox/contact lists | Implemented | Live retrieval/search and captured-response rendering passed |
-| History and structured rendering | Implemented | Real Lakhani history captured/rendered; regression and layout checks |
+| History and structured rendering | Implemented | Real test-contact history captured/rendered; regression and layout checks |
 | Free-form send/reply/reaction | Implemented | Contract/optimistic/error tests; live free-form send blocked by expired window |
 | Template sends | Implemented | Mapping/retry tests; live attempt reached provider path but Meta rejected stale template |
 | Media upload/view/playback | Implemented | Validation/multipart retry tests and viewer layouts; physical picking/codecs and delivery not certified |
@@ -506,12 +509,10 @@ are under ignored `build/live-review/`; do not commit real customer captures.
 
 ## 11. Live development account and test record
 
-The user authorized testing with their development account and this contact:
-
-- Contact: **Lakhani**, WhatsApp **919099801380**.
-- Last observed contact ID: **10205**.
-- Last observed authenticated/bound number account ID: **280**, name **BSNL 485**.
-- Last observed business phone: **919426555485**.
+The user authorized testing with their development account and one specific test
+contact. The contact name, phone numbers and observed contact/WABA IDs are kept
+out of Git in the ignored local file `HANDOFF.local.md`; ask the user for them if
+that file is not present on your machine.
 
 These are environment-specific historical IDs. Re-resolve them after reset/migration;
 do not hardcode them into application code or production tests. The account email,
@@ -647,9 +648,10 @@ Last SHA-256 (29 October build):
 Verify timestamps/hashes after future builds. The older `telvox-ui-preview.apk` is
 not the current live integration. Do not distribute an old file as a new build.
 
-Android release currently uses the debug signing configuration. An optimized
-internal test APK is not a production-signed release. No store publication is
-part of this handoff.
+Android release currently uses the debug signing configuration. Forge also holds
+`app-release.apk` (29 October); despite its name it is **debug-signed** and is not
+a production release. Do not distribute it as one. No store publication is part of
+this handoff.
 
 ### Syncing caution
 
@@ -719,7 +721,7 @@ backup directories or cached live API data.
 8. Run pinned SDK validation/build, compare APK checksums, and report exact results
    and remaining limits. Do not claim push/realtime/calls were implemented.
 9. Commit/push only when requested or already clearly included in the new task.
-   A subsequent user request authorized this local integration commit and push.
+   The earlier commit/push authorization covered `48e1705` only.
 
 ### Ready-to-use prompt for another AI
 
@@ -731,5 +733,6 @@ backup directories or cached live API data.
 > existing work, and do not bypass messaging restrictions. Distinguish implemented,
 > mocked-tested, live-verified and physically device-tested behavior. Do not expose
 > secrets or ask again for permissions already clearly granted; report genuine
-> external blockers without claiming success. Do not run the application unless
-> my current instruction authorizes resuming execution.
+> external blockers without claiming success. Format, analyze, test and build
+> freely; do not launch the app or send live API mutations unless my current
+> instruction authorizes it.
