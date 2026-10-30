@@ -31,21 +31,36 @@ class Attachment {
       'document',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     ),
+    // Audio is re-encoded by the server to the Ogg/Opus voice note WhatsApp plays.
+    'm4a': ('audio', 'audio/mp4'),
+    'aac': ('audio', 'audio/aac'),
+    'mp3': ('audio', 'audio/mpeg'),
+    'ogg': ('audio', 'audio/ogg'),
+    'opus': ('audio', 'audio/ogg'),
+    'amr': ('audio', 'audio/amr'),
     'ppt': ('document', 'application/vnd.ms-powerpoint'),
     'pptx': (
       'document',
       'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     ),
   };
-  static Future<Attachment> fromFile(XFile file, {String? requiredKind}) async {
+  static Future<Attachment> fromFile(
+    XFile file, {
+    String? requiredKind,
+    List<String>? kinds,
+  }) async {
     final format = formats[file.name.split('.').last.toLowerCase()];
-    if (format == null || (requiredKind != null && format.$1 != requiredKind)) {
-      throw const ApiFailure('Choose a supported image, video, or document.');
+    final allowed = kinds ?? [?requiredKind];
+    if (format == null ||
+        (allowed.isNotEmpty && !allowed.contains(format.$1))) {
+      throw const ApiFailure(
+        'Choose a supported image, video, audio file or document.',
+      );
     }
     final size = await file.length();
     final maxMb = switch (format.$1) {
       'image' => 5,
-      'video' => 16,
+      'video' || 'audio' => 16,
       _ => 100,
     };
     if (size <= 0 || size > maxMb * 1024 * 1024) {
@@ -65,21 +80,26 @@ class Attachment {
   );
 }
 
-Future<Attachment?> chooseAttachment({String? kind}) async {
+/// [kinds] narrows the picker (gallery: image and video); [kind] is one kind.
+Future<Attachment?> chooseAttachment({
+  String? kind,
+  List<String>? kinds,
+}) async {
+  final allowed = kinds ?? [?kind];
   final extensions = Attachment.formats.entries
-      .where((e) => kind == null || e.value.$1 == kind)
+      .where((e) => allowed.isEmpty || allowed.contains(e.value.$1))
       .map((e) => e.key)
       .toList();
   final file = await openFile(
     acceptedTypeGroups: [
       XTypeGroup(
-        label: kind ?? 'Attachments',
+        label: allowed.isEmpty ? 'Attachments' : allowed.join(' or '),
         extensions: extensions,
         uniformTypeIdentifiers: const ['public.data'],
       ),
     ],
   );
-  return file == null ? null : Attachment.fromFile(file, requiredKind: kind);
+  return file == null ? null : Attachment.fromFile(file, kinds: allowed);
 }
 
 Future<Json> uploadAttachment(
@@ -106,9 +126,18 @@ Uri? mediaUri(Object? value, String apiBase) {
   final base = Uri.parse(apiBase);
   final uri = Uri.tryParse(value);
   if (uri == null) return null;
+  // Inbound media is stored as `storage/<number>/...` and served from the site
+  // root, as the web inbox loads it (`/${media_path}`); other relative paths
+  // are public-disk paths under /storage.
   final resolved = uri.hasScheme
       ? uri
-      : base.resolve(value.startsWith('/') ? value : '/storage/$value');
+      : base.resolve(
+          value.startsWith('/')
+              ? value
+              : value.startsWith('storage/')
+              ? '/$value'
+              : '/storage/$value',
+        );
   if (resolved.scheme != 'https' ||
       resolved.host.isEmpty ||
       resolved.userInfo.isNotEmpty) {
@@ -127,7 +156,11 @@ class MessageMedia {
       return null;
     }
     final payload = object(decoded(message['message_body_json']));
-    final media = object(payload[type]);
+    // Outgoing rows nest the file under its type; inbound rows store it flat.
+    final nested = object(payload[type]);
+    final media = nested.isEmpty && payload['media_path'] != null
+        ? payload
+        : nested;
     final uri = mediaUri(
       media['media_path'] ??
           media['link'] ??

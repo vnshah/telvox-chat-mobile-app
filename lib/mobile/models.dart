@@ -153,6 +153,14 @@ List<ApiMessage> mergeMessages(
     final date = '${a.json['created_at']}'.compareTo('${b.json['created_at']}');
     return date != 0 ? date : (number(a.id) ?? 0).compareTo(number(b.id) ?? 0);
   });
+  // A replayed call webhook can store the same call twice (same call id);
+  // show it once, keeping the newest row.
+  final calls = <String>{};
+  for (var i = result.length - 1; i >= 0; i--) {
+    final m = result[i];
+    if (m.type != 'voice_call' || m.wamid.isEmpty) continue;
+    if (!calls.add(m.wamid)) result.removeAt(i);
+  }
   return result;
 }
 

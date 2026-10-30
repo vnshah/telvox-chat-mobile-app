@@ -23,7 +23,7 @@ void main() {
     'attachments validate type, size and empty files before upload',
     () async {
       for (final file in [
-        XFile.fromData(Uint8List(3), path: 'voice.mp3'),
+        XFile.fromData(Uint8List(3), path: 'voice.wma'),
         XFile.fromData(Uint8List(0), path: 'empty.pdf'),
         XFile.fromData(Uint8List(5 * 1024 * 1024 + 1), path: 'large.png'),
       ]) {

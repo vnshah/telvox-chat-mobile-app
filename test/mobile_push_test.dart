@@ -86,9 +86,16 @@ void main() {
     final push = FakePush();
     final session = pushSession(push, (r, h) => answer(r, h, {}));
     await session.push.enable();
-    session.visibleConversation = 'contact:12';
+    session.visibleContacts.add('contact:12');
     push.arrivals
       ..add(const PushMessage(title: 'Alex', data: {'contact_id': '12'}))
+      // Same customer, but the message belongs to their open ticket.
+      ..add(
+        const PushMessage(
+          title: 'Alex · #42',
+          data: {'contact_id': '12', 'ticket_id': '42'},
+        ),
+      )
       ..add(const PushMessage(title: 'Sam', data: {'contact_id': '13'}));
     await Future<void>.delayed(Duration.zero);
     expect(push.shown.map((m) => m.title), ['Sam']);
@@ -146,6 +153,7 @@ void main() {
     expect(find.text('Alex Morgan'), findsOneWidget);
     expect(session.pendingOpen, isNull);
     expect(session.visibleConversation, 'contact:12');
+    expect(session.visibleContacts, {'contact:12'});
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });

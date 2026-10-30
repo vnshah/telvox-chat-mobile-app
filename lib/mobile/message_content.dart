@@ -21,6 +21,7 @@ class MessageContent {
   final buttons = <String>[];
   final media = <Json>[];
   final fields = <String, String>{};
+  VoiceCall? voiceCall;
   bool get structured =>
       buttons.isNotEmpty || media.isNotEmpty || fields.isNotEmpty;
   String get summary => text.isNotEmpty
@@ -78,6 +79,56 @@ class MessageContent {
       }
       if (c['location'] != null) location(object(c['location']));
     }
+  }
+
+  /// Voice call rows hold "Start calling..." until the call ends, then a JSON
+  /// status. Worded as WhatsApp shows them: a missed incoming call, an
+  /// unanswered outgoing one, or the call with its duration.
+  void call(Object? body) {
+    if (body is! Map) {
+      voiceCall = VoiceCall(
+        incoming: number(row['type']) == 2,
+        missed: false,
+        title: 'Voice call',
+        subtitle: readableText(row['message_body']).isEmpty ? null : 'Calling…',
+      );
+    } else {
+      final status = '${body['status'] ?? ''}'.toUpperCase();
+      final incoming = body['direction'] == null
+          ? number(row['type']) == 2
+          : body['direction'] == 'USER_INITIATED';
+      final seconds = int.tryParse('${body['duration']}') ?? 0;
+      final answered = status == 'COMPLETED' && seconds > 0;
+      voiceCall = answered
+          ? VoiceCall(
+              incoming: incoming,
+              missed: false,
+              title: 'Voice call',
+              subtitle: callDuration(seconds),
+            )
+          : incoming
+          ? VoiceCall(incoming: true, missed: true, title: 'Missed voice call')
+          : VoiceCall(
+              incoming: false,
+              missed: false,
+              title: 'Voice call',
+              subtitle: status.isEmpty || status == 'COMPLETED'
+                  ? 'No answer'
+                  : '${status[0]}${status.substring(1).toLowerCase().replaceAll('_', ' ')}',
+            );
+    }
+    final c = voiceCall!;
+    text =
+        '📞 ${c.title}${c.subtitle == null || c.subtitle == 'Calling…' ? '' : ' · ${c.subtitle}'}';
+  }
+
+  static String callDuration(Object? seconds) {
+    final total = int.tryParse('$seconds') ?? 0;
+    final secs = total % 60, mins = total ~/ 60;
+    final secsLabel = '$secs ${secs == 1 ? 'sec' : 'secs'}';
+    if (mins == 0) return secsLabel;
+    final minsLabel = '$mins ${mins == 1 ? 'min' : 'mins'}';
+    return secs > 0 ? '$minsLabel $secsLabel' : minsLabel;
   }
 
   void location(Json l) {
@@ -159,8 +210,13 @@ class MessageContent {
       if (text.isEmpty) text = 'Interactive message';
       return;
     }
+    if (type == 'voice_call') {
+      call(body);
+      return;
+    }
     if (['image', 'video', 'document', 'audio', 'sticker'].contains(type)) {
-      attachment(type, p[type]);
+      // Outgoing rows nest the file under its type; inbound rows store it flat.
+      attachment(type, p[type] ?? (p['media_path'] != null ? p : null));
       line(object(p[type])['caption']);
       if (text.isEmpty &&
           !RegExp(
@@ -196,4 +252,16 @@ class MessageContent {
           : 'Unsupported message';
     }
   }
+}
+
+class VoiceCall {
+  const VoiceCall({
+    required this.incoming,
+    required this.missed,
+    required this.title,
+    this.subtitle,
+  });
+  final bool incoming, missed;
+  final String title;
+  final String? subtitle;
 }

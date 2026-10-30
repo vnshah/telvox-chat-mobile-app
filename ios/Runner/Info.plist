@@ -66,5 +66,7 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Telvox Chat records voice notes while you hold the microphone button.</string>
 </dict>
 </plist>

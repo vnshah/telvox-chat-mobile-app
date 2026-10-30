@@ -191,6 +191,10 @@ class MobileSession extends ChangeNotifier {
   /// is not shown on top of the conversation itself.
   String? visibleConversation;
 
+  /// `contact:12` for the customer of the chat on screen (shared inbox or
+  /// ticket), so a push about them is not shown over their conversation.
+  final visibleContacts = <String>{};
+
   /// A tapped notification waiting for the home screen to open it.
   Json? pendingOpen;
 

@@ -20,6 +20,10 @@ class PushMessage {
       : data['contact_id'] != null
       ? 'contact:${data['contact_id']}'
       : null;
+
+  /// The customer this push is about, whichever screen shows them.
+  String? get contactKey =>
+      data['contact_id'] == null ? null : 'contact:${data['contact_id']}';
 }
 
 /// Platform seam: Firebase in the app, a fake in tests.
@@ -87,11 +91,11 @@ class PushService {
     }
   }
 
+  /// Nothing to announce for the customer whose chat is on screen, whether
+  /// it is their shared-inbox chat or one of their ticket conversations.
   void _foreground(PushMessage message) {
-    final conversation = message.conversation;
-    if (conversation != null && conversation == session.visibleConversation) {
-      return;
-    }
+    final contact = message.contactKey;
+    if (contact != null && session.visibleContacts.contains(contact)) return;
     _transport?.show(message);
   }
 

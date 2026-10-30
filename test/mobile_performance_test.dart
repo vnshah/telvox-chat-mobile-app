@@ -121,7 +121,8 @@ void main() {
       await tester.pumpWidget(app(LiveChat(session, contact)));
       // First frame, before any response: composer already usable from cache.
       expect(find.textContaining('Checking conversation'), findsNothing);
-      expect(find.byTooltip('Send message'), findsOneWidget);
+      // An empty composer offers the voice-note mic, as WhatsApp does.
+      expect(find.byTooltip('Hold to record a voice note'), findsOneWidget);
       await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox());
       session.dispose();

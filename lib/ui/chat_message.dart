@@ -486,9 +486,17 @@ class MessageBubble extends StatelessWidget {
     this.maxWidth = 320,
     this.contentBefore,
     this.contentAfter,
+    this.tight = false,
+    this.showStamp = true,
   });
   final Message message;
   final Widget? contentBefore, contentAfter;
+
+  /// Media fills the bubble with a thin margin, as WhatsApp frames photos.
+  final bool tight;
+
+  /// False when the media draws the time over itself instead.
+  final bool showStamp;
   final bool first, starred;
   final double maxWidth;
   @override
@@ -500,15 +508,33 @@ class MessageBubble extends StatelessWidget {
     final emojiCount = m.type == 'text' && m.reply == null
         ? _emojiCount(m.text)
         : 0;
+    final framed = tight || m.type == 'image' || m.type == 'order';
+    final metadataOnly =
+        contentAfter != null ||
+        (contentBefore != null && m.text.isEmpty) ||
+        m.type == 'document' ||
+        m.type == 'audio';
+    Widget body = _MessageText(
+      message: m,
+      starred: starred,
+      emojiCount: emojiCount,
+      metadataOnly: metadataOnly,
+    );
+    if (tight) {
+      body = Padding(
+        padding: EdgeInsets.fromLTRB(6, m.text.isEmpty ? 2 : 5, 5, 2),
+        child: body,
+      );
+    }
     return CustomPaint(
       painter: first ? _BubbleTail(m.out, color) : null,
       child: Container(
         constraints: BoxConstraints(maxWidth: width),
         padding: EdgeInsets.fromLTRB(
-          m.type == 'image' || m.type == 'order' ? 4 : 9,
-          m.type == 'image' || m.type == 'order' ? 4 : 5,
-          m.type == 'image' || m.type == 'order' ? 4 : 8,
-          6,
+          framed ? 3 : 9,
+          framed ? 3 : 5,
+          framed ? 3 : 8,
+          framed ? 3 : 6,
         ),
         decoration: BoxDecoration(
           color: color,
@@ -655,16 +681,7 @@ class MessageBubble extends StatelessWidget {
                 Text(m.text, style: const TextStyle(fontSize: 15, height: 1.3)),
               contentAfter!,
             ],
-            _MessageText(
-              message: m,
-              starred: starred,
-              emojiCount: emojiCount,
-              metadataOnly:
-                  contentAfter != null ||
-                  (contentBefore != null && m.text.isEmpty) ||
-                  m.type == 'document' ||
-                  m.type == 'audio',
-            ),
+            if (showStamp || !metadataOnly) body,
           ],
         ),
       ),

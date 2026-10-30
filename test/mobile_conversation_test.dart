@@ -5,8 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:telvox_chat_mobile_app/mobile/api.dart';
 import 'package:telvox_chat_mobile_app/mobile/message_content.dart';
+import 'package:telvox_chat_mobile_app/mobile/models.dart';
+import 'package:telvox_chat_mobile_app/mobile/message_view.dart';
+import 'package:telvox_chat_mobile_app/mobile/media.dart';
 import 'package:telvox_chat_mobile_app/mobile/send_policy.dart';
 import 'package:telvox_chat_mobile_app/mobile/chat.dart';
+import 'package:telvox_chat_mobile_app/ui/chat_message.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
 import 'mobile_api_test.dart' show fakeApi, answer, MemoryStore;
@@ -264,6 +268,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), 'Instant draft');
+      await tester.pump();
       await tester.tap(find.byTooltip('Send message'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 150));
@@ -331,5 +336,118 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       session.dispose();
     }
+  });
+
+  test('inbound stickers load from the stored path, as the web inbox does', () {
+    final row = {
+      'message_type': 'sticker',
+      'message_body': 'sticker_attached',
+      'message_body_json': '{"type":"sticker","media_name":"1.webp","media_path":"storage/9426555485/919724105194/sticker/1.webp","media_mime_type":"image/webp"}',
+    };
+    expect(
+      MessageContent(row).media.single['media_path'],
+      contains('sticker/1.webp'),
+    );
+    expect(
+      MessageMedia.fromMessage(
+        row,
+        'https://chat.example.test/api/mobile/v1/',
+      )?.url.toString(),
+      'https://chat.example.test/storage/9426555485/919724105194/sticker/1.webp',
+    );
+  });
+
+  test('voice calls are worded as WhatsApp words them', () {
+    String call(Object body, [int? type]) => MessageContent({
+      'message_type': 'voice_call',
+      'message_body': body,
+      'type': ?type,
+    }).text;
+    expect(call('Start calling...', 1), '📞 Voice call');
+    expect(
+      call('{"status":"COMPLETED","duration":65,"direction":"USER_INITIATED"}'),
+      '📞 Voice call · 1 min 5 secs',
+    );
+    expect(
+      call('{"status":"COMPLETED","duration":0,"direction":"USER_INITIATED"}'),
+      '📞 Missed voice call',
+    );
+    expect(
+      call(
+        '{"status":"COMPLETED","duration":0,"direction":"BUSINESS_INITIATED"}',
+      ),
+      '📞 Voice call · No answer',
+    );
+    expect(call('{"status":"FAILED"}', 1), '📞 Voice call · Failed');
+  });
+
+  testWidgets('stickers have no bubble and calls show the call row', (
+    tester,
+  ) async {
+    ApiMessage row(Json json) => ApiMessage({
+      'id': json['id'],
+      'created_at': '2026-10-30T13:06:03Z',
+      ...json,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: T.themeFor(TargetPlatform.android),
+        home: Scaffold(
+          body: Column(
+            children: [
+              LiveMessageView(
+                message: row({
+                  'id': 1,
+                  'type': 2,
+                  'message_type': 'sticker',
+                  'message_body': 'sticker_attached',
+                  'message_body_json': '{"type":"sticker","media_path":"storage/1/sticker/a.webp"}',
+                }),
+                apiBase: 'https://chat.example.test/api/mobile/v1/',
+                first: true,
+              ),
+              LiveMessageView(
+                message: row({
+                  'id': 2,
+                  'type': 2,
+                  'message_type': 'voice_call',
+                  'message_body': '{"status":"COMPLETED","duration":0,"direction":"USER_INITIATED"}',
+                }),
+                apiBase: 'https://chat.example.test/api/mobile/v1/',
+                first: true,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(StickerView), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(StickerView),
+        matching: find.byType(MessageBubble),
+      ),
+      findsNothing,
+    );
+    expect(find.text('18:36'), findsNWidgets(2));
+    expect(find.text('Missed voice call'), findsOneWidget);
+    expect(find.byIcon(Icons.call_missed), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('a call stored twice by a replayed webhook shows once', () {
+    Map<String, Object> row(int id) => {
+      'id': id,
+      'type': 2,
+      'message_type': 'voice_call',
+      'message_id': 'wacid.SAME',
+      'message_body': '{"status":"COMPLETED","duration":0}',
+      'created_at': '2026-10-30T13:06:03Z',
+    };
+    final merged = mergeMessages([], [
+      ApiMessage(row(269289)),
+      ApiMessage(row(269290)),
+    ]);
+    expect(merged.map((m) => m.id), ['269290']);
   });
 }

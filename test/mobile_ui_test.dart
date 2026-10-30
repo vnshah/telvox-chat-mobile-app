@@ -113,6 +113,7 @@ void main() {
         findsOneWidget,
       );
       await tester.enterText(find.byType(TextField), 'A real draft');
+      await tester.pump();
       await tester.tap(find.byTooltip('Send message'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Customer session expired'), findsOneWidget);

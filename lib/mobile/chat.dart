@@ -12,7 +12,9 @@ import 'api.dart';
 import 'models.dart';
 import 'screens.dart';
 import 'media.dart';
+import 'composer.dart';
 import 'contact_actions.dart';
+import 'message_content.dart' show readableText;
 import 'templates.dart';
 import 'message_view.dart';
 import 'send_policy.dart';
@@ -83,6 +85,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     details();
     subscribeLive();
     widget.session.visibleConversation = visibleKey;
+    widget.session.visibleContacts.add('contact:$contactId');
   }
 
   String get visibleKey => widget.ticketId != null
@@ -143,6 +146,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     if (widget.session.visibleConversation == visibleKey) {
       widget.session.visibleConversation = null;
     }
+    widget.session.visibleContacts.remove('contact:$contactId');
     liveDebounce?.cancel();
     for (final sub in live) {
       sub.cancel();
@@ -318,12 +322,55 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> pickAttachment() async {
+  /// Who wrote a message, as a reply quote names them on WhatsApp.
+  String quoteAuthor(ApiMessage m) => m.outgoing
+      ? (readableText(m.json['sender_name']).isEmpty
+            ? 'You'
+            : readableText(m.json['sender_name']))
+      : '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}';
+
+  Future<void> attachMenu(bool canTemplate) async {
+    final choice = await showAttachSheet(context, templates: canTemplate);
+    if (!mounted || choice == null) return;
+    switch (choice) {
+      case AttachChoice.document:
+        pickAttachment(['document']);
+      case AttachChoice.gallery:
+        pickAttachment(['image', 'video']);
+      case AttachChoice.audio:
+        pickAttachment(['audio']);
+      case AttachChoice.quickReplies:
+        quickReplies();
+      case AttachChoice.templates:
+        templates();
+    }
+  }
+
+  /// A recorded voice note goes straight out, like WhatsApp's release-to-send.
+  void sendVoiceNote(Attachment note) {
+    if (!policy.canSend) {
+      mobileNotice(context, policy.reason!);
+      return;
+    }
+    final item = PendingSend({
+      'waba_user_id': widget.session.api.wabaId,
+      'contact_id': contactId,
+      'wa_id': phone,
+      'message_type': 'audio',
+      'body': '',
+      if (widget.ticketId != null) 'ticket_id': widget.ticketId,
+    }, attachment: note);
+    setState(() => pending.add(item));
+    scrollToEnd(animate: true);
+    deliver(item);
+  }
+
+  Future<void> pickAttachment([List<String>? kinds]) async {
     if (!policy.canSend) return;
     if (picking) return;
     setState(() => picking = true);
     try {
-      final file = await chooseAttachment();
+      final file = await chooseAttachment(kinds: kinds);
       if (mounted && file != null) {
         setState(() {
           attachment = file;
@@ -570,6 +617,19 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
+  String pendingLabel(PendingSend p) {
+    final a = p.attachment;
+    final body = '${p.body['body'] ?? ''}';
+    if (a == null) return body;
+    final label = switch (a.kind) {
+      'audio' => '🎤 Voice message',
+      'image' => '📷 ${a.name}',
+      'video' => '🎥 ${a.name}',
+      _ => '📄 ${a.name}',
+    };
+    return body.isEmpty ? label : '$label\n$body';
+  }
+
   Widget historyItem(int index) {
     if (index == 0) {
       return more
@@ -589,9 +649,16 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         tween: Tween(begin: 0, end: 1),
         duration: MediaQuery.disableAnimationsOf(context)
             ? Duration.zero
-            : const Duration(milliseconds: 100),
-        builder: (context, value, child) =>
-            Opacity(opacity: value, child: child),
+            : const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+        // A just-sent message rises a little into place, as on WhatsApp.
+        builder: (context, value, child) => Opacity(
+          opacity: value,
+          child: Transform.translate(
+            offset: Offset(0, (1 - value) * 14),
+            child: child,
+          ),
+        ),
         child: Padding(
           padding: const EdgeInsets.only(top: 4, bottom: 4),
           child: Align(
@@ -601,7 +668,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
               children: [
                 MessageBubble(
                   message: Message(
-                    '${p.attachment == null ? '' : '${p.attachment!.name}\n'}${p.body['body']}',
+                    pendingLabel(p),
                     out: true,
                     time: const MobileClock().time(
                       DateTime.now().toUtc().toIso8601String(),
@@ -697,6 +764,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
               ? () => setState(() => reply = m)
               : null,
           onActions: (anchor) => actions(m, anchor),
+          contactName:
+              '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}',
         ),
       ],
     );
@@ -850,150 +919,21 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
               )
             else ...[
               LoadingBar(picking),
-              if (attachment != null)
-                _ComposerCard(
-                  padding: EdgeInsets.zero,
-                  child: ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.attach_file),
-                    title: Text(
-                      attachment!.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: AppIconButton(
-                      tooltip: 'Remove attachment',
-                      onPressed: () => setState(() => attachment = null),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ),
-                ),
-              if (reply != null)
-                _ComposerCard(
-                  padding: EdgeInsets.zero,
-                  child: ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.reply, color: T.green),
-                    title: Text(
-                      reply!.text,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: AppIconButton(
-                      tooltip: 'Cancel reply',
-                      onPressed: () => setState(() => reply = null),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ),
-                ),
               SafeArea(
                 top: false,
-                child: IgnorePointer(
-                  ignoring: !permission.canSend,
-                  child: AnimatedOpacity(
-                    opacity: permission.canSend ? 1 : .45,
-                    duration: const Duration(milliseconds: 150),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Expanded(
-                            child: _ComposerCard(
-                              margin: EdgeInsets.zero,
-                              padding: const EdgeInsets.only(right: 12),
-                              radius: 24,
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  AppMenuButton<String>(
-                                    tooltip: 'Message tools',
-                                    onSelected: (v) {
-                                      if (v == 'attach') {
-                                        pickAttachment();
-                                      } else if (v == 'quick') {
-                                        quickReplies();
-                                      } else {
-                                        templates();
-                                      }
-                                    },
-                                    itemBuilder: (_) => [
-                                      const PopupMenuItem(
-                                        value: 'attach',
-                                        child: Text('Image, video or document'),
-                                      ),
-                                      const PopupMenuItem(
-                                        value: 'quick',
-                                        child: Text('Quick replies'),
-                                      ),
-                                      if (permission.canTemplate)
-                                        const PopupMenuItem(
-                                          value: 'templates',
-                                          child: Text('Templates'),
-                                        ),
-                                    ],
-                                    icon: const Icon(Icons.add, color: T.brass),
-                                  ),
-                                  Expanded(
-                                    child: AppTextField(
-                                      controller: composer,
-                                      minLines: 1,
-                                      maxLines: 5,
-                                      // "/" opens quick replies, as in the
-                                      // web ticket inbox.
-                                      onChanged: (v) {
-                                        if (v == '/') {
-                                          composer.clear();
-                                          quickReplies();
-                                        }
-                                      },
-                                      decoration: const InputDecoration(
-                                        hintText: 'Message  ·  / quick replies',
-                                        isDense: true,
-                                        border: InputBorder.none,
-                                        enabledBorder: InputBorder.none,
-                                        focusedBorder: InputBorder.none,
-                                        filled: false,
-                                        contentPadding: EdgeInsets.symmetric(
-                                          vertical: 12,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Tooltip(
-                            message: 'Send message',
-                            child: Semantics(
-                              button: true,
-                              label: 'Send message',
-                              child: Material(
-                                color: T.green,
-                                shape: const CircleBorder(),
-                                elevation: 1,
-                                child: InkWell(
-                                  customBorder: const CircleBorder(),
-                                  onTap: picking ? null : send,
-                                  child: const SizedBox(
-                                    width: 46,
-                                    height: 46,
-                                    child: Icon(
-                                      Icons.send,
-                                      color: Colors.white,
-                                      size: 20,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                child: ChatComposer(
+                  controller: composer,
+                  enabled: permission.canSend,
+                  busy: picking,
+                  replyAuthor: reply == null ? null : quoteAuthor(reply!),
+                  replyText: reply?.text,
+                  onCancelReply: () => setState(() => reply = null),
+                  attachment: attachment,
+                  onCancelAttachment: () => setState(() => attachment = null),
+                  onSend: send,
+                  onAttach: () => attachMenu(permission.canTemplate),
+                  onQuickReplies: quickReplies,
+                  onVoiceNote: sendVoiceNote,
                 ),
               ),
             ],
@@ -1147,24 +1087,18 @@ class _WindowStatusState extends State<WindowStatus> {
   }
 }
 
-/// White raised surface floating on the chat wallpaper (composer, banners).
+/// White raised card on the chat wallpaper, where the composer would be when
+/// sending is not allowed (closed window, closed chat, not assigned).
 class _ComposerCard extends StatelessWidget {
-  const _ComposerCard({
-    required this.child,
-    this.margin = const EdgeInsets.fromLTRB(8, 4, 8, 4),
-    this.padding = const EdgeInsets.all(12),
-    this.radius = 14,
-  });
+  const _ComposerCard({required this.child});
   final Widget child;
-  final EdgeInsets margin, padding;
-  final double radius;
   @override
   Widget build(BuildContext context) => Container(
-    margin: margin,
-    padding: padding,
+    margin: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+    padding: const EdgeInsets.all(12),
     decoration: BoxDecoration(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(radius),
+      borderRadius: BorderRadius.circular(14),
       boxShadow: [
         BoxShadow(
           color: T.ink.withValues(alpha: .12),
