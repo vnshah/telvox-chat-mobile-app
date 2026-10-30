@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:telvox_chat_mobile_app/mobile/api.dart';
 import 'package:telvox_chat_mobile_app/mobile/chat.dart';
+import 'package:telvox_chat_mobile_app/mobile/models.dart';
 import 'package:telvox_chat_mobile_app/mobile/screens.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
@@ -174,6 +175,70 @@ void main() {
     expect(find.text('Alex'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsNothing);
     await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+    session.dispose();
+  });
+
+  test('list times read like WhatsApp: time, Yesterday, weekday, date', () {
+    // Thursday 30 Oct 2026, 12:00 in Asia/Kolkata.
+    final now = DateTime.utc(2026, 10, 30, 6, 30);
+    const clock = MobileClock();
+    expect(clock.listTime('2026-10-30T04:35:00Z', now: now), '10:05');
+    expect(clock.listTime('2026-10-29T04:35:00Z', now: now), 'Yesterday');
+    expect(clock.listTime('2026-10-26T04:35:00Z', now: now), 'Monday');
+    expect(clock.listTime('2026-10-20T04:35:00Z', now: now), '20/10/26');
+    expect(clock.listTime(null, now: now), '');
+  });
+
+  testWidgets('inbox rows show unread, ticks and conversation markers', (
+    tester,
+  ) async {
+    final session = MobileSession(fakeApi((r, h) => answer(r, h, {})), MemoryStore())
+      ..user = {'id': 1};
+    await tester.pumpWidget(
+      app(
+        Scaffold(
+          body: Column(
+            children: [
+              LiveConversationRow(
+                session: session,
+                onTap: () {},
+                item: {
+                  'id': 12,
+                  'profile_name': 'Alex',
+                  'unread_message_count': 99,
+                  'favourite': '[1]',
+                  'conversation_status': 0,
+                  'conversation_owner_type': 1,
+                  'is_blocked': true,
+                  'is_dnd': 1,
+                  'last_message': {
+                    'type': 1,
+                    'message_status': 3,
+                    'message_type': 'text',
+                    'message_body': 'Order shipped',
+                    'created_at': '2026-10-30T04:35:00Z',
+                  },
+                },
+              ),
+              LiveConversationRow(
+                session: session,
+                onTap: () {},
+                item: {'id': 13, 'waba_profile_name': 'Sam'},
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.text('99+'), findsOneWidget);
+    expect(find.text('Order shipped'), findsOneWidget);
+    expect(find.byIcon(Icons.done_all), findsOneWidget);
+    for (final label in ['Closed', 'Bot', 'Blocked', 'Do not disturb', 'Favourite']) {
+      expect(find.byTooltip(label), findsOneWidget);
+    }
+    expect(find.text('Sam'), findsOneWidget);
+    expect(find.text('No messages yet'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     session.dispose();
   });

@@ -8,6 +8,7 @@ import 'api.dart';
 import 'chat.dart';
 import 'models.dart';
 import 'message_content.dart';
+import 'send_policy.dart' show flag;
 import 'tickets.dart';
 
 void mobileNotice(BuildContext context, Object message) {
@@ -483,6 +484,15 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   bool busy = false, more = true;
   Timer? debounce, poll;
   int serial = 0;
+  // Same tabs and order as the web inbox; tickets have no favourites.
+  Map<String, String> get filters => {
+    'mychats': 'My chats',
+    'all': 'All',
+    'unread': 'Unread',
+    'unassigned': 'Unassigned',
+    if (widget.kind != 2) 'favourite': 'Favourites',
+    'closed': 'Closed',
+  };
   // Inbox and Contacts request the same contact list, so they share a cache.
   String get cacheKey =>
       "list:${widget.session.api.wabaId}:${widget.kind == 2 ? 'tickets' : 'contacts'}:$filter:${search.text}";
@@ -592,30 +602,16 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
           ),
         ),
       ),
-      SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
+      Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: Row(
-          children: [
-            for (final entry in const {
-              'all': 'All',
-              'mychats': 'My chats',
-              'unread': 'Unread',
-              'unassigned': 'Unassigned',
-              'closed': 'Closed',
-            }.entries)
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: AppChoiceChip(
-                  label: Text(entry.value),
-                  selected: filter == entry.key,
-                  onSelected: (_) {
-                    filter = entry.key;
-                    reload();
-                  },
-                ),
-              ),
-          ],
+        child: PlatformFilters(
+          options: filters.values.toList(),
+          selected: filters[filter] ?? 'All',
+          scrollable: true,
+          onSelected: (label) {
+            filter = filters.entries.firstWhere((e) => e.value == label).key;
+            reload();
+          },
         ),
       ),
       if (widget.kind == 2)
@@ -678,43 +674,10 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
                     final item = items[index];
                     final ticket = widget.kind == 2;
                     final contact = ticket ? object(item['contact']) : item;
-                    final name =
-                        '${contact['profile_name'] ?? item['profile_name'] ?? contact['display_wa_id'] ?? 'Contact'}';
-                    final last = object(
-                      item[ticket ? 'last_thread' : 'last_message'],
-                    );
-                    final unread =
-                        number(
-                          item[ticket
-                              ? 'unread_message'
-                              : 'unread_message_count'],
-                        ) ??
-                        0;
-                    return AppListTile(
-                      dense: true,
-                      leading: Avatar(name, size: 42),
-                      title: Text(
-                        ticket
-                            ? '${item['subject'] ?? item['ticket_number']}'
-                            : name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        ticket
-                            ? '$name · ${object(item['status'])['name'] ?? ''}'
-                            : last.isNotEmpty
-                            ? MessageContent(last).summary.replaceAll('\n', ' ')
-                            : '${contact['display_wa_id'] ?? contact['wa_id'] ?? ''}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: unread > 0
-                          ? Pill('$unread', fill: T.green, color: Colors.white)
-                          : Text(
-                              const MobileClock().time(last['created_at']),
-                              style: const TextStyle(fontSize: 10),
-                            ),
+                    return LiveConversationRow(
+                      session: widget.session,
+                      item: item,
+                      ticket: ticket,
                       onTap: () async {
                         if (ticket) {
                           await openPage(
@@ -806,4 +769,176 @@ class _ContactEditorState extends State<ContactEditor> {
       ],
     ),
   );
+}
+
+/// Conversation row matching the approved inbox design, driven by API data:
+/// name/time emphasised when unread, last-message ticks, state markers.
+class LiveConversationRow extends StatelessWidget {
+  const LiveConversationRow({
+    super.key,
+    required this.session,
+    required this.item,
+    required this.onTap,
+    this.ticket = false,
+  });
+  final MobileSession session;
+  final Json item;
+  final bool ticket;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final contact = ticket ? object(item['contact']) : item;
+    final name =
+        '${contact['profile_name'] ?? contact['waba_profile_name'] ?? contact['display_wa_id'] ?? 'Contact'}';
+    final last = object(item[ticket ? 'last_thread' : 'last_message']);
+    final unread =
+        number(item[ticket ? 'unread_message' : 'unread_message_count']) ?? 0;
+    final outgoing = last.isNotEmpty && number(last['type']) == 1;
+    final status = number(last['message_status']) ?? 0;
+    final me = number(session.user?['id']);
+    final favourites = decoded(contact['favourite']);
+    final favourite =
+        !ticket &&
+        me != null &&
+        favourites is List &&
+        favourites.map(number).contains(me);
+    final preview = ticket
+        ? '$name · ${object(item['status'])['name'] ?? ''}'
+        : last.isNotEmpty
+        ? MessageContent(last).summary.replaceAll('\n', ' ')
+        : 'No messages yet';
+    final time = const MobileClock().listTime(
+      last['created_at'] ?? item['last_message_date'],
+    );
+    final strong = unread > 0;
+    Widget marker(IconData icon, String label, Color color) => Padding(
+      padding: const EdgeInsets.only(left: 5),
+      child: Tooltip(
+        message: label,
+        child: AppIcon(icon, size: 13, color: color),
+      ),
+    );
+    return Semantics(
+      button: true,
+      label: '$name${strong ? ', $unread unread' : ''}',
+      child: InkWell(
+        key: ValueKey('live-row-${item['id']}'),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+          child: Row(
+            children: [
+              Avatar(name, size: 46),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            ticket
+                                ? '${item['subject'] ?? item['ticket_number'] ?? 'Ticket'}'
+                                : name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: strong
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          time,
+                          style: mono(
+                            size: 11,
+                            color: strong ? T.green : T.muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        if (outgoing && !ticket)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: AppIcon(
+                              switch (status) {
+                                0 => Icons.schedule,
+                                1 => Icons.check,
+                                4 || 5 => Icons.error_outline,
+                                _ => Icons.done_all,
+                              },
+                              size: 15,
+                              color: switch (status) {
+                                3 => T.blue,
+                                4 || 5 => T.danger,
+                                _ => T.muted,
+                              },
+                            ),
+                          ),
+                        Expanded(
+                          child: Text(
+                            preview,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: strong ? T.ink : T.secondary,
+                            ),
+                          ),
+                        ),
+                        if (!ticket && number(contact['conversation_status']) == 0)
+                          marker(Icons.lock_outline, 'Closed', T.muted),
+                        if (!ticket &&
+                            number(contact['conversation_owner_type']) == 1)
+                          marker(Icons.smart_toy_outlined, 'Bot', T.brass),
+                        if (!ticket && flag(contact['is_blocked']))
+                          marker(Icons.block, 'Blocked', T.danger),
+                        if (!ticket && flag(contact['is_dnd']))
+                          marker(
+                            Icons.do_not_disturb_on_outlined,
+                            'Do not disturb',
+                            T.muted,
+                          ),
+                        if (favourite)
+                          marker(Icons.star_rounded, 'Favourite', T.muted),
+                        if (unread > 0)
+                          Container(
+                            margin: const EdgeInsets.only(left: 7),
+                            constraints: const BoxConstraints(
+                              minWidth: 20,
+                              minHeight: 20,
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: T.green,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              unread >= 99 ? '99+' : '$unread',
+                              textAlign: TextAlign.center,
+                              style: mono(size: 10, color: Colors.white),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

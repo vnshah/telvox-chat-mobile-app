@@ -14,24 +14,56 @@ class MobileClock {
   const MobileClock({this.timezone = AppConfig.displayTimezone});
   final String timezone;
   static bool _initialized = false;
-  String time(Object? raw) {
+  static void _ensure() {
     if (!_initialized) {
       tzdata.initializeTimeZones();
       _initialized = true;
     }
+  }
+
+  String time(Object? raw) {
+    _ensure();
     final instant = MobileClock.instant(raw);
     if (instant == null) return '';
     final date = tz.TZDateTime.from(instant, tz.getLocation(timezone));
     return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
   }
 
+  /// Conversation-list label, as on WhatsApp: today's time, "Yesterday",
+  /// the weekday within the last week, then a short date.
+  String listTime(Object? raw, {DateTime? now}) {
+    final value = instant(raw);
+    if (value == null) return '';
+    _ensure();
+    final location = tz.getLocation(timezone);
+    final date = tz.TZDateTime.from(value, location);
+    final today = tz.TZDateTime.from(now ?? DateTime.now(), location);
+    final days = DateTime(
+      today.year,
+      today.month,
+      today.day,
+    ).difference(DateTime(date.year, date.month, date.day)).inDays;
+    if (days <= 0) return time(raw);
+    if (days == 1) return 'Yesterday';
+    if (days < 7) {
+      return const [
+        'Monday',
+        'Tuesday',
+        'Wednesday',
+        'Thursday',
+        'Friday',
+        'Saturday',
+        'Sunday',
+      ][date.weekday - 1];
+    }
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(date.day)}/${two(date.month)}/${two(date.year % 100)}';
+  }
+
   String day(Object? raw) {
     final value = instant(raw);
     if (value == null) return '';
-    if (!_initialized) {
-      tzdata.initializeTimeZones();
-      _initialized = true;
-    }
+    _ensure();
     final date = tz.TZDateTime.from(value, tz.getLocation(timezone));
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }

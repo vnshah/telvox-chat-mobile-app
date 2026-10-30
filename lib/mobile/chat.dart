@@ -28,6 +28,9 @@ class LiveChat extends StatefulWidget {
 
 class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   final composer = TextEditingController(), scroll = ScrollController();
+  // Drives only the scroll-to-latest button, so scrolling never rebuilds
+  // the conversation itself.
+  final scrolledUp = ValueNotifier(false);
   List<ApiMessage> messages = [];
   final pending = <PendingSend>[];
   ApiMessage? reply;
@@ -64,6 +67,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    scroll.addListener(() => scrolledUp.value = scroll.offset > 400);
     messages = (widget.session.viewCache[cacheKey] as List<ApiMessage>?) ?? [];
     final cached = widget.session.viewCache[detailKey] as List<Json?>?;
     if (cached != null) {
@@ -104,6 +108,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     poll?.cancel();
     composer.dispose();
     scroll.dispose();
+    scrolledUp.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -431,6 +436,14 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> openContact() async {
+    await openPage(
+      context,
+      ContactActionsPage(widget.session, contactId, initial: detail),
+    );
+    if (mounted) details();
+  }
+
   Future<List<Json>> fetchQuickReplies(String key) async {
     final result = await widget.session.api.get('inbox/canned-responses');
     final data = object(result['data']);
@@ -620,25 +633,35 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     final permission = policy;
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          children: [
-            Avatar(name, size: 34),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  Text(
-                    widget.ticketId == null
-                        ? '${widget.contact['display_wa_id'] ?? phone}'
-                        : 'Ticket conversation',
-                    style: const TextStyle(fontSize: 11, color: T.muted),
+        titleSpacing: 0,
+        // Tapping the name opens contact details, as on WhatsApp and the web inbox.
+        title: InkWell(
+          onTap: openContact,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Avatar(name, size: 36),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      WindowStatus(
+                        permission.expiresAt,
+                        known: detail != null,
+                        prefix: widget.ticketId == null
+                            ? '${widget.contact['display_wa_id'] ?? phone}'
+                            : 'Ticket conversation',
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
         actions: [
           AppIconButton(
@@ -653,13 +676,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           ),
           AppIconButton(
             tooltip: 'Contact details',
-            onPressed: () async {
-              await openPage(
-                context,
-                ContactActionsPage(widget.session, contactId, initial: detail),
-              );
-              if (mounted) details();
-            },
+            onPressed: openContact,
             icon: const Icon(Icons.person_outline),
           ),
         ],
@@ -685,13 +702,37 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
               painter: ChatWallpaper(),
               child: messages.isEmpty && pending.isEmpty && !showLoading
                   ? const Center(child: Text('No messages yet.'))
-                  : ListView.builder(
-                      controller: scroll,
-                      reverse: true,
-                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                      itemCount: messages.length + pending.length + 1,
-                      itemBuilder: (_, index) =>
-                          historyItem(messages.length + pending.length - index),
+                  : Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ListView.builder(
+                          controller: scroll,
+                          reverse: true,
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                          itemCount: messages.length + pending.length + 1,
+                          itemBuilder: (_, index) => historyItem(
+                            messages.length + pending.length - index,
+                          ),
+                        ),
+                        Positioned(
+                          right: 12,
+                          bottom: 12,
+                          child: ValueListenableBuilder(
+                            valueListenable: scrolledUp,
+                            builder: (context, up, _) => AnimatedScale(
+                              scale: up ? 1 : 0,
+                              duration: const Duration(milliseconds: 150),
+                              child: AppIconButton.filledTonal(
+                                tooltip: 'Scroll to latest',
+                                onPressed: up
+                                    ? () => scrollToEnd(animate: true)
+                                    : null,
+                                icon: const Icon(Icons.keyboard_arrow_down),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
             ),
           ),
@@ -900,4 +941,70 @@ class _TemplatePickerState extends State<TemplatePicker> {
             ],
           ),
   );
+}
+
+/// Header subtitle with the customer-service window, like the web inbox's
+/// timer pill. Ticks once a minute and rebuilds only itself.
+class WindowStatus extends StatefulWidget {
+  const WindowStatus(
+    this.expiresAt, {
+    super.key,
+    required this.prefix,
+    this.known = true,
+  });
+  final DateTime? expiresAt;
+
+  /// False until contact details load; nothing is claimed before then.
+  final bool known;
+  final String prefix;
+  @override
+  State<WindowStatus> createState() => _WindowStatusState();
+}
+
+class _WindowStatusState extends State<WindowStatus> {
+  Timer? tick;
+  @override
+  void initState() {
+    super.initState();
+    tick = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final expires = widget.expiresAt;
+    final left = expires?.difference(DateTime.now());
+    final open = left != null && !left.isNegative;
+    final label = !widget.known
+        ? ''
+        : open
+        ? left!.inHours > 0
+              ? '${left.inHours}h ${left.inMinutes % 60}m left'
+              : '${left.inMinutes.clamp(1, 59)}m left'
+        : 'Window closed';
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(text: widget.prefix),
+          if (label.isNotEmpty) ...[
+            const TextSpan(text: ' · '),
+            TextSpan(
+              text: label,
+              style: TextStyle(color: open ? T.green : T.danger),
+            ),
+          ],
+        ],
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontSize: 11, color: T.muted),
+    );
+  }
 }
