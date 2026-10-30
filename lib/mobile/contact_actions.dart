@@ -8,9 +8,12 @@ import 'media.dart';
 import 'screens.dart' show failure, mobileNotice, openPage;
 
 class ContactActionsPage extends StatefulWidget {
-  const ContactActionsPage(this.session, this.id, {super.key});
+  const ContactActionsPage(this.session, this.id, {super.key, this.initial});
   final MobileSession session;
   final int id;
+
+  /// Details the caller already holds, shown while a fresh copy loads.
+  final Json? initial;
   @override
   State<ContactActionsPage> createState() => _ContactActionsPageState();
 }
@@ -23,6 +26,7 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
   @override
   void initState() {
     super.initState();
+    data = widget.initial;
     load();
   }
 

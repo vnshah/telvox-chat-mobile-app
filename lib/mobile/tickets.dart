@@ -7,7 +7,7 @@ import 'api.dart';
 import 'chat.dart' show LiveChat;
 import 'contact_actions.dart' show MediaGalleryPage;
 import 'editors.dart';
-import 'screens.dart' show failure, mobileNotice, openPage;
+import 'screens.dart' show LoadingBar, failure, mobileNotice, openPage;
 
 class TicketPage extends StatefulWidget {
   const TicketPage(this.session, this.id, {super.key});
@@ -22,9 +22,12 @@ class _TicketPageState extends State<TicketPage> {
   String? error;
   bool busy = false;
   MobileApi get api => widget.session.api;
+  String get cacheKey => 'ticket:${api.wabaId}:${widget.id}';
   @override
   void initState() {
     super.initState();
+    // Reopening a ticket shows the last details at once while they refresh.
+    data = widget.session.viewCache[cacheKey] as Json?;
     load();
   }
 
@@ -33,9 +36,11 @@ class _TicketPageState extends State<TicketPage> {
       final r = await api.post('inbox/ticket_details', {
         'ticket_id': widget.id,
       });
+      final next = object(r['data']);
+      widget.session.viewCache[cacheKey] = next;
       if (mounted) {
         setState(() {
-          data = object(r['data']);
+          data = next;
           error = null;
         });
       }
@@ -107,7 +112,7 @@ class _TicketPageState extends State<TicketPage> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  if (busy) const LinearProgressIndicator(),
+                  LoadingBar(busy),
                   Text(
                     '${t['subject'] ?? ''}',
                     style: Theme.of(context).textTheme.titleLarge,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -16,6 +17,19 @@ void mobileNotice(BuildContext context, Object message) {
 
 Future<R?> openPage<R>(BuildContext context, Widget page) =>
     Navigator.of(context).push<R>(MaterialPageRoute(builder: (_) => page));
+
+/// Thin progress strip that always reserves its height, so content below it
+/// never shifts when loading starts or stops.
+class LoadingBar extends StatelessWidget {
+  const LoadingBar(this.active, {super.key});
+  final bool active;
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 2,
+    child: active ? const LinearProgressIndicator(minHeight: 2) : null,
+  );
+}
+
 Widget failure(String message, VoidCallback retry) => Center(
   child: Padding(
     padding: const EdgeInsets.all(24),
@@ -363,7 +377,7 @@ class LiveHome extends StatefulWidget {
 }
 
 class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
-  int tab = 0, revision = 0;
+  int tab = 0;
   Timer? heartbeat;
   @override
   void initState() {
@@ -392,9 +406,10 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The visible list refreshes itself quietly on resume; rebuilding it here
+    // would discard its rows and scroll position and reload from scratch.
     if (state == AppLifecycleState.resumed) {
       startHeartbeat();
-      setState(() => revision++);
     } else {
       heartbeat?.cancel();
     }
@@ -430,7 +445,7 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
         ),
       ],
     ),
-    body: LiveList(widget.session, kind: tab, key: ValueKey('$tab:$revision')),
+    body: LiveList(widget.session, kind: tab, key: ValueKey(tab)),
     bottomNavigationBar: NavigationBar(
       selectedIndex: tab,
       onDestinationSelected: (v) => setState(() => tab = v),
@@ -468,8 +483,18 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   bool busy = false, more = true;
   Timer? debounce, poll;
   int serial = 0;
+  // Inbox and Contacts request the same contact list, so they share a cache.
   String get cacheKey =>
-      "list:${widget.session.api.wabaId}:${widget.kind}:$filter:${search.text}";
+      "list:${widget.session.api.wabaId}:${widget.kind == 2 ? 'tickets' : 'contacts'}:$filter:${search.text}";
+
+  /// Shows any cached rows for the current filter/search at once, then
+  /// refreshes quietly; only an uncached view shows the loading strip.
+  void reload() {
+    final cached = widget.session.viewCache[cacheKey] as List<Json>?;
+    setState(() => items = cached ?? []);
+    load(quiet: cached != null);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -529,16 +554,21 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
         );
       }
       if (!mounted || request != serial) return;
+      final merged = [if (append) ...items, ...next];
+      widget.session.viewCache[cacheKey] = merged;
+      // Background polls usually return identical rows; skip the rebuild.
+      if (!append && error == null && jsonEncode(merged) == jsonEncode(items)) {
+        return;
+      }
       setState(() {
-        items = [if (append) ...items, ...next];
-        widget.session.viewCache[cacheKey] = items;
+        items = merged;
         more = next.length == 30;
         error = null;
       });
     } catch (e) {
       if (mounted && request == serial) setState(() => error = '$e');
     } finally {
-      if (mounted && request == serial) setState(() => busy = false);
+      if (mounted && request == serial && busy) setState(() => busy = false);
     }
   }
 
@@ -552,7 +582,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
           onChanged: (_) {
             debounce?.cancel();
             serial++;
-            debounce = Timer(const Duration(milliseconds: 350), load);
+            debounce = Timer(const Duration(milliseconds: 350), reload);
           },
           decoration: InputDecoration(
             hintText: widget.kind == 2
@@ -580,8 +610,8 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
                   label: Text(entry.value),
                   selected: filter == entry.key,
                   onSelected: (_) {
-                    setState(() => filter = entry.key);
-                    load();
+                    filter = entry.key;
+                    reload();
                   },
                 ),
               ),
@@ -612,7 +642,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
             label: const Text('Add contact'),
           ),
         ),
-      if (busy) const LinearProgressIndicator(),
+      LoadingBar(busy),
       if (error != null && items.isNotEmpty)
         Padding(
           padding: const EdgeInsets.all(8),
@@ -622,8 +652,10 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
         child: error != null && items.isEmpty
             ? failure(error!, load)
             : RefreshIndicator(
-                onRefresh: load,
+                // The pull indicator is the feedback; avoid a second strip.
+                onRefresh: () => load(quiet: true),
                 child: ListView.builder(
+                  key: PageStorageKey('list:${widget.kind}'),
                   physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: items.length + 1,
                   itemBuilder: (context, index) {

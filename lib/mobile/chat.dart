@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -37,6 +38,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   bool windowRejected = false;
   String get cacheKey =>
       "chat:${widget.session.api.wabaId}:$contactId:${widget.ticketId}";
+  String get detailKey => 'detail:$cacheKey';
   SendPolicy get policy => windowRejected
       ? SendPolicy(
           "Messaging window closed. Send an approved template, or wait for a new customer message.",
@@ -49,9 +51,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         )
       : SendPolicy.evaluate(widget.session, detail, ticket: ticket);
   String? error, sync;
-  bool busy = false, more = false;
+  // `busy` guards overlapping requests and is not display state; quiet polls
+  // must not rebuild the screen just to toggle it.
+  bool busy = false, more = false, loadedOnce = false;
   int? oldest;
   Timer? poll;
+  int ticks = 0;
   late final repository = InboxRepository(widget.session.api);
   int get contactId => number(widget.contact['id'])!;
   String get phone => '${widget.contact['wa_id'] ?? ''}';
@@ -60,17 +65,25 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     messages = (widget.session.viewCache[cacheKey] as List<ApiMessage>?) ?? [];
+    final cached = widget.session.viewCache[detailKey] as List<Json?>?;
+    if (cached != null) {
+      detail = cached.first;
+      ticket = cached.last;
+    }
     load(quiet: messages.isNotEmpty);
     details();
     startPoll();
   }
 
+  /// Messages are polled every 5s. Contact details are an expensive request,
+  /// so they refresh when new incoming/activity rows arrive (see [load]) and
+  /// otherwise only every 30s as a fallback for silent changes.
   void startPoll() {
     poll?.cancel();
     poll = Timer.periodic(const Duration(seconds: 5), (_) {
       if ((ModalRoute.of(context)?.isCurrent ?? false) && !busy) {
         load(quiet: true);
-        details();
+        if (++ticks % 6 == 0) details();
       }
     });
   }
@@ -80,6 +93,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       startPoll();
       load(quiet: true);
+      details();
     } else {
       poll?.cancel();
     }
@@ -108,11 +122,18 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           }),
       ]);
       if (!mounted) return;
+      final nextDetail = object(results.first['data']);
+      final nextTicket = widget.ticketId == null
+          ? null
+          : object(object(results.last['data'])['ticket']);
+      widget.session.viewCache[detailKey] = [nextDetail, nextTicket];
+      if (jsonEncode([nextDetail, nextTicket]) ==
+          jsonEncode([detail, ticket])) {
+        return;
+      }
       setState(() {
-        detail = object(results.first['data']);
-        if (widget.ticketId != null) {
-          ticket = object(object(results.last['data'])['ticket']);
-        }
+        detail = nextDetail;
+        ticket = nextTicket;
         if (SendPolicy.evaluate(
           widget.session,
           detail,
@@ -154,11 +175,13 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
 
   Future<void> load({bool older = false, bool quiet = false}) async {
     if (busy) return;
-    setState(() {
-      busy = true;
-      showLoading = !quiet;
-      if (!quiet) error = null;
-    });
+    busy = true;
+    if (!quiet) {
+      setState(() {
+        showLoading = true;
+        error = null;
+      });
+    }
     final nearEnd = !scroll.hasClients || scroll.offset < 100;
     try {
       Json result;
@@ -192,8 +215,19 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           meta = object(result['meta']);
         }
       }
+      final known = {for (final m in messages) m.id: m};
+      final fresh = incoming.where((m) => !known.containsKey(m.id)).toList();
+      final changed =
+          fresh.isNotEmpty ||
+          incoming.any(
+            (m) => jsonEncode(m.json) != jsonEncode(known[m.id]!.json),
+          );
+      if (!older && meta['sync_from'] != null) sync = '${meta['sync_from']}';
+      // Most polls change nothing (ticket polls re-send the latest page);
+      // rebuilding and re-sorting every bubble then is pure jank.
+      if (!changed && loadedOnce && error == null) return;
+      final wasLoaded = loadedOnce;
       setState(() {
-        final initial = messages.isEmpty;
         messages = mergeMessages(messages, incoming);
         widget.session.viewCache[cacheKey] = messages;
         final ids = incoming
@@ -201,29 +235,32 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
             .where((id) => id.isNotEmpty)
             .toSet();
         pending.removeWhere((p) => ids.contains(p.key));
-        if (older || initial) {
+        if (older || !loadedOnce) {
           more = widget.ticketId != null
               ? incoming.length == 50
               : meta['has_more'] == true;
           oldest = number(meta['oldest_id']);
         }
-        if (!older && meta['sync_from'] != null) sync = '${meta['sync_from']}';
+        loadedOnce = true;
         error = null;
       });
-      if (incoming.any((m) => !m.outgoing)) markRead();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !scroll.hasClients) return;
-        if (!older && nearEnd) scroll.jumpTo(0);
-      });
+      final arrived = fresh.where((m) => !m.outgoing);
+      if (arrived.isNotEmpty) {
+        markRead();
+        // A customer message reopens the window; activity rows record
+        // assignment/close changes. Either can change who may send.
+        if (!older && wasLoaded) details();
+      }
+      if (!older && fresh.isNotEmpty && nearEnd) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && scroll.hasClients) scroll.jumpTo(0);
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => error = '$e');
     } finally {
-      if (mounted) {
-        setState(() {
-          busy = false;
-          showLoading = false;
-        });
-      }
+      busy = false;
+      if (mounted && showLoading) setState(() => showLoading = false);
     }
   }
 
@@ -394,14 +431,25 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
+  Future<List<Json>> fetchQuickReplies(String key) async {
+    final result = await widget.session.api.get('inbox/canned-responses');
+    final data = object(result['data']);
+    final list = [
+      ...rows(data['uncategorised']),
+      for (final c in rows(data['categories'])) ...rows(c['responses']),
+    ];
+    widget.session.viewCache[key] = list;
+    return list;
+  }
+
   Future<void> quickReplies() async {
     try {
-      final result = await widget.session.api.get('inbox/canned-responses');
-      final data = object(result['data']);
-      final list = [
-        ...rows(data['uncategorised']),
-        for (final c in rows(data['categories'])) ...rows(c['responses']),
-      ];
+      final key = 'quick:${widget.session.api.wabaId}';
+      final cached = widget.session.viewCache[key] as List<Json>?;
+      // Open instantly from the session cache and refresh it for next time.
+      final refresh = fetchQuickReplies(key);
+      if (cached != null) unawaited(refresh.then((_) {}, onError: (_) {}));
+      final list = cached ?? await refresh;
       if (!mounted) return;
       final selected = await showModalBottomSheet<String>(
         context: context,
@@ -450,7 +498,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       return more
           ? Center(
               child: AppButton.text(
-                onPressed: busy ? null : () => load(older: true),
+                onPressed: showLoading ? null : () => load(older: true),
                 child: const Text('Load older messages'),
               ),
             )
@@ -595,7 +643,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         actions: [
           AppIconButton(
             tooltip: 'Refresh',
-            onPressed: busy
+            onPressed: showLoading
                 ? null
                 : () {
                     load(quiet: messages.isNotEmpty);
@@ -608,7 +656,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
             onPressed: () async {
               await openPage(
                 context,
-                ContactActionsPage(widget.session, contactId),
+                ContactActionsPage(widget.session, contactId, initial: detail),
               );
               if (mounted) details();
             },
@@ -618,7 +666,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       ),
       body: Column(
         children: [
-          if (showLoading) const LinearProgressIndicator(minHeight: 2),
+          LoadingBar(showLoading),
           if (error != null)
             MaterialBanner(
               content: Text(error!),
@@ -635,7 +683,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           Expanded(
             child: CustomPaint(
               painter: ChatWallpaper(),
-              child: messages.isEmpty && pending.isEmpty && !busy
+              child: messages.isEmpty && pending.isEmpty && !showLoading
                   ? const Center(child: Text('No messages yet.'))
                   : ListView.builder(
                       controller: scroll,
@@ -647,7 +695,9 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                     ),
             ),
           ),
-          if (!permission.canSend)
+          // While permissions load, keep the composer's shape but disabled,
+          // so the bottom of the screen does not swap layouts a moment later.
+          if (!permission.canSend && detail != null)
             SafeArea(
               top: false,
               child: Container(
@@ -675,7 +725,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
               ),
             )
           else ...[
-            if (picking) const LinearProgressIndicator(minHeight: 2),
+            LoadingBar(picking),
             if (attachment != null)
               ListTile(
                 dense: true,
@@ -708,56 +758,63 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
               ),
             SafeArea(
               top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(4, 5, 4, 5),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    AppMenuButton<String>(
-                      tooltip: 'Message tools',
-                      onSelected: (v) {
-                        if (v == 'attach') {
-                          pickAttachment();
-                        } else if (v == 'quick') {
-                          quickReplies();
-                        } else {
-                          templates();
-                        }
-                      },
-                      itemBuilder: (_) => [
-                        const PopupMenuItem(
-                          value: 'attach',
-                          child: Text('Image, video or document'),
+              child: IgnorePointer(
+                ignoring: !permission.canSend,
+                child: AnimatedOpacity(
+                  opacity: permission.canSend ? 1 : .45,
+                  duration: const Duration(milliseconds: 150),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 5, 4, 5),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        AppMenuButton<String>(
+                          tooltip: 'Message tools',
+                          onSelected: (v) {
+                            if (v == 'attach') {
+                              pickAttachment();
+                            } else if (v == 'quick') {
+                              quickReplies();
+                            } else {
+                              templates();
+                            }
+                          },
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(
+                              value: 'attach',
+                              child: Text('Image, video or document'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'quick',
+                              child: Text('Quick replies'),
+                            ),
+                            if (permission.canTemplate)
+                              const PopupMenuItem(
+                                value: 'templates',
+                                child: Text('Templates'),
+                              ),
+                          ],
+                          icon: const Icon(Icons.add),
                         ),
-                        const PopupMenuItem(
-                          value: 'quick',
-                          child: Text('Quick replies'),
-                        ),
-                        if (permission.canTemplate)
-                          const PopupMenuItem(
-                            value: 'templates',
-                            child: Text('Templates'),
+                        Expanded(
+                          child: AppTextField(
+                            controller: composer,
+                            minLines: 1,
+                            maxLines: 5,
+                            decoration: const InputDecoration(
+                              hintText: 'Message',
+                              isDense: true,
+                            ),
                           ),
-                      ],
-                      icon: const Icon(Icons.add),
-                    ),
-                    Expanded(
-                      child: AppTextField(
-                        controller: composer,
-                        minLines: 1,
-                        maxLines: 5,
-                        decoration: const InputDecoration(
-                          hintText: 'Message',
-                          isDense: true,
                         ),
-                      ),
+                        AppIconButton(
+                          tooltip: 'Send message',
+                          onPressed: picking ? null : send,
+                          icon: const Icon(Icons.send, color: T.green),
+                        ),
+                      ],
                     ),
-                    AppIconButton(
-                      tooltip: 'Send message',
-                      onPressed: picking ? null : send,
-                      icon: const Icon(Icons.send, color: T.green),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -780,9 +837,13 @@ class TemplatePicker extends StatefulWidget {
 class _TemplatePickerState extends State<TemplatePicker> {
   List<Json>? templates;
   String? error;
+  String get cacheKey =>
+      'templates:${widget.session.api.wabaId}:${widget.contact['id']}';
   @override
   void initState() {
     super.initState();
+    // Reopening shows the last list at once; the request still refreshes it.
+    templates = widget.session.viewCache[cacheKey] as List<Json>?;
     load();
   }
 
@@ -792,14 +853,16 @@ class _TemplatePickerState extends State<TemplatePicker> {
         'inbox/templates',
         query: {'contact_id': widget.contact['id']},
       );
+      final next = rows(r['data']);
+      widget.session.viewCache[cacheKey] = next;
       if (mounted) {
         setState(() {
-          templates = rows(r['data']);
+          templates = next;
           error = null;
         });
       }
     } catch (e) {
-      if (mounted) setState(() => error = '$e');
+      if (mounted && templates == null) setState(() => error = '$e');
     }
   }
 
@@ -818,15 +881,21 @@ class _TemplatePickerState extends State<TemplatePicker> {
                 AppListTile(
                   title: Text('${t['name']}'),
                   subtitle: Text('${t['category']} · ${t['language']}'),
-                  onTap: () => openPage(
-                    context,
-                    TemplateSend(
-                      widget.session,
-                      widget.contact,
-                      t,
-                      ticketId: widget.ticketId,
-                    ),
-                  ),
+                  onTap: () async {
+                    final sent = await openPage<bool>(
+                      context,
+                      TemplateSend(
+                        widget.session,
+                        widget.contact,
+                        t,
+                        ticketId: widget.ticketId,
+                      ),
+                    );
+                    // Close the picker too, landing back in the conversation.
+                    if (sent == true && context.mounted) {
+                      Navigator.pop(context, true);
+                    }
+                  },
                 ),
             ],
           ),
