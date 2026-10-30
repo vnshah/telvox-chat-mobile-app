@@ -937,7 +937,8 @@ class LiveConversationRow extends StatelessWidget {
                             ),
                           ),
                         ),
-                        if (!ticket && number(contact['conversation_status']) == 0)
+                        if (!ticket &&
+                            number(contact['conversation_status']) == 0)
                           marker(Icons.lock_outline, 'Closed', T.muted),
                         if (!ticket &&
                             number(contact['conversation_owner_type']) == 1)

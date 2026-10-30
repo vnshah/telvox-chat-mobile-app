@@ -176,34 +176,33 @@ void main() {
     },
   );
 
-  testWidgets(
-    'Cupertino destructive confirmations close safely',
-    (tester) async {
-      final router = createRouter(initialLocation: '/chat/ananya');
-      addTearDown(router.dispose);
-      await tester.pumpWidget(
-        ProviderScope(
-          child: TelvoxApp(router: router, platform: TargetPlatform.iOS),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.longPress(find.byType(MessageBubble).first);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Delete for me'));
-      await tester.pumpAndSettle();
-      expect(find.byType(CupertinoAlertDialog), findsOneWidget);
-      await tester.tap(find.text('Cancel'));
-      await tester.pumpAndSettle();
-      expect(
-        find.textContaining(
-          'That sounds perfect, thank you!',
-          findRichText: true,
-        ),
-        findsOneWidget,
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
+  testWidgets('Cupertino destructive confirmations close safely', (
+    tester,
+  ) async {
+    final router = createRouter(initialLocation: '/chat/ananya');
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        child: TelvoxApp(router: router, platform: TargetPlatform.iOS),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.longPress(find.byType(MessageBubble).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete for me'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CupertinoAlertDialog), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'That sounds perfect, thank you!',
+        findRichText: true,
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'Cupertino layouts support small phones, tablets and larger text',

@@ -1076,7 +1076,7 @@ class _WindowStatusState extends State<WindowStatus> {
     final label = !widget.known
         ? ''
         : open
-        ? left!.inHours > 0
+        ? left.inHours > 0
               ? '${left.inHours}h ${left.inMinutes % 60}m left'
               : '${left.inMinutes.clamp(1, 59)}m left'
         : 'Window closed';

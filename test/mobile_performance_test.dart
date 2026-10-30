@@ -193,8 +193,10 @@ void main() {
   testWidgets('inbox rows show unread, ticks and conversation markers', (
     tester,
   ) async {
-    final session = MobileSession(fakeApi((r, h) => answer(r, h, {})), MemoryStore())
-      ..user = {'id': 1};
+    final session = MobileSession(
+      fakeApi((r, h) => answer(r, h, {})),
+      MemoryStore(),
+    )..user = {'id': 1};
     await tester.pumpWidget(
       app(
         Scaffold(
@@ -234,7 +236,13 @@ void main() {
     expect(find.text('99+'), findsOneWidget);
     expect(find.text('Order shipped'), findsOneWidget);
     expect(find.byIcon(Icons.done_all), findsOneWidget);
-    for (final label in ['Closed', 'Bot', 'Blocked', 'Do not disturb', 'Favourite']) {
+    for (final label in [
+      'Closed',
+      'Bot',
+      'Blocked',
+      'Do not disturb',
+      'Favourite',
+    ]) {
       expect(find.byTooltip(label), findsOneWidget);
     }
     expect(find.text('Sam'), findsOneWidget);
@@ -253,8 +261,10 @@ void main() {
   });
 
   testWidgets('ticket rows show status, priority and assignee', (tester) async {
-    final session = MobileSession(fakeApi((r, h) => answer(r, h, {})), MemoryStore())
-      ..user = {'id': 1};
+    final session = MobileSession(
+      fakeApi((r, h) => answer(r, h, {})),
+      MemoryStore(),
+    )..user = {'id': 1};
     await tester.pumpWidget(
       app(
         Scaffold(

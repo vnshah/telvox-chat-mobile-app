@@ -6,7 +6,7 @@ abstract final class AppConfig {
   );
   static const apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://dev.themessenger.app',
+    defaultValue: 'https://chat.telvox.dev',
   );
   static const preview = bool.fromEnvironment(
     'UI_PREVIEW',

@@ -40,12 +40,12 @@ call history remain deferred. Visible chats poll every 5 seconds and lists every
 memory, not a persistent offline outbox.
 
 The single API origin setting is `AppConfig.apiBaseUrl` in
-`lib/core/config/app_config.dart`, defaulting to `https://dev.themessenger.app`.
+`lib/core/config/app_config.dart`, defaulting to `https://chat.telvox.dev`.
 Every endpoint uses `MobileApi`; no screen hardcodes the host. An optional
 `API_BASE_URL` build define overrides the default for the whole app. Example:
 
 ```bash
-flutter build apk --debug --dart-define=API_BASE_URL=https://dev.themessenger.app
+flutter build apk --debug --dart-define=API_BASE_URL=https://dev.themessenger.app  # older dev backend
 ```
 
 Display timezone defaults to `Asia/Kolkata` in that same configuration and uses
@@ -217,7 +217,7 @@ confirmation dialogs, and key preview journeys.
 ## Public configuration
 
 `lib/core/config/app_config.dart` reads `APP_ENV` and `API_BASE_URL` from Dart
-defines. The default API origin is `https://dev.themessenger.app`.
+defines. The default API origin is `https://chat.telvox.dev`.
 
 ```sh
 cp config/development.example.json config/development.json

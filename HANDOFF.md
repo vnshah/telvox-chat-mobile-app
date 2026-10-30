@@ -32,7 +32,8 @@ questions for already-authorized testing. Do not invent credentials or approvals
   branding. iOS appearance tests are not an iOS build/device certification.
 - Backend: existing Laravel application in sibling `../themessenger`, with React
   shared inbox and ticket inbox. Mobile uses Laravel, not Meta directly.
-- Development API origin: `https://dev.themessenger.app`.
+- Default API origin: `https://chat.telvox.dev` (changed 30 October; the older
+  development backend `https://dev.themessenger.app` remains usable via `API_BASE_URL`).
 - API prefix: `/api/mobile/v1/`.
 - Normal launch is the **live mobile application**. Preview is opt-in.
 - Local and Forge are both at `48e1705`. Check `git status` and `git log` on each
@@ -196,14 +197,14 @@ logout and explicit switching clear them. They are not an offline database.
 
 ### Central configuration
 
-`AppConfig.apiBaseUrl` defaults to `https://dev.themessenger.app`.
+`AppConfig.apiBaseUrl` defaults to `https://chat.telvox.dev`.
 Every mobile endpoint uses `MobileApi`, which appends `/api/mobile/v1/` unless the
 configured URL already ends in that prefix. Do not hardcode origins in screens.
 
 | Define | Default | Meaning |
 | --- | --- | --- |
 | `APP_ENV` | `development` | Environment label |
-| `API_BASE_URL` | `https://dev.themessenger.app` | Whole-app API origin override |
+| `API_BASE_URL` | `https://chat.telvox.dev` | Whole-app API origin override |
 | `UI_PREVIEW` | `false` | Opt into sample-data design preview |
 | `DISPLAY_TIMEZONE` | `Asia/Kolkata` | IANA display timezone |
 | `DATABASE_UTC_OFFSET_MINUTES` | `330` | Assumption for naive server timestamps; confirm with backend |
@@ -557,7 +558,8 @@ Files in `postman/mobile-api/`:
 Original source:
 `/Users/renav/Herd/themessenger/postman/mobile-api/`.
 
-The copied environment targets `https://dev.themessenger.app` instead of the
+The copied environment still targets `https://dev.themessenger.app` (the app
+default is now `https://chat.telvox.dev`; change `base_url` in Postman to match) instead of the
 source's local Herd host. Login/token/account variables are empty. Seventeen
 literal credential fields in collection examples were redacted; `{{variable}}`
 references and scripts were preserved. This is an intentional shareable snapshot,
