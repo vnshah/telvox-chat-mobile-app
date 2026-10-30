@@ -72,9 +72,7 @@ void main() {
     session.dispose();
   });
 
-  testWidgets('idle chat polls messages without refetching contact details', (
-    tester,
-  ) async {
+  testWidgets('an idle chat makes no background requests', (tester) async {
     final calls = <String, int>{};
     final api = fakeApi((r, h) {
       calls.update(r.path, (n) => n + 1, ifAbsent: () => 1);
@@ -92,13 +90,11 @@ void main() {
     await tester.pumpWidget(app(LiveChat(session, contact)));
     await tester.pumpAndSettle();
     expect(calls['inbox/getContactDetails'], 1);
-    for (var i = 0; i < 5; i++) {
-      await tester.pump(const Duration(seconds: 5));
-    }
-    expect(calls['inbox/messages'], 6);
+    expect(calls['inbox/messages'], 1);
+    // Updates arrive over the live connection; nothing is polled.
+    await tester.pump(const Duration(minutes: 2));
     expect(calls['inbox/getContactDetails'], 1);
-    await tester.pump(const Duration(seconds: 5));
-    expect(calls['inbox/getContactDetails'], 2);
+    expect(calls['inbox/messages'], 1);
     expect(find.byType(LinearProgressIndicator), findsNothing);
     await tester.pumpWidget(const SizedBox());
     session.dispose();

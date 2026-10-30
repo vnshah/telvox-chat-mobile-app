@@ -7,6 +7,7 @@ import 'api.dart';
 import 'chat.dart' show LiveChat;
 import 'contact_actions.dart' show MediaGalleryPage;
 import 'editors.dart';
+import 'realtime.dart';
 import 'screens.dart' show LoadingBar, failure, mobileNotice, openPage;
 
 class TicketPage extends StatefulWidget {
@@ -23,12 +24,34 @@ class _TicketPageState extends State<TicketPage> {
   bool busy = false;
   MobileApi get api => widget.session.api;
   String get cacheKey => 'ticket:${api.wabaId}:${widget.id}';
+  RealtimeSubscription? live;
+  Timer? liveDebounce;
   @override
   void initState() {
     super.initState();
     // Reopening a ticket shows the last details at once while they refresh.
     data = widget.session.viewCache[cacheKey] as Json?;
     load();
+    // Status, SLA and last activity change as the conversation moves.
+    live = widget.session.realtime.listen(
+      'ticket.message.${widget.id}',
+      (_, _) => liveRefresh(),
+      onResync: liveRefresh,
+    );
+  }
+
+  void liveRefresh() {
+    liveDebounce?.cancel();
+    liveDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) load();
+    });
+  }
+
+  @override
+  void dispose() {
+    liveDebounce?.cancel();
+    live?.cancel();
+    super.dispose();
   }
 
   Future<void> load() async {

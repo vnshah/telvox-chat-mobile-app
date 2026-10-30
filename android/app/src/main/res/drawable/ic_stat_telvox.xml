@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar notification icon: the Telvox mark (as in ic_launcher_foreground)
+     cropped to its own bounds. Android draws it as a white silhouette. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="52" android:viewportHeight="52">
+    <group android:scaleX="0.103359375" android:scaleY="0.103359375"
+        android:translateX="-26.92" android:translateY="-24.64609375">
+        <path android:fillColor="@android:color/transparent"
+            android:strokeColor="#FFFFFF" android:strokeWidth="52"
+            android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M359 283 H664 C700 283 730 313 730 349 V543 C730 580 700 610 664 610 H468 L359 697 V610 C323 610 293 580 293 543 V349 C293 313 323 283 359 283 Z"/>
+        <path android:fillColor="@android:color/transparent"
+            android:strokeColor="#FFFFFF" android:strokeWidth="52"
+            android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M403 453 L446 495 L515 419 M477 476 L518 517 L596 432"/>
+    </group>
+</vector>

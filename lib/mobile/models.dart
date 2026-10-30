@@ -175,6 +175,7 @@ class InboxRepository {
     String filter = 'all',
     String search = '',
     int offset = 0,
+    int limit = 30,
   }) async => rows(
     await api.request(
       'inbox/contacts',
@@ -182,7 +183,7 @@ class InboxRepository {
       data: {
         'listType': filter,
         'search': search,
-        'limit': 30,
+        'limit': limit,
         'offset': offset,
       },
     ),

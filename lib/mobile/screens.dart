@@ -7,6 +7,7 @@ import '../ui/theme.dart';
 import 'api.dart';
 import 'chat.dart';
 import 'models.dart';
+import 'realtime.dart';
 import 'message_content.dart';
 import 'send_policy.dart' show flag;
 import 'tickets.dart';
@@ -18,6 +19,65 @@ void mobileNotice(BuildContext context, Object message) {
 
 Future<R?> openPage<R>(BuildContext context, Widget page) =>
     Navigator.of(context).push<R>(MaterialPageRoute(builder: (_) => page));
+
+/// Shows a quiet strip only when live updates stay down for a while. Brief
+/// blips (network handover, server restart) reconnect unseen, as on the web.
+class RealtimeNotice extends StatefulWidget {
+  const RealtimeNotice(this.realtime, {super.key});
+  final Realtime realtime;
+  @override
+  State<RealtimeNotice> createState() => _RealtimeNoticeState();
+}
+
+class _RealtimeNoticeState extends State<RealtimeNotice> {
+  Timer? grace;
+  bool shown = false;
+  @override
+  void initState() {
+    super.initState();
+    widget.realtime.addListener(changed);
+    changed();
+  }
+
+  void changed() {
+    final down = widget.realtime.state == RealtimeState.reconnecting;
+    if (!down) {
+      grace?.cancel();
+      grace = null;
+      if (shown && mounted) setState(() => shown = false);
+      return;
+    }
+    grace ??= Timer(const Duration(seconds: 8), () {
+      if (mounted && widget.realtime.state == RealtimeState.reconnecting) {
+        setState(() => shown = true);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    grace?.cancel();
+    widget.realtime.removeListener(changed);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedSize(
+    duration: const Duration(milliseconds: 150),
+    child: !shown
+        ? const SizedBox(width: double.infinity)
+        : Container(
+            width: double.infinity,
+            color: const Color(0xFFFFF4D6),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: const Text(
+              'Reconnecting to live updates…',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: T.secondary),
+            ),
+          ),
+  );
+}
 
 /// Thin progress strip that always reserves its height, so content below it
 /// never shifts when loading starts or stops.
@@ -380,11 +440,59 @@ class LiveHome extends StatefulWidget {
 class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
   int tab = 0;
   Timer? heartbeat;
+  RealtimeSubscription? device;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     startHeartbeat();
+    final channel = widget.session.deviceChannel;
+    if (channel != null) {
+      device = widget.session.realtime.listen(channel, (event, _) {
+        if (event == 'device.revoked') widget.session.deviceRevoked();
+      });
+    }
+    widget.session.realtime.start();
+    widget.session.push.enable();
+    widget.session.addListener(openPending);
+    WidgetsBinding.instance.addPostFrameCallback((_) => openPending());
+  }
+
+  bool opening = false;
+
+  /// Opens the chat or ticket from a tapped notification. A push for another
+  /// number switches to it first; the new home screen then finishes the job.
+  Future<void> openPending() async {
+    final session = widget.session;
+    final data = session.pendingOpen;
+    if (data == null || opening || !mounted) return;
+    opening = true;
+    try {
+      final waba = number(data['waba_user_id']);
+      if (waba != null && waba != session.api.wabaId) {
+        await session.selectNumber(waba);
+        return;
+      }
+      session.pendingOpen = null;
+      final ticketId = number(data['ticket_id']);
+      final contactId = number(data['contact_id']);
+      if (ticketId != null) {
+        await openPage(context, TicketPage(session, ticketId));
+      } else if (contactId != null) {
+        final details = await session.api.post('inbox/getContactDetails', {
+          'contact_id': contactId,
+        });
+        final contact = object(object(details['data'])['contact']);
+        if (mounted && contact.isNotEmpty) {
+          await openPage(context, LiveChat(session, contact));
+        }
+      }
+    } catch (e) {
+      session.pendingOpen = null;
+      if (mounted) mobileNotice(context, e);
+    } finally {
+      opening = false;
+    }
   }
 
   void startHeartbeat() {
@@ -409,16 +517,23 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // The visible list refreshes itself quietly on resume; rebuilding it here
     // would discard its rows and scroll position and reload from scratch.
+    // Live updates stop in background (Android would cut the socket anyway)
+    // and resume on return; every open screen then catches up once.
     if (state == AppLifecycleState.resumed) {
       startHeartbeat();
+      widget.session.realtime.start();
     } else {
       heartbeat?.cancel();
+      if (state == AppLifecycleState.paused) widget.session.realtime.stop();
     }
   }
 
   @override
   void dispose() {
     heartbeat?.cancel();
+    device?.cancel();
+    widget.session.removeListener(openPending);
+    widget.session.realtime.stop();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -446,7 +561,14 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
         ),
       ],
     ),
-    body: LiveList(widget.session, kind: tab, key: ValueKey(tab)),
+    body: Column(
+      children: [
+        RealtimeNotice(widget.session.realtime),
+        Expanded(
+          child: LiveList(widget.session, kind: tab, key: ValueKey(tab)),
+        ),
+      ],
+    ),
     bottomNavigationBar: NavigationBar(
       selectedIndex: tab,
       onDestinationSelected: (v) => setState(() => tab = v),
@@ -482,7 +604,8 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   String filter = 'all';
   String? error;
   bool busy = false, more = true;
-  Timer? debounce, poll;
+  Timer? debounce, liveDebounce;
+  RealtimeSubscription? live;
   int serial = 0;
   // Agent names by id, for the assignee initials on each row.
   Map<int, String> people = {};
@@ -514,7 +637,35 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
     items = (widget.session.viewCache[cacheKey] as List<Json>?) ?? [];
     load(quiet: items.isNotEmpty);
     loadPeople();
-    startPoll();
+    subscribeLive();
+  }
+
+  /// Same channels as the web inbox and ticket inbox. Each event means "the
+  /// list changed"; one quiet refresh then fetches the rows with the server's
+  /// own filtering, so the app never guesses where a conversation belongs.
+  void subscribeLive() {
+    final session = widget.session;
+    final channel = widget.kind == 2
+        ? session.authUserId == null
+              ? null
+              : 'ticket.agent.${session.authUserId}'
+        : session.wabaPhone == null
+        ? null
+        : 'inbox.user.list.update.${session.api.wabaId}.${session.wabaPhone}';
+    if (channel == null) return;
+    live = session.realtime.listen(
+      channel,
+      (_, _) => liveRefresh(),
+      onResync: liveRefresh,
+    );
+  }
+
+  /// Bursts (a message plus its status updates) collapse into one request.
+  void liveRefresh() {
+    liveDebounce?.cancel();
+    liveDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) load(quiet: true);
+    });
   }
 
   /// One request per session and number; rows show initials without names
@@ -539,30 +690,19 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
     }
   }
 
-  void startPoll() {
-    poll?.cancel();
-    poll = Timer.periodic(const Duration(seconds: 30), (_) {
-      if ((ModalRoute.of(context)?.isCurrent ?? false) && !busy) {
-        load(quiet: true);
-      }
-    });
-  }
-
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      startPoll();
-      load(quiet: true);
-    } else {
-      poll?.cancel();
-    }
+    // Covers the case where live updates are unavailable; with them, the
+    // channel's resync on reconnect does the same.
+    if (state == AppLifecycleState.resumed) load(quiet: true);
   }
 
   @override
   void dispose() {
     serial++;
     debounce?.cancel();
-    poll?.cancel();
+    liveDebounce?.cancel();
+    live?.cancel();
     search.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -571,13 +711,16 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   Future<void> load({bool append = false, bool quiet = false}) async {
     final request = ++serial;
     if (!quiet) setState(() => busy = true);
+    // A quiet refresh re-reads every page already scrolled through, so a live
+    // update never drops rows the agent loaded with "Load more".
+    final limit = append || !quiet ? 30 : items.length.clamp(30, 100);
     try {
       final List<Json> next;
       if (widget.kind == 2) {
         final result = await widget.session.api.post('inbox/tickets', {
           'listType': filter,
           'search': search.text,
-          'limit': 30,
+          'limit': limit,
           'offset': append ? items.length : 0,
         });
         next = rows(result['data']);
@@ -586,18 +729,19 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
           filter: filter,
           search: search.text,
           offset: append ? items.length : 0,
+          limit: limit,
         );
       }
       if (!mounted || request != serial) return;
       final merged = [if (append) ...items, ...next];
       widget.session.viewCache[cacheKey] = merged;
-      // Background polls usually return identical rows; skip the rebuild.
+      // Live refreshes often return identical rows; skip the rebuild.
       if (!append && error == null && jsonEncode(merged) == jsonEncode(items)) {
         return;
       }
       setState(() {
         items = merged;
-        more = next.length == 30;
+        more = next.length == limit;
         error = null;
       });
     } catch (e) {

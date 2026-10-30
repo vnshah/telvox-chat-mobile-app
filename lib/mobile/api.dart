@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../core/config/app_config.dart';
+import 'push.dart';
+import 'realtime.dart';
 
 typedef Json = Map<String, dynamic>;
 Json object(Object? value) =>
@@ -162,11 +164,59 @@ class MobileApi {
 
 /// Session state is kept separate from preview data and scoped to the API host.
 class MobileSession extends ChangeNotifier {
-  MobileSession(this.api, this.store) {
+  MobileSession(
+    this.api,
+    this.store, {
+    this.realtimeConnector,
+    this.pushTransport,
+  }) {
     api.onUnauthorized = _expired;
   }
   final MobileApi api;
   final SessionStore store;
+
+  /// Tests replace the websocket transport; the app uses the platform one.
+  final RealtimeConnector? realtimeConnector;
+
+  /// Tests replace Firebase; the app uses it when configured.
+  final PushTransport? pushTransport;
+
+  /// Live updates for the selected number; started by the signed-in home.
+  late final realtime = Realtime(this, connector: realtimeConnector);
+
+  /// Push registration and taps; enabled by the signed-in home.
+  late final push = PushService(this, transport: pushTransport);
+
+  /// `contact:12` / `ticket:7` while that chat is on screen, so a push for it
+  /// is not shown on top of the conversation itself.
+  String? visibleConversation;
+
+  /// A tapped notification waiting for the home screen to open it.
+  Json? pendingOpen;
+
+  void openFromPush(Json data) {
+    pendingOpen = data;
+    notifyListeners();
+  }
+
+  /// Phone of the selected WhatsApp number; names the inbox list channel.
+  String? get wabaPhone {
+    final phone = object(object(config?['inbox'])['waba_user'])['phone'];
+    return phone == null || '$phone'.isEmpty ? null : '$phone';
+  }
+
+  int? get authUserId =>
+      number(object(object(config?['inbox'])['auth_user'])['id']) ??
+      number(user?['id']);
+
+  /// This phone's own channel, where the server announces a remote sign-out.
+  String? get deviceChannel {
+    final channel = object(config?['realtime'])['device_channel'];
+    return channel == null ? null : '$channel';
+  }
+
+  /// The server revoked this device (signed out elsewhere).
+  void deviceRevoked() => _expired();
   Json? user, challenge, config;
   final viewCache = <String, Object>{};
   bool restoring = true;
@@ -307,6 +357,7 @@ class MobileSession extends ChangeNotifier {
   }
 
   void switchNumber() {
+    realtime.stop();
     viewCache.clear();
     generation++;
     api.wabaId = null;
@@ -315,6 +366,7 @@ class MobileSession extends ChangeNotifier {
   }
 
   void _expired() {
+    realtime.stop();
     viewCache.clear();
     generation++;
     api.token = null;
@@ -329,6 +381,7 @@ class MobileSession extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    await push.disable();
     await api.post('auth/logout');
     await store.delete(storageKey);
     _expired();
@@ -338,6 +391,8 @@ class MobileSession extends ChangeNotifier {
   @override
   void dispose() {
     api.onUnauthorized = null;
+    realtime.dispose();
+    push.dispose();
     super.dispose();
   }
 }

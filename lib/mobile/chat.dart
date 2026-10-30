@@ -16,6 +16,7 @@ import 'contact_actions.dart';
 import 'templates.dart';
 import 'message_view.dart';
 import 'send_policy.dart';
+import 'realtime.dart';
 
 class LiveChat extends StatefulWidget {
   const LiveChat(this.session, this.contact, {super.key, this.ticketId});
@@ -57,12 +58,13 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         )
       : SendPolicy.evaluate(widget.session, detail, ticket: ticket);
   String? error, sync;
-  // `busy` guards overlapping requests and is not display state; quiet polls
-  // must not rebuild the screen just to toggle it.
-  bool busy = false, more = false, loadedOnce = false;
+  // `busy` guards overlapping requests and is not display state; quiet
+  // refreshes must not rebuild the screen just to toggle it. `again` records a
+  // live event that arrived mid-request, so it is fetched right after.
+  bool busy = false, more = false, loadedOnce = false, again = false;
   int? oldest;
-  Timer? poll;
-  int ticks = 0;
+  final live = <RealtimeSubscription>[];
+  Timer? liveDebounce;
   late final repository = InboxRepository(widget.session.api);
   int get contactId => number(widget.contact['id'])!;
   String get phone => '${widget.contact['wa_id'] ?? ''}';
@@ -79,36 +81,72 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
     load(quiet: messages.isNotEmpty);
     details();
-    startPoll();
+    subscribeLive();
+    widget.session.visibleConversation = visibleKey;
   }
 
-  /// Messages are polled every 5s. Contact details are an expensive request,
-  /// so they refresh when new incoming/activity rows arrive (see [load]) and
-  /// otherwise only every 30s as a fallback for silent changes.
-  void startPoll() {
-    poll?.cancel();
-    poll = Timer.periodic(const Duration(seconds: 5), (_) {
-      if ((ModalRoute.of(context)?.isCurrent ?? false) && !busy) {
-        load(quiet: true);
-        if (++ticks % 6 == 0) details();
-      }
+  String get visibleKey => widget.ticketId != null
+      ? 'ticket:${widget.ticketId}'
+      : 'contact:$contactId';
+
+  /// The web inbox's channels for one conversation: sends and their status,
+  /// incoming messages, reactions and activity (assign/close) — or the
+  /// ticket's own channel. Events are signals; the incremental catch-up
+  /// request then fetches exactly what changed, using the merge that already
+  /// reconciles optimistic sends. Contact details refresh when [load] sees
+  /// new incoming or activity rows, or when an activity event arrives.
+  void subscribeLive() {
+    final realtime = widget.session.realtime;
+    final waba = widget.session.api.wabaId;
+    final channels = widget.ticketId != null
+        ? ['ticket.message.${widget.ticketId}']
+        : phone.isEmpty || waba == null
+        ? <String>[]
+        : [
+            'send.message.$waba.$phone',
+            'receive.message.$waba.$phone',
+            'receive.reaction.$waba.$phone',
+            'change.log.$waba.$phone',
+          ];
+    for (final channel in channels) {
+      live.add(
+        realtime.listen(
+          channel,
+          (event, _) => liveRefresh(details: event == 'change.log.created'),
+          onResync: () => liveRefresh(details: true),
+        ),
+      );
+    }
+  }
+
+  void liveRefresh({bool details = false}) {
+    if (details) this.details();
+    // A send fires sending/sent/status in quick succession: one request.
+    liveDebounce?.cancel();
+    liveDebounce = Timer(const Duration(milliseconds: 150), () {
+      if (mounted) load(quiet: true);
     });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Covers devices where live updates are unavailable; otherwise the
+    // channel resync on reconnect does the same.
     if (state == AppLifecycleState.resumed) {
-      startPoll();
       load(quiet: true);
       details();
-    } else {
-      poll?.cancel();
     }
   }
 
   @override
   void dispose() {
-    poll?.cancel();
+    if (widget.session.visibleConversation == visibleKey) {
+      widget.session.visibleConversation = null;
+    }
+    liveDebounce?.cancel();
+    for (final sub in live) {
+      sub.cancel();
+    }
     composer.dispose();
     scroll.dispose();
     scrolledUp.dispose();
@@ -182,7 +220,11 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   }
 
   Future<void> load({bool older = false, bool quiet = false}) async {
-    if (busy) return;
+    if (busy) {
+      // Never drop a live update: fetch again once this request finishes.
+      if (quiet && !older) again = true;
+      return;
+    }
     busy = true;
     if (!quiet) {
       setState(() {
@@ -231,7 +273,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
             (m) => jsonEncode(m.json) != jsonEncode(known[m.id]!.json),
           );
       if (!older && meta['sync_from'] != null) sync = '${meta['sync_from']}';
-      // Most polls change nothing (ticket polls re-send the latest page);
+      // Many refreshes change nothing (tickets re-send the latest page);
       // rebuilding and re-sorting every bubble then is pure jank.
       if (!changed && loadedOnce && error == null) return;
       final wasLoaded = loadedOnce;
@@ -269,6 +311,10 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     } finally {
       busy = false;
       if (mounted && showLoading) setState(() => showLoading = false);
+      if (again && mounted) {
+        again = false;
+        load(quiet: true);
+      }
     }
   }
 
@@ -716,6 +762,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         painter: const ChatWallpaper(),
         child: Column(
           children: [
+            RealtimeNotice(widget.session.realtime),
             LoadingBar(showLoading),
             if (error != null)
               MaterialBanner(
