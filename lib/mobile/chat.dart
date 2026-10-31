@@ -437,16 +437,20 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     typedAt = null;
     final text = composer.text.trim();
     if (text.isEmpty && attachment == null) return;
-    final item = PendingSend({
-      'waba_user_id': widget.session.api.wabaId,
-      'contact_id': contactId,
-      'wa_id': phone,
-      'message_type': 'text',
-      'body': text,
-      if (attachment == null && reply != null && reply!.wamid.isNotEmpty)
-        'contextual_reply_id': reply!.wamid,
-      if (widget.ticketId != null) 'ticket_id': widget.ticketId,
-    }, attachment: attachment);
+    final item = PendingSend(
+      {
+        'waba_user_id': widget.session.api.wabaId,
+        'contact_id': contactId,
+        'wa_id': phone,
+        'message_type': 'text',
+        'body': text,
+        if (attachment == null && reply != null && reply!.wamid.isNotEmpty)
+          'contextual_reply_id': reply!.wamid,
+        if (widget.ticketId != null) 'ticket_id': widget.ticketId,
+      },
+      attachment: attachment,
+      quote: attachment == null ? quoteOf(reply) : null,
+    );
     setState(() {
       attachment = null;
       pending.add(item);
@@ -456,6 +460,16 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     scrollToEnd(animate: true);
     deliver(item);
   }
+
+  /// The reply quote a sent message will carry, so its bubble does not change
+  /// shape when the server's copy arrives.
+  Json? quoteOf(ApiMessage? m) => m == null || m.wamid.isEmpty
+      ? null
+      : {
+          'contextual_message': m.json['message_body'],
+          'contextual_message_type': m.type,
+          'contextual_message_json': m.json['message_body_json'],
+        };
 
   Future<void> deliver(PendingSend item) async {
     if (item.sending || item.accepted) return;
@@ -695,74 +709,57 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
     final position = index - 1;
     if (position >= messages.length) {
-      final p = pending[position - messages.length];
-      return TweenAnimationBuilder<double>(
-        key: ValueKey(p.key),
-        tween: Tween(begin: 0, end: 1),
-        duration: MediaQuery.disableAnimationsOf(context)
-            ? Duration.zero
-            : const Duration(milliseconds: 180),
-        curve: Curves.easeOutCubic,
-        // A just-sent message rises a little into place, as on WhatsApp.
-        builder: (context, value, child) => Opacity(
-          opacity: value,
-          child: Transform.translate(
-            offset: Offset(0, (1 - value) * 14),
-            child: child,
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.only(top: 4, bottom: 4),
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                MessageBubble(
-                  message: Message(
-                    pendingLabel(p),
-                    out: true,
-                    time: const MobileClock().time(
-                      DateTime.now().toUtc().toIso8601String(),
-                    ),
-                    read: false,
-                    deliveryStatus: p.error != null ? 4 : 0,
-                  ),
-                  maxWidth: MediaQuery.sizeOf(context).width * .82,
-                ),
-                if (p.sending && p.attachment != null)
-                  SizedBox(
-                    width: 150,
-                    child: LinearProgressIndicator(value: p.progress),
-                  ),
-                if (p.error != null)
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: MediaQuery.sizeOf(context).width * .82,
-                    ),
-                    child: Text(
-                      p.error!,
-                      style: const TextStyle(fontSize: 11, color: T.danger),
-                    ),
-                  ),
-                if (p.error != null)
-                  AppButton.text(
-                    onPressed: policy.canSend ? () => deliver(p) : null,
-                    child: const Text('Retry send'),
-                  ),
-                if (p.accepted)
-                  const Text(
-                    'Accepted · syncing',
-                    style: TextStyle(fontSize: 10, color: T.muted),
-                  ),
-              ],
+      final at = position - messages.length;
+      final p = pending[at];
+      final previous = at > 0
+          ? pendingMessage(pending[at - 1])
+          : messages.lastOrNull;
+      // Drawn by the same row as a delivered message, so the server's copy
+      // replaces it in place: no slide-in, no extra status line.
+      return Column(
+        key: ValueKey('send:${p.key}'),
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          messageRow(pendingMessage(p), previous, interactive: false),
+          if (p.sending && p.attachment != null)
+            SizedBox(
+              width: 150,
+              child: LinearProgressIndicator(value: p.progress),
             ),
-          ),
-        ),
+          if (p.error != null)
+            AppButton.text(
+              onPressed: policy.canSend ? () => deliver(p) : null,
+              child: const Text('Retry send'),
+            ),
+        ],
       );
     }
-    final m = messages[position],
-        previous = position == 0 ? null : messages[position - 1];
+    final m = messages[position];
+    return KeyedSubtree(
+      key: ValueKey(m.tempId.isNotEmpty ? 'send:${m.tempId}' : m.id),
+      child: messageRow(m, position == 0 ? null : messages[position - 1]),
+    );
+  }
+
+  /// A message waiting to be sent, shaped like the row the server returns.
+  ApiMessage pendingMessage(PendingSend p) => ApiMessage({
+    'id': 'pending:${p.key}',
+    'temp_message_id': p.key,
+    'type': 1,
+    'message_type': 'text',
+    'message_body': pendingLabel(p),
+    'created_at': p.createdAt,
+    'message_status': p.error != null ? 4 : 0,
+    'failed_reason': ?p.error,
+    'sender_name': ?widget.session.user?['name'],
+    ...?p.quote,
+  });
+
+  Widget messageRow(
+    ApiMessage m,
+    ApiMessage? previous, {
+    bool interactive = true,
+  }) {
     final time = MobileClock.instant(m.json['created_at']),
         before = MobileClock.instant(previous?.json['created_at']);
     final day = const MobileClock().day(m.json['created_at']);
@@ -775,7 +772,6 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         before == null ||
         time.difference(before).abs().inMinutes >= 5;
     return Column(
-      key: ValueKey(m.id),
       children: [
         if (day != previousDay && day.isNotEmpty)
           Padding(
@@ -812,10 +808,10 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           message: m,
           apiBase: widget.session.api.dio.options.baseUrl,
           first: first,
-          onReply: policy.canSend && m.wamid.isNotEmpty
+          onReply: interactive && policy.canSend && m.wamid.isNotEmpty
               ? () => setState(() => reply = m)
               : null,
-          onActions: (anchor) => actions(m, anchor),
+          onActions: interactive ? (anchor) => actions(m, anchor) : null,
           contactName:
               '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}',
         ),

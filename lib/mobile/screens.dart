@@ -618,13 +618,21 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
   /// The one main action: Add contact in the shared inbox, New ticket in the
   /// ticket inbox (where the ticket form can also create the contact).
   Future<void> create() async {
-    final created = await openPage<Object?>(
-      context,
-      mode == InboxMode.tickets
-          ? CreateTicketPage(widget.session)
-          : ContactEditor(widget.session),
-    );
-    if (mounted && created != false) refresh.value++;
+    if (mode == InboxMode.tickets) {
+      final created = await openPage<Object?>(
+        context,
+        CreateTicketPage(widget.session),
+      );
+      if (mounted && created != false) refresh.value++;
+      return;
+    }
+    // Shared inbox: a quick sheet, then straight into the new conversation.
+    // A new contact has no customer message yet, so the chat offers templates
+    // only until the customer writes.
+    final contact = await showQuickAddContact(context, widget.session);
+    if (!mounted || contact == null) return;
+    refresh.value++;
+    await openPage(context, LiveChat(widget.session, contact));
   }
 
   Future<void> signOut() async {
@@ -1150,14 +1158,27 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   );
 }
 
-class ContactEditor extends StatefulWidget {
-  const ContactEditor(this.session, {super.key});
+/// Opens the quick-add sheet and returns the saved contact, or null.
+Future<Json?> showQuickAddContact(
+  BuildContext context,
+  MobileSession session,
+) => showModalBottomSheet<Json>(
+  context: context,
+  isScrollControlled: true,
+  showDragHandle: true,
+  builder: (_) => QuickAddContact(session),
+);
+
+/// A compact add-contact panel, like the quick replies sheet: name and number,
+/// then Save. The server refuses a number already saved on this WhatsApp number.
+class QuickAddContact extends StatefulWidget {
+  const QuickAddContact(this.session, {super.key});
   final MobileSession session;
   @override
-  State<ContactEditor> createState() => _ContactEditorState();
+  State<QuickAddContact> createState() => _QuickAddContactState();
 }
 
-class _ContactEditorState extends State<ContactEditor> {
+class _QuickAddContactState extends State<QuickAddContact> {
   final name = TextEditingController(),
       phone = TextEditingController(),
       country = TextEditingController(text: '91');
@@ -1171,51 +1192,102 @@ class _ContactEditorState extends State<ContactEditor> {
     super.dispose();
   }
 
+  String digits(TextEditingController c) =>
+      c.text.replaceAll(RegExp(r'[^0-9]'), '');
+
+  Future<void> save() async {
+    final code = digits(country), number = digits(phone);
+    if (name.text.trim().isEmpty || number.isEmpty || code.isEmpty) {
+      setState(() => error = 'Enter a name, country code and phone number.');
+      return;
+    }
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      final result = await widget.session.api.post('inbox/contact/new', {
+        'name': name.text.trim(),
+        'phone': number,
+        'country': code,
+      });
+      final contact = object(result['data']);
+      if (mounted) Navigator.pop(context, contact.isEmpty ? null : contact);
+    } catch (e) {
+      if (mounted) setState(() => error = '$e');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('New contact')),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        for (final field in [
-          (name, 'Name'),
-          (country, 'Country code'),
-          (phone, 'Phone number'),
-        ])
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: AppTextField(
-              controller: field.$1,
-              decoration: InputDecoration(labelText: field.$2),
+  Widget build(BuildContext context) => Padding(
+    // Rides above the keyboard.
+    padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+    child: SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Add contact',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
             ),
-          ),
-        if (error != null)
-          Text(error!, style: const TextStyle(color: T.danger)),
-        AppButton.filled(
-          onPressed: busy
-              ? null
-              : () async {
-                  if (name.text.trim().isEmpty || phone.text.trim().isEmpty) {
-                    setState(() => error = 'Enter a name and phone number.');
-                    return;
-                  }
-                  setState(() => busy = true);
-                  try {
-                    await widget.session.api.post('inbox/contact/new', {
-                      'name': name.text.trim(),
-                      'phone': phone.text.trim(),
-                      'country': country.text.trim(),
-                    });
-                    if (context.mounted) Navigator.pop(context);
-                  } catch (e) {
-                    if (mounted) setState(() => error = '$e');
-                  } finally {
-                    if (mounted) setState(() => busy = false);
-                  }
-                },
-          child: Text(busy ? 'Saving…' : 'Create contact'),
+            const SizedBox(height: 14),
+            AppTextFormField(
+              controller: name,
+              decoration: const InputDecoration(
+                labelText: 'Name',
+                hintText: 'Name',
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                SizedBox(
+                  width: 84,
+                  child: AppTextFormField(
+                    controller: country,
+                    keyboardType: TextInputType.phone,
+                    decoration: const InputDecoration(
+                      labelText: 'Code',
+                      hintText: 'Code',
+                      prefixText: '+',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: AppTextFormField(
+                    controller: phone,
+                    keyboardType: TextInputType.phone,
+                    decoration: const InputDecoration(
+                      labelText: 'Phone number',
+                      hintText: 'Phone number',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  error!,
+                  style: const TextStyle(color: T.danger, fontSize: 13),
+                ),
+              ),
+            const SizedBox(height: 16),
+            AppButton.filled(
+              onPressed: busy ? null : save,
+              child: Text(busy ? 'Saving…' : 'Save'),
+            ),
+          ],
         ),
-      ],
+      ),
     ),
   );
 }

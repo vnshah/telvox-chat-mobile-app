@@ -131,6 +131,17 @@ void main() {
     final closed = details(expiry: '2026-10-28T00:00:00Z');
     expect(SendPolicy.evaluate(session, closed, now: now).canSend, false);
     expect(SendPolicy.evaluate(session, closed, now: now).canTemplate, true);
+    // A contact just added from the app has never written: templates only.
+    final fresh = details();
+    fresh['contact'] = {
+      ...object(fresh['contact']),
+      'service_expiration_timestamp': null,
+      'referral_conversion_expiration_timestamp': null,
+    };
+    final firstContact = SendPolicy.evaluate(session, fresh, now: now);
+    expect(firstContact.canSend, false);
+    expect(firstContact.canTemplate, true);
+    expect(firstContact.reason, contains('approved template'));
     final referral = details(expiry: '2026-10-28T00:00:00Z');
     object(referral);
     (referral['contact'] as Json)['referral_conversion_expiration_timestamp'] =

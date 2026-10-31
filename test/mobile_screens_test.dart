@@ -148,7 +148,7 @@ void main() {
               body: SafeArea(child: LiveList(session, kind: k)),
             ),
           'contact': ContactActionsPage(session, 12),
-          'contact-create': ContactEditor(session),
+          'contact-create': Scaffold(body: QuickAddContact(session)),
           'fields': ContactFieldsPage(session, 12),
           'gallery': MediaGalleryPage(session, contactId: 12),
           'ticket': TicketPage(session, 7),

@@ -177,10 +177,17 @@ List<ApiMessage> mergeMessages(
 }
 
 class PendingSend {
-  PendingSend(this.body, {String? key, this.attachment})
-    : key = key ?? newRequestId();
+  PendingSend(this.body, {String? key, this.attachment, this.quote})
+    : key = key ?? newRequestId(),
+      createdAt = DateTime.now().toUtc().toIso8601String();
   final Json body;
   final Attachment? attachment;
+
+  /// Reply-quote fields, in the server's message shape.
+  final Json? quote;
+
+  /// When it was sent; fixed so its time and day stay put on every rebuild.
+  final String createdAt;
   double progress = 0;
   final String key;
   String? error;
