@@ -508,7 +508,6 @@ class LiveHome extends StatefulWidget {
 }
 
 class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
-  int tab = 0;
   Timer? heartbeat;
   RealtimeSubscription? device;
   @override
@@ -546,6 +545,8 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
       session.pendingOpen = null;
       final ticketId = number(data['ticket_id']);
       final contactId = number(data['contact_id']);
+      // In ticketing mode a conversation only opens through its ticket.
+      if (ticketId == null && session.inboxMode != InboxMode.shared) return;
       if (ticketId != null) {
         await openPage(context, TicketPage(session, ticketId));
       } else if (contactId != null) {
@@ -612,10 +613,14 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
   /// Lists reload after the home screen creates a contact or ticket.
   final refresh = ValueNotifier(0);
 
+  InboxMode get mode => widget.session.inboxMode;
+
+  /// The one main action: Add contact in the shared inbox, New ticket in the
+  /// ticket inbox (where the ticket form can also create the contact).
   Future<void> create() async {
     final created = await openPage<Object?>(
       context,
-      tab == 2
+      mode == InboxMode.tickets
           ? CreateTicketPage(widget.session)
           : ContactEditor(widget.session),
     );
@@ -656,11 +661,12 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
     }
   }
 
-  static const titles = ['Inbox', 'Contacts', 'Tickets'];
-
   @override
   Widget build(BuildContext context) {
     final session = widget.session;
+    final mode = this.mode;
+    final tickets = mode == InboxMode.tickets;
+    final title = tickets ? 'Tickets' : 'Inbox';
     final initials = '${session.user?['name'] ?? '?'}'
         .trim()
         .split(RegExp(r'\s+'))
@@ -668,22 +674,25 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
         .take(2)
         .map((p) => p[0].toUpperCase())
         .join();
-    final list = Column(
-      children: [
-        RealtimeNotice(session.realtime),
-        Expanded(
-          child: LiveList(
-            session,
-            kind: tab,
-            key: ValueKey(tab),
-            refresh: refresh,
-          ),
-        ),
-      ],
-    );
+    final body = mode == InboxMode.none
+        ? const _NoInbox()
+        : Column(
+            children: [
+              RealtimeNotice(session.realtime),
+              Expanded(
+                child: LiveList(
+                  session,
+                  kind: tickets ? 2 : 0,
+                  key: ValueKey(mode),
+                  refresh: refresh,
+                ),
+              ),
+            ],
+          );
+    final createLabel = tickets ? 'New ticket' : 'Add contact';
     if (isCupertino(context)) {
-      // iOS: number picker and actions in the navigation bar, a large title,
-      // and the tab bar (Apple's layout for a list app).
+      // iOS: number picker and actions in the navigation bar, then a large
+      // title. One inbox, so no tab bar.
       return Scaffold(
         backgroundColor: Colors.white,
         body: SafeArea(
@@ -717,17 +726,15 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
                       ),
                     ),
                     const Spacer(),
-                    if (tab != 0)
+                    if (mode != InboxMode.none)
                       CupertinoButton(
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                         onPressed: create,
                         child: Icon(
-                          tab == 2
+                          tickets
                               ? CupertinoIcons.plus
                               : CupertinoIcons.person_badge_plus,
-                          semanticLabel: tab == 2
-                              ? 'New ticket'
-                              : 'Add contact',
+                          semanticLabel: createLabel,
                         ),
                       ),
                     CupertinoButton(
@@ -745,46 +752,19 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(
-                  titles[tab],
+                  title,
                   style: CupertinoTheme.of(context)
                       .textTheme
                       .navLargeTitleTextStyle,
                 ),
               ),
-              Expanded(child: list),
+              Expanded(child: body),
             ],
           ),
         ),
-        bottomNavigationBar: CupertinoTabBar(
-          currentIndex: tab,
-          onTap: (v) => setState(() => tab = v),
-          activeColor: T.green,
-          inactiveColor: T.muted,
-          backgroundColor: T.iosBar,
-          border: const Border(
-            top: BorderSide(color: T.iosSeparator, width: .5),
-          ),
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(CupertinoIcons.chat_bubble_2),
-              activeIcon: Icon(CupertinoIcons.chat_bubble_2_fill),
-              label: 'Inbox',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(CupertinoIcons.person_2),
-              activeIcon: Icon(CupertinoIcons.person_2_fill),
-              label: 'Contacts',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(CupertinoIcons.ticket),
-              activeIcon: Icon(CupertinoIcons.ticket_fill),
-              label: 'Tickets',
-            ),
-          ],
-        ),
       );
     }
-    // Android: Material 3 top app bar, navigation bar and floating button.
+    // Android: Material 3 top app bar and one floating action button.
     return Scaffold(
       appBar: AppBar(
         title: const Brand(),
@@ -849,43 +829,56 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
           ),
         ],
       ),
-      body: list,
-      floatingActionButton: tab == 0
+      body: body,
+      floatingActionButton: mode == InboxMode.none
           ? null
-          : tab == 2
+          : tickets
           ? FloatingActionButton.extended(
               onPressed: create,
               icon: const Icon(Icons.add),
-              label: const Text('New ticket'),
+              label: Text(createLabel),
             )
           : FloatingActionButton(
-              tooltip: 'Add contact',
+              tooltip: createLabel,
               onPressed: create,
               child: const Icon(Icons.person_add_alt_1_outlined),
             ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: tab,
-        onDestinationSelected: (v) => setState(() => tab = v),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.chat_outlined),
-            selectedIcon: Icon(Icons.chat),
-            label: 'Inbox',
+    );
+  }
+}
+
+/// Shown when the selected number allows neither inbox for this account.
+class _NoInbox extends StatelessWidget {
+  const _NoInbox();
+  @override
+  Widget build(BuildContext context) => const Center(
+    child: Padding(
+      padding: EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AppIcon(Icons.lock_outline, size: 40, color: T.brass),
+          SizedBox(height: 12),
+          Text(
+            'No inbox access for this number',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              color: T.ink,
+            ),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.group_outlined),
-            selectedIcon: Icon(Icons.group),
-            label: 'Contacts',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.confirmation_number_outlined),
-            selectedIcon: Icon(Icons.confirmation_number),
-            label: 'Tickets',
+          SizedBox(height: 6),
+          Text(
+            'Your account cannot open the shared inbox or tickets here. '
+            'Switch number, or ask an admin for access.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, color: T.secondary),
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
 }
 
 class LiveList extends StatefulWidget {

@@ -93,16 +93,27 @@ class _TemplateSendState extends State<TemplateSend> {
     setState(() => error = null);
     try {
       setState(() => busy = true);
-      final permissionData = await Future.wait([
-        widget.session.api.post('inbox/getContactDetails', {
-          'contact_id': widget.contact['id'],
-        }),
-        if (widget.ticketId != null)
-          widget.session.api.post('inbox/ticket_details', {
+      // Ticket conversations re-check through the ticket alone: in ticketing
+      // mode the shared inbox's contact details are not available. The
+      // server still enforces DND for marketing templates either way.
+      final Json details;
+      Json? ticket;
+      if (widget.ticketId != null) {
+        final data = object(
+          (await widget.session.api.post('inbox/ticket_details', {
             'ticket_id': widget.ticketId,
-          }),
-      ]);
-      if (flag(object(permissionData.first['data'])['is_dnd']) &&
+          }))['data'],
+        );
+        ticket = object(data['ticket']);
+        details = ticketSendDetail(data);
+      } else {
+        details = object(
+          (await widget.session.api.post('inbox/getContactDetails', {
+            'contact_id': widget.contact['id'],
+          }))['data'],
+        );
+      }
+      if (flag(details['is_dnd']) &&
           plan!.template['category'] == 'MARKETING') {
         throw const ApiFailure(
           'This contact has opted out of marketing. Choose a utility or authentication template.',
@@ -110,10 +121,8 @@ class _TemplateSendState extends State<TemplateSend> {
       }
       final permission = SendPolicy.evaluate(
         widget.session,
-        object(permissionData.first['data']),
-        ticket: widget.ticketId == null
-            ? null
-            : object(object(permissionData.last['data'])['ticket']),
+        details,
+        ticket: ticket,
       );
       if (!permission.canTemplate) {
         throw ApiFailure(

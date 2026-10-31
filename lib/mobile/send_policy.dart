@@ -3,6 +3,19 @@ import 'models.dart';
 
 bool flag(Object? v) => v == true || v == 1 || v == '1';
 
+/// Send-policy inputs from a ticket's details: its contact, and the people
+/// this account may answer for (the ticket's assignable team, which includes
+/// the account itself), in place of the shared inbox's child user ids. Used
+/// because ticketing mode does not expose the shared inbox's contact details.
+Json ticketSendDetail(Json data) => {
+  'contact': object(data['contact']),
+  'child_user_ids': [
+    for (final u in rows(data['users']))
+      if (number(u['id']) case final int id) id,
+  ],
+  'is_favourite': data['is_favourite'],
+};
+
 /// Mirrors shared/ticket inbox assignment and service/referral window checks.
 /// Templates bypass the window only, never ownership or contact restrictions.
 class SendPolicy {

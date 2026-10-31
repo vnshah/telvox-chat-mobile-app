@@ -199,20 +199,27 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     if (detailsBusy) return;
     detailsBusy = true;
     try {
-      final results = await Future.wait([
-        widget.session.api.post('inbox/getContactDetails', {
-          'contact_id': contactId,
-        }),
-        if (widget.ticketId != null)
-          widget.session.api.post('inbox/ticket_details', {
+      final Json nextDetail;
+      final Json? nextTicket;
+      if (widget.ticketId != null) {
+        // A ticket conversation reads only the ticket: in ticketing mode the
+        // shared inbox's contact details are not available to this account.
+        final data = object(
+          (await widget.session.api.post('inbox/ticket_details', {
             'ticket_id': widget.ticketId,
-          }),
-      ]);
+          }))['data'],
+        );
+        nextTicket = object(data['ticket']);
+        nextDetail = ticketSendDetail(data);
+      } else {
+        nextDetail = object(
+          (await widget.session.api.post('inbox/getContactDetails', {
+            'contact_id': contactId,
+          }))['data'],
+        );
+        nextTicket = null;
+      }
       if (!mounted) return;
-      final nextDetail = object(results.first['data']);
-      final nextTicket = widget.ticketId == null
-          ? null
-          : object(object(results.last['data'])['ticket']);
       widget.session.viewCache[detailKey] = [nextDetail, nextTicket];
       if (jsonEncode([nextDetail, nextTicket]) ==
           jsonEncode([detail, ticket])) {
@@ -586,7 +593,13 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
+  /// Customer details in the shared inbox; a ticket chat always sits on its
+  /// ticket's details (as the web ticket inbox pairs them), so it returns.
   Future<void> openContact() async {
+    if (widget.ticketId != null) {
+      if (Navigator.canPop(context)) Navigator.pop(context);
+      return;
+    }
     await openPage(
       context,
       ContactActionsPage(widget.session, contactId, initial: detail),

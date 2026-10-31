@@ -162,6 +162,10 @@ class MobileApi {
       object(await request(path, method: 'POST', data: body));
 }
 
+/// Which inbox the selected number gets. TheMessenger's ticketing mode
+/// replaces the shared inbox rather than adding to it, so a number has one.
+enum InboxMode { shared, tickets, none }
+
 /// Session state is kept separate from preview data and scoped to the API host.
 class MobileSession extends ChangeNotifier {
   MobileSession(
@@ -235,6 +239,26 @@ class MobileSession extends ChangeNotifier {
   String get storageKey => 'session.${Uri.parse(api.dio.options.baseUrl).host}';
   bool get signedIn => api.token != null && user != null;
   bool get ready => signedIn && api.wabaId != null && config != null;
+
+  /// Whether the server lets this account use a route, by its name in the
+  /// capabilities list (which already applies permissions, the plan and
+  /// ticketing mode). Null when the server sent no capabilities.
+  bool? canRoute(String name) {
+    final actions = rows(object(config?['capabilities'])['actions']);
+    if (actions.isEmpty) return null;
+    return actions.any((a) => a['name'] == name && a['allowed'] == true);
+  }
+
+  /// Shared inbox when its list is allowed; otherwise the ticket inbox when
+  /// that is (ticketing mode); otherwise neither. Re-read on number switch.
+  InboxMode get inboxMode {
+    final shared = canRoute('inbox.contacts.list');
+    if (shared == null || shared) return InboxMode.shared;
+    return canRoute('ticket-inbox-api.tickets.list') == true
+        ? InboxMode.tickets
+        : InboxMode.none;
+  }
+
   bool allows(String path) {
     final actions = rows(object(config?['capabilities'])['actions']);
     final matches = actions.where((a) => '${a['path']}'.endsWith(path));

@@ -4,6 +4,7 @@ import 'package:telvox_chat_mobile_app/mobile/api.dart';
 import 'package:telvox_chat_mobile_app/mobile/chat.dart';
 import 'package:telvox_chat_mobile_app/mobile/models.dart';
 import 'package:telvox_chat_mobile_app/mobile/screens.dart';
+import 'package:telvox_chat_mobile_app/mobile/send_policy.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
 import 'mobile_api_test.dart' show fakeApi, answer, MemoryStore;
@@ -132,7 +133,7 @@ void main() {
     },
   );
 
-  testWidgets('inbox survives app resume and shares rows with Contacts', (
+  testWidgets('inbox survives app resume without reloading the list', (
     tester,
   ) async {
     var listRequests = 0;
@@ -170,11 +171,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(listRequests, 2);
 
-    await tester.tap(find.text('Contacts'));
-    await tester.pump();
     expect(find.text('Alex'), findsOneWidget);
-    expect(find.byType(LinearProgressIndicator), findsNothing);
-    await tester.pumpAndSettle();
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();
     session.dispose();
@@ -345,5 +342,70 @@ void main() {
     await tester.pumpAndSettle();
     expect(bodies.last, {'previous_contact_id': 12});
     session.dispose();
+  });
+
+  testWidgets('the home shows the one inbox the account has', (tester) async {
+    Json caps({required bool shared, required bool tickets}) => {
+      'capabilities': {
+        'actions': [
+          {'name': 'inbox.contacts.list', 'allowed': shared},
+          {'name': 'ticket-inbox-api.tickets.list', 'allowed': tickets},
+        ],
+      },
+    };
+    for (final (config, expectShared, expectTickets) in [
+      (caps(shared: true, tickets: true), true, false),
+      (caps(shared: false, tickets: true), false, true),
+      (caps(shared: false, tickets: false), false, false),
+    ]) {
+      final paths = <String>[];
+      final api = fakeApi((r, h) {
+        paths.add(r.path);
+        answer(r, h, switch (r.path) {
+          'inbox/contacts' => <Object>[],
+          'inbox/tickets' => {'success': true, 'data': <Object>[]},
+          _ => {'success': true},
+        });
+      });
+      final session = MobileSession(api, MemoryStore())
+        ..user = {'id': 1, 'name': 'Priya Shah'}
+        ..config = config;
+      await tester.pumpWidget(app(LiveHome(session)));
+      await tester.pumpAndSettle();
+      // One inbox, never both, and no bottom navigation.
+      expect(find.byType(NavigationBar), findsNothing);
+      expect(paths.contains('inbox/contacts'), expectShared);
+      expect(paths.contains('inbox/tickets'), expectTickets);
+      expect(
+        find.byTooltip('Add contact'),
+        expectShared ? findsOneWidget : findsNothing,
+      );
+      expect(
+        find.text('New ticket'),
+        expectTickets ? findsOneWidget : findsNothing,
+      );
+      expect(
+        find.text('No inbox access for this number'),
+        !expectShared && !expectTickets ? findsOneWidget : findsNothing,
+      );
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      session.dispose();
+    }
+  });
+
+  test('a ticket chat takes its send policy from the ticket alone', () {
+    final detail = ticketSendDetail({
+      'contact': {
+        'id': 12,
+        'service_expiration_timestamp': '2099-01-01T00:00:00Z',
+      },
+      'users': [
+        {'id': 1},
+        {'id': 7},
+      ],
+    });
+    expect(object(detail['contact'])['id'], 12);
+    expect(detail['child_user_ids'], [1, 7]);
   });
 }

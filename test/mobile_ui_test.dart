@@ -47,12 +47,13 @@ void main() {
     await tester.enterText(find.byType(TextFormField).at(1), 'password');
     await tester.tap(find.text('Sign in'));
     await tester.pumpAndSettle();
-    expect(find.text('Inbox'), findsOneWidget);
+    // The shared inbox home, recognised by its one main action.
+    expect(find.byTooltip('Add contact'), findsOneWidget);
     expect(find.text('Choose business'), findsNothing);
     api.onUnauthorized!();
     await tester.pumpAndSettle();
     expect(find.text('Sign in'), findsOneWidget);
-    expect(find.text('Inbox'), findsNothing);
+    expect(find.byTooltip('Add contact'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();
     session.dispose();
