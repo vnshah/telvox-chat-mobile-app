@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -660,10 +661,10 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     final body = '${p.body['body'] ?? ''}';
     if (a == null) return body;
     final label = switch (a.kind) {
-      'audio' => '🎤 Voice message',
-      'image' => '📷 ${a.name}',
-      'video' => '🎥 ${a.name}',
-      _ => '📄 ${a.name}',
+      'audio' => 'Voice message',
+      'image' => 'Photo · ${a.name}',
+      'video' => 'Video · ${a.name}',
+      _ => a.name,
     };
     return body.isEmpty ? label : '$label\n$body';
   }
@@ -835,7 +836,9 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                         permission.expiresAt,
                         known: detail != null,
                         prefix: widget.ticketId == null
-                            ? '${widget.contact['display_wa_id'] ?? phone}'
+                            ? formatPhone(
+                                widget.contact['display_wa_id'] ?? phone,
+                              )
                             : 'Ticket conversation',
                       ),
                     ],
@@ -845,22 +848,42 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
             ),
           ),
         ),
+        // Updates are live, so no refresh button. iOS puts contact details
+        // behind an info button; Android behind the overflow menu.
         actions: [
-          AppIconButton(
-            tooltip: 'Refresh',
-            onPressed: showLoading
-                ? null
-                : () {
-                    load(quiet: messages.isNotEmpty);
-                    details();
-                  },
-            icon: const Icon(Icons.refresh),
-          ),
-          AppIconButton(
-            tooltip: 'Contact details',
-            onPressed: openContact,
-            icon: const Icon(Icons.person_outline),
-          ),
+          if (isCupertino(context))
+            AppIconButton(
+              tooltip: 'Contact details',
+              onPressed: openContact,
+              icon: const Icon(CupertinoIcons.info_circle),
+            )
+          else
+            PopupMenuButton<String>(
+              tooltip: 'More options',
+              onSelected: (v) {
+                if (v == 'contact') openContact();
+                if (v == 'templates') templates();
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 'contact',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.person_outline),
+                    title: Text('Contact details'),
+                  ),
+                ),
+                if (permission.canTemplate)
+                  const PopupMenuItem(
+                    value: 'templates',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.article_outlined),
+                      title: Text('Send template'),
+                    ),
+                  ),
+              ],
+            ),
         ],
       ),
       // The wallpaper runs behind the composer too, so the input floats on
@@ -1099,13 +1122,17 @@ class _WindowStatusState extends State<WindowStatus> {
     final expires = widget.expiresAt;
     final left = expires?.difference(DateTime.now());
     final open = left != null && !left.isNegative;
+    // WhatsApp's windows are 24 hours (service) or 72 (ad referral); a later
+    // expiry is bad data, so it shows as simply open rather than "632635h".
     final label = !widget.known
         ? ''
-        : open
-        ? left.inHours > 0
-              ? '${left.inHours}h ${left.inMinutes % 60}m left'
-              : '${left.inMinutes.clamp(1, 59)}m left'
-        : 'Window closed';
+        : !open
+        ? 'Window closed'
+        : left.inHours >= 72
+        ? 'Open'
+        : left.inHours > 0
+        ? '${left.inHours}h ${left.inMinutes % 60}m left'
+        : '${left.inMinutes.clamp(1, 59)}m left';
     return Text.rich(
       TextSpan(
         children: [

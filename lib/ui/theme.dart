@@ -7,22 +7,39 @@ import 'package:go_router/go_router.dart';
 import 'platform.dart';
 export 'platform.dart';
 
+/// The telvox family palette, as TheMessenger web uses it: warm paper
+/// neutrals carry the surface, taupe brass marks structure (icons, labels,
+/// tags, the selected tab), and green is reserved for what can be acted on.
 abstract final class T {
-  static const paper = Color(0xFFEAF2EB);
-  static const wash = Color(0xFFF4F7F3);
-  static const ink = Color(0xFF1B2922);
-  static const secondary = Color(0xFF405047);
-  static const muted = Color(0xFF566258);
-  static const green = Color(0xFF176B46);
-  static const forest = Color(0xFF173D2E);
+  static const paper = Color(0xFFF0ECE5);
+  static const wash = Color(0xFFF7F4EE);
+  static const ink = Color(0xFF221C16);
+  static const secondary = Color(0xFF4F4A44);
+  static const muted = Color(0xFF7A7268);
+  static const green = Color(0xFF1E7A4F);
+  static const forest = Color(0xFF14432C);
   static const mint = Color(0xFFB8DCC7);
-  static const brass = Color(0xFF5F7365);
-  static const edge = Color(0xFFDCE5DC);
-  static const control = Color(0xFFB6C7BA);
-  static const selected = Color(0xFFC8E4D1);
-  // Brighter than the chat wallpaper so outgoing bubbles lift off it.
-  static const outgoing = Color(0xFFD5F1DD);
-  static const firm = Color(0xFF173D2E);
+  static const brass = Color(0xFF8A7355);
+  static const edge = Color(0xFFE3DED4);
+  static const control = Color(0xFFCFC6B8);
+
+  /// Taupe wash: avatars, tags, selected chips and the active tab.
+  static const selected = Color(0xFFECE4D8);
+  static const onSelected = Color(0xFF3D3022);
+  static const greenWash = Color(0xFFDCEBDD);
+
+  /// Material 3 surfaces derived from the paper tone.
+  static const surface = Color(0xFFFBF8F3);
+  static const surfaceHigh = Color(0xFFEFEAE2);
+
+  /// iOS grouped background and bar tint in the same warm family.
+  static const iosGrouped = Color(0xFFF2EFEA);
+  static const iosBar = Color(0xF2FAF8F4);
+  static const iosSeparator = Color(0x293C3228);
+
+  /// The web inbox's sage: your messages stay green on the warm wallpaper.
+  static const outgoing = Color(0xFFD5E8D6);
+  static const firm = Color(0xFF1C1B1A);
   static const danger = Color(0xFFC2335E);
   static const blue = Color(0xFF137BA4);
 
@@ -35,8 +52,8 @@ abstract final class T {
   static CupertinoThemeData get cupertino => CupertinoThemeData(
     brightness: Brightness.light,
     primaryColor: green,
-    scaffoldBackgroundColor: Color(0xFFF2F2F7),
-    barBackgroundColor: Color(0xFAFCFCFC),
+    scaffoldBackgroundColor: iosGrouped,
+    barBackgroundColor: iosBar,
     textTheme: CupertinoTextThemeData(
       primaryColor: green,
       textStyle: TextStyle(
@@ -104,23 +121,30 @@ abstract final class T {
       cupertinoOverrideTheme: cupertino,
       splashFactory: apple ? NoSplash.splashFactory : InkSparkle.splashFactory,
       highlightColor: apple ? Colors.transparent : null,
-      scaffoldBackgroundColor: apple ? const Color(0xFFF2F2F7) : wash,
+      scaffoldBackgroundColor: apple ? iosGrouped : surface,
+      // Material 3 roles: primary is the action green, secondary the taupe.
       colorScheme: ColorScheme.fromSeed(seedColor: green).copyWith(
         primary: green,
         onPrimary: Colors.white,
-        primaryContainer: selected,
+        primaryContainer: greenWash,
         onPrimaryContainer: forest,
-        secondary: green,
+        secondary: brass,
+        onSecondary: Colors.white,
         secondaryContainer: selected,
-        onSecondaryContainer: forest,
-        surface: Colors.white,
+        onSecondaryContainer: onSelected,
+        tertiary: brass,
+        surface: surface,
         onSurface: ink,
-        onSurfaceVariant: muted,
-        surfaceContainer: paper,
+        onSurfaceVariant: secondary,
+        surfaceContainerLowest: Colors.white,
         surfaceContainerLow: wash,
-        surfaceContainerHighest: paper,
+        surfaceContainer: const Color(0xFFF3EFE8),
+        surfaceContainerHigh: surfaceHigh,
+        surfaceContainerHighest: const Color(0xFFE9E3DA),
         outline: control,
         outlineVariant: edge,
+        inverseSurface: ink,
+        onInverseSurface: const Color(0xFFF2EEE6),
         error: danger,
       ),
       textTheme: const TextTheme(
@@ -155,11 +179,11 @@ abstract final class T {
         labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
       ),
       appBarTheme: AppBarTheme(
-        toolbarHeight: 64,
-        backgroundColor: apple ? Colors.white : paper,
-        foregroundColor: forest,
-        iconTheme: const IconThemeData(color: green),
-        actionsIconTheme: const IconThemeData(color: green),
+        toolbarHeight: 60,
+        backgroundColor: apple ? iosBar : surface,
+        foregroundColor: ink,
+        iconTheme: IconThemeData(color: apple ? green : secondary),
+        actionsIconTheme: IconThemeData(color: apple ? green : secondary),
         systemOverlayStyle: SystemUiOverlayStyle.dark,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
@@ -168,16 +192,23 @@ abstract final class T {
         titleTextStyle: TextStyle(
           fontFamily: family,
           fontFamilyFallback: const ['Geist'],
-          fontSize: 20,
-          fontWeight: FontWeight.w500,
+          fontSize: apple ? 17 : 20,
+          fontWeight: apple ? FontWeight.w600 : FontWeight.w400,
           color: ink,
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: paper,
+        backgroundColor: const Color(0xFFF3EFE8),
         indicatorColor: selected,
         surfaceTintColor: Colors.transparent,
-        height: 80,
+        height: 72,
+        iconTheme: WidgetStateProperty.resolveWith(
+          (states) => IconThemeData(
+            color: states.contains(WidgetState.selected)
+                ? onSelected
+                : secondary,
+          ),
+        ),
         labelTextStyle: WidgetStateProperty.resolveWith(
           (states) => TextStyle(
             fontFamily: family,
@@ -185,19 +216,20 @@ abstract final class T {
             fontWeight: states.contains(WidgetState.selected)
                 ? FontWeight.w600
                 : FontWeight.w500,
-            color: states.contains(WidgetState.selected) ? forest : muted,
+            color: states.contains(WidgetState.selected) ? ink : secondary,
           ),
         ),
       ),
       navigationRailTheme: const NavigationRailThemeData(
-        backgroundColor: paper,
+        backgroundColor: surface,
         indicatorColor: selected,
-        selectedIconTheme: IconThemeData(color: forest),
-        unselectedIconTheme: IconThemeData(color: muted),
+        selectedIconTheme: IconThemeData(color: onSelected),
+        unselectedIconTheme: IconThemeData(color: secondary),
       ),
+      // The one main action on a screen: green, like the web's primary button.
       floatingActionButtonTheme: FloatingActionButtonThemeData(
-        backgroundColor: selected,
-        foregroundColor: forest,
+        backgroundColor: green,
+        foregroundColor: Colors.white,
         elevation: 2,
         focusElevation: 2,
         hoverElevation: 3,
@@ -209,31 +241,71 @@ abstract final class T {
         thickness: .7,
         space: 1,
       ),
+      // Compact Material 3 outlined fields: 48 dp, 1 px outline (2 px when
+      // focused), 14 sp text and a small floating label.
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: wash,
+        fillColor: Colors.white,
+        isDense: true,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 14,
-          vertical: 14,
+          vertical: 13,
         ),
         hintStyle: const TextStyle(color: muted, fontSize: 14),
+        labelStyle: const TextStyle(color: secondary, fontSize: 14),
+        floatingLabelStyle: const TextStyle(color: green, fontSize: 13),
+        prefixIconColor: muted,
+        suffixIconColor: muted,
+        prefixIconConstraints: const BoxConstraints(
+          minWidth: 44,
+          minHeight: 44,
+        ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: control),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: control),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: green, width: 2),
         ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: danger),
+        ),
+      ),
+      searchBarTheme: SearchBarThemeData(
+        elevation: const WidgetStatePropertyAll(0),
+        backgroundColor: const WidgetStatePropertyAll(surfaceHigh),
+        constraints: const BoxConstraints(minHeight: 46),
+        hintStyle: const WidgetStatePropertyAll(
+          TextStyle(color: muted, fontSize: 14),
+        ),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 14),
+        ),
+      ),
+      listTileTheme: const ListTileThemeData(
+        iconColor: brass,
+        textColor: ink,
+        contentPadding: EdgeInsets.symmetric(horizontal: 16),
+        minVerticalPadding: 8,
+      ),
+      cardTheme: CardThemeData(
+        color: Colors.white,
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          minimumSize: const Size(0, 48),
-          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
+          minimumSize: const Size(0, 46),
+          backgroundColor: green,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
@@ -247,15 +319,16 @@ abstract final class T {
       ),
       iconButtonTheme: IconButtonThemeData(
         style: IconButton.styleFrom(
-          foregroundColor: green,
+          foregroundColor: apple ? green : secondary,
           minimumSize: const Size(44, 44),
         ),
       ),
+      // Material 3 filter chips: outlined, taupe container when selected.
       chipTheme: ChipThemeData(
-        backgroundColor: Colors.white,
+        backgroundColor: Colors.transparent,
         selectedColor: selected,
         secondarySelectedColor: selected,
-        checkmarkColor: forest,
+        checkmarkColor: onSelected,
         side: WidgetStateBorderSide.resolveWith(
           (states) => BorderSide(
             color: states.contains(WidgetState.selected) ? selected : control,
@@ -274,7 +347,7 @@ abstract final class T {
           fontFamilyFallback: const ['Geist'],
           fontSize: 12,
           fontWeight: FontWeight.w600,
-          color: forest,
+          color: onSelected,
         ),
       ),
       bottomSheetTheme: const BottomSheetThemeData(
@@ -286,7 +359,7 @@ abstract final class T {
         ),
       ),
       snackBarTheme: const SnackBarThemeData(
-        backgroundColor: forest,
+        backgroundColor: ink,
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -310,37 +383,45 @@ void notice(BuildContext context, String text) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 }
 
+/// The telvox family wordmark, as on the web: "telvox" in the mono face, a
+/// thin drawn hairline, then the product name at 0.78x in the product green.
 class Brand extends StatelessWidget {
   const Brand({super.key, this.large = false, this.onDark = false});
   final bool large, onDark;
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Text(
-        'telvox',
-        style: mono(
-          size: large ? 24 : 19,
-          color: onDark ? Colors.white : T.ink,
-          weight: FontWeight.w500,
-        ),
-      ),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 7),
-        child: Text(
-          '|',
-          style: mono(
-            size: large ? 23 : 18,
+  Widget build(BuildContext context) {
+    final size = large ? 24.0 : 19.0;
+    return Semantics(
+      label: 'telvox chat',
+      excludeSemantics: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'telvox',
+            style: mono(
+              size: size,
+              color: onDark ? Colors.white : T.ink,
+              weight: FontWeight.w500,
+            ).copyWith(letterSpacing: -.025 * size),
+          ),
+          Container(
+            width: 1,
+            height: size * .62,
+            margin: EdgeInsets.symmetric(horizontal: size * .31),
             color: onDark ? T.mint.withValues(alpha: .5) : T.control,
           ),
-        ),
+          Text(
+            'chat',
+            style: mono(
+              size: size * .78,
+              color: onDark ? T.mint : T.green,
+            ).copyWith(letterSpacing: -.02 * size),
+          ),
+        ],
       ),
-      Text(
-        'chat',
-        style: mono(size: large ? 24 : 19, color: onDark ? T.mint : T.green),
-      ),
-    ],
-  );
+    );
+  }
 }
 
 class Eyebrow extends StatelessWidget {

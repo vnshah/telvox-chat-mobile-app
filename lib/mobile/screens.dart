@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
@@ -157,8 +158,9 @@ class _LoginScreenState extends State<LoginScreen> {
     final challenge = widget.session.challenge;
     final methods = rows(challenge?['methods']);
     final selected = method ?? '${challenge?['default_method'] ?? 'totp'}';
+    final apple = isCupertino(context);
     return Scaffold(
-      backgroundColor: T.paper,
+      backgroundColor: apple ? T.iosGrouped : T.surface,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -171,34 +173,102 @@ class _LoginScreenState extends State<LoginScreen> {
                   const Align(alignment: Alignment.centerLeft, child: Brand()),
                   const SizedBox(height: 32),
                   Text(
-                    challenge == null ? 'Welcome back.' : 'Verify your sign-in',
-                    style: Theme.of(context).textTheme.headlineLarge,
+                    challenge == null ? 'Welcome back' : 'Verify your sign-in',
+                    style: apple
+                        ? CupertinoTheme.of(context)
+                              .textTheme
+                              .navLargeTitleTextStyle
+                        : const TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: -.3,
+                            color: T.ink,
+                          ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   Text(
                     challenge == null
-                        ? 'Sign in with your existing work account.'
+                        ? 'Sign in with your work account.'
                         : 'Use your account’s verification method.',
+                    style: const TextStyle(fontSize: 15, color: T.secondary),
                   ),
                   const SizedBox(height: 24),
-                  if (challenge == null) ...[
+                  if (challenge == null && apple)
+                    // iOS: both fields in one grouped card, as in Settings.
+                    Container(
+                      decoration: BoxDecoration(
+                        color: CupertinoColors.white,
+                        borderRadius: BorderRadius.circular(11),
+                      ),
+                      child: Column(
+                        children: [
+                          CupertinoTextField(
+                            controller: email,
+                            keyboardType: TextInputType.emailAddress,
+                            autocorrect: false,
+                            placeholder: 'Work email',
+                            decoration: null,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 13,
+                            ),
+                          ),
+                          Container(
+                            height: .5,
+                            margin: const EdgeInsets.only(left: 16),
+                            color: T.iosSeparator,
+                          ),
+                          CupertinoTextField(
+                            controller: password,
+                            obscureText: hidden,
+                            placeholder: 'Password',
+                            decoration: null,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 13,
+                            ),
+                            suffix: CupertinoButton(
+                              padding: const EdgeInsets.only(right: 12),
+                              onPressed: () => setState(() => hidden = !hidden),
+                              child: Icon(
+                                hidden
+                                    ? CupertinoIcons.eye
+                                    : CupertinoIcons.eye_slash,
+                                size: 20,
+                                color: T.muted,
+                                semanticLabel: 'Show password',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else if (challenge == null) ...[
+                    // Android: compact Material 3 outlined fields.
                     AppTextFormField(
                       controller: email,
                       keyboardType: TextInputType.emailAddress,
                       decoration: const InputDecoration(
                         labelText: 'Work email',
+                        prefixIcon: Icon(Icons.mail_outline, size: 20),
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
                     AppTextFormField(
                       controller: password,
                       obscureText: hidden,
                       decoration: InputDecoration(
                         labelText: 'Password',
+                        prefixIcon: const Icon(Icons.lock_outline, size: 20),
                         suffixIcon: AppIconButton(
                           tooltip: 'Show password',
                           onPressed: () => setState(() => hidden = !hidden),
-                          icon: const Icon(Icons.visibility_outlined),
+                          icon: Icon(
+                            hidden
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                            size: 20,
+                          ),
                         ),
                       ),
                     ),
@@ -532,68 +602,299 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
   void dispose() {
     heartbeat?.cancel();
     device?.cancel();
+    refresh.dispose();
     widget.session.removeListener(openPending);
     widget.session.realtime.stop();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
+  /// Lists reload after the home screen creates a contact or ticket.
+  final refresh = ValueNotifier(0);
+
+  Future<void> create() async {
+    final created = await openPage<Object?>(
+      context,
+      tab == 2
+          ? CreateTicketPage(widget.session)
+          : ContactEditor(widget.session),
+    );
+    if (mounted && created != false) refresh.value++;
+  }
+
+  Future<void> signOut() async {
+    try {
+      await widget.session.logout();
+    } catch (e) {
+      if (mounted) mobileNotice(context, e);
+    }
+  }
+
+  /// The account menu: a Material menu on Android, an action sheet on iOS.
+  Future<void> account() async {
+    final name = '${widget.session.user?['name'] ?? 'Account'}';
+    if (isCupertino(context)) {
+      final out = await showCupertinoModalPopup<bool>(
+        context: context,
+        builder: (popup) => CupertinoActionSheet(
+          title: Text(name),
+          message: Text('${widget.session.user?['email'] ?? ''}'),
+          actions: [
+            CupertinoActionSheetAction(
+              isDestructiveAction: true,
+              onPressed: () => Navigator.pop(popup, true),
+              child: const Text('Sign Out'),
+            ),
+          ],
+          cancelButton: CupertinoActionSheetAction(
+            onPressed: () => Navigator.pop(popup),
+            child: const Text('Cancel'),
+          ),
+        ),
+      );
+      if (out == true) await signOut();
+    }
+  }
+
+  static const titles = ['Inbox', 'Contacts', 'Tickets'];
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Brand(),
-      actions: [
-        AppIconButton(
-          tooltip: 'Switch number',
-          onPressed: widget.session.switchNumber,
-          icon: const Icon(Icons.swap_horiz),
-        ),
-        AppIconButton(
-          tooltip: 'Sign out',
-          onPressed: () async {
-            try {
-              await widget.session.logout();
-            } catch (e) {
-              if (context.mounted) mobileNotice(context, e);
-            }
-          },
-          icon: const Icon(Icons.logout),
-        ),
-      ],
-    ),
-    body: Column(
+  Widget build(BuildContext context) {
+    final session = widget.session;
+    final initials = '${session.user?['name'] ?? '?'}'
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .take(2)
+        .map((p) => p[0].toUpperCase())
+        .join();
+    final list = Column(
       children: [
-        RealtimeNotice(widget.session.realtime),
+        RealtimeNotice(session.realtime),
         Expanded(
-          child: LiveList(widget.session, kind: tab, key: ValueKey(tab)),
+          child: LiveList(
+            session,
+            kind: tab,
+            key: ValueKey(tab),
+            refresh: refresh,
+          ),
         ),
       ],
-    ),
-    bottomNavigationBar: NavigationBar(
-      selectedIndex: tab,
-      onDestinationSelected: (v) => setState(() => tab = v),
-      destinations: const [
-        NavigationDestination(
-          icon: Icon(Icons.chat_bubble_outline),
-          label: 'Inbox',
+    );
+    if (isCupertino(context)) {
+      // iOS: number picker and actions in the navigation bar, a large title,
+      // and the tab bar (Apple's layout for a list app).
+      return Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          bottom: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                height: 44,
+                child: Row(
+                  children: [
+                    CupertinoButton(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      onPressed: session.switchNumber,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            session.wabaName,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              color: T.green,
+                            ),
+                          ),
+                          const Icon(
+                            CupertinoIcons.chevron_down,
+                            size: 14,
+                            color: T.green,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Spacer(),
+                    if (tab != 0)
+                      CupertinoButton(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        onPressed: create,
+                        child: Icon(
+                          tab == 2
+                              ? CupertinoIcons.plus
+                              : CupertinoIcons.person_badge_plus,
+                          semanticLabel: tab == 2
+                              ? 'New ticket'
+                              : 'Add contact',
+                        ),
+                      ),
+                    CupertinoButton(
+                      padding: const EdgeInsets.only(left: 6, right: 14),
+                      onPressed: account,
+                      child: const Icon(
+                        CupertinoIcons.person_crop_circle,
+                        size: 26,
+                        semanticLabel: 'Account',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  titles[tab],
+                  style: CupertinoTheme.of(context)
+                      .textTheme
+                      .navLargeTitleTextStyle,
+                ),
+              ),
+              Expanded(child: list),
+            ],
+          ),
         ),
-        NavigationDestination(
-          icon: Icon(Icons.people_outline),
-          label: 'Contacts',
+        bottomNavigationBar: CupertinoTabBar(
+          currentIndex: tab,
+          onTap: (v) => setState(() => tab = v),
+          activeColor: T.green,
+          inactiveColor: T.muted,
+          backgroundColor: T.iosBar,
+          border: const Border(
+            top: BorderSide(color: T.iosSeparator, width: .5),
+          ),
+          items: const [
+            BottomNavigationBarItem(
+              icon: Icon(CupertinoIcons.chat_bubble_2),
+              activeIcon: Icon(CupertinoIcons.chat_bubble_2_fill),
+              label: 'Inbox',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(CupertinoIcons.person_2),
+              activeIcon: Icon(CupertinoIcons.person_2_fill),
+              label: 'Contacts',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(CupertinoIcons.ticket),
+              activeIcon: Icon(CupertinoIcons.ticket_fill),
+              label: 'Tickets',
+            ),
+          ],
         ),
-        NavigationDestination(
-          icon: Icon(Icons.confirmation_number_outlined),
-          label: 'Tickets',
-        ),
-      ],
-    ),
-  );
+      );
+    }
+    // Android: Material 3 top app bar, navigation bar and floating button.
+    return Scaffold(
+      appBar: AppBar(
+        title: const Brand(),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: ActionChip(
+              avatar: const Icon(Icons.swap_horiz, size: 18),
+              label: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 110),
+                child: Text(session.wabaName, overflow: TextOverflow.ellipsis),
+              ),
+              tooltip: 'Switch number',
+              onPressed: session.switchNumber,
+              side: const BorderSide(color: T.control),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'Account',
+            position: PopupMenuPosition.under,
+            onSelected: (v) {
+              if (v == 'signout') signOut();
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                enabled: false,
+                child: Text(
+                  '${session.user?['name'] ?? 'Account'}',
+                  style: const TextStyle(
+                    color: T.ink,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'signout',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.logout),
+                  title: Text('Sign out'),
+                ),
+              ),
+            ],
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 12, 0),
+              child: CircleAvatar(
+                radius: 16,
+                backgroundColor: T.selected,
+                child: Text(
+                  initials.isEmpty ? '?' : initials,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: T.onSelected,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: list,
+      floatingActionButton: tab == 0
+          ? null
+          : tab == 2
+          ? FloatingActionButton.extended(
+              onPressed: create,
+              icon: const Icon(Icons.add),
+              label: const Text('New ticket'),
+            )
+          : FloatingActionButton(
+              tooltip: 'Add contact',
+              onPressed: create,
+              child: const Icon(Icons.person_add_alt_1_outlined),
+            ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: tab,
+        onDestinationSelected: (v) => setState(() => tab = v),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.chat_outlined),
+            selectedIcon: Icon(Icons.chat),
+            label: 'Inbox',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.group_outlined),
+            selectedIcon: Icon(Icons.group),
+            label: 'Contacts',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.confirmation_number_outlined),
+            selectedIcon: Icon(Icons.confirmation_number),
+            label: 'Tickets',
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class LiveList extends StatefulWidget {
-  const LiveList(this.session, {required this.kind, super.key});
+  const LiveList(this.session, {required this.kind, super.key, this.refresh});
   final MobileSession session;
   final int kind;
+
+  /// Fired by the home screen after it creates a contact or ticket.
+  final Listenable? refresh;
   @override
   State<LiveList> createState() => _LiveListState();
 }
@@ -611,8 +912,8 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   Map<int, String> people = {};
   // Same tabs and order as the web inbox; tickets have no favourites.
   Map<String, String> get filters => {
-    'mychats': 'My chats',
     'all': 'All',
+    'mychats': widget.kind == 2 ? 'Mine' : 'My chats',
     'unread': 'Unread',
     'unassigned': 'Unassigned',
     if (widget.kind != 2) 'favourite': 'Favourites',
@@ -638,6 +939,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
     load(quiet: items.isNotEmpty);
     loadPeople();
     subscribeLive();
+    widget.refresh?.addListener(load);
   }
 
   /// Same channels as the web inbox and ticket inbox. Each event means "the
@@ -703,6 +1005,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
     debounce?.cancel();
     liveDebounce?.cancel();
     live?.cancel();
+    widget.refresh?.removeListener(load);
     search.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -751,28 +1054,35 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
     }
   }
 
+  void searched(String _) {
+    debounce?.cancel();
+    serial++;
+    debounce = Timer(const Duration(milliseconds: 350), reload);
+  }
+
   @override
   Widget build(BuildContext context) => Column(
     children: [
+      // Native search: Material 3 search bar, or the iOS search field.
       Padding(
-        padding: const EdgeInsets.all(12),
-        child: AppTextField(
-          controller: search,
-          onChanged: (_) {
-            debounce?.cancel();
-            serial++;
-            debounce = Timer(const Duration(milliseconds: 350), reload);
-          },
-          decoration: InputDecoration(
-            hintText: widget.kind == 2
-                ? 'Search tickets'
-                : 'Search name or number',
-            prefixIcon: const Icon(Icons.search),
-          ),
-        ),
+        padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
+        child: isCupertino(context)
+            ? CupertinoSearchTextField(
+                controller: search,
+                onChanged: searched,
+                placeholder: widget.kind == 2 ? 'Search tickets' : 'Search',
+              )
+            : SearchBar(
+                controller: search,
+                onChanged: searched,
+                hintText: widget.kind == 2
+                    ? 'Search tickets'
+                    : 'Search name or number',
+                leading: const Icon(Icons.search, color: T.secondary),
+              ),
       ),
       Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: const EdgeInsets.fromLTRB(14, 0, 14, 4),
         child: PlatformFilters(
           options: filters.values.toList(),
           selected: filters[filter] ?? 'All',
@@ -783,30 +1093,6 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
           },
         ),
       ),
-      if (widget.kind == 2)
-        Align(
-          alignment: Alignment.centerRight,
-          child: AppButton.textIcon(
-            onPressed: () async {
-              await openPage(context, CreateTicketPage(widget.session));
-              if (mounted) load();
-            },
-            icon: const Icon(Icons.add),
-            label: const Text('New ticket'),
-          ),
-        ),
-      if (widget.kind == 1)
-        Align(
-          alignment: Alignment.centerRight,
-          child: AppButton.textIcon(
-            onPressed: () async {
-              await openPage(context, ContactEditor(widget.session));
-              load();
-            },
-            icon: const Icon(Icons.person_add_alt),
-            label: const Text('Add contact'),
-          ),
-        ),
       LoadingBar(busy),
       if (error != null && items.isNotEmpty)
         Padding(
@@ -975,11 +1261,25 @@ class LiveConversationRow extends StatelessWidget {
         me != null &&
         favourites is List &&
         favourites.map(number).contains(me);
+    final content = last.isEmpty || ticket ? null : MessageContent(last);
     final preview = ticket
         ? name
-        : last.isNotEmpty
-        ? MessageContent(last).summary.replaceAll('\n', ' ')
+        : content != null
+        ? content.summary.replaceAll('\n', ' ')
         : 'No messages yet';
+    // A proper icon for the message kind, never an emoji.
+    final kindIcon = switch (content?.kind) {
+      'missed_call' => Icons.call_missed,
+      'call' => Icons.call_outlined,
+      'image' => Icons.image_outlined,
+      'video' => Icons.videocam_outlined,
+      'audio' => Icons.mic_none_rounded,
+      'document' => Icons.description_outlined,
+      'sticker' => Icons.emoji_emotions_outlined,
+      'location' => Icons.location_on_outlined,
+      'contact' => Icons.person_outline,
+      _ => null,
+    };
     final time = const MobileClock().listTime(
       last['created_at'] ?? item['last_message_date'],
     );
@@ -1070,13 +1370,24 @@ class LiveConversationRow extends StatelessWidget {
                               },
                             ),
                           ),
+                        if (kindIcon != null)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: AppIcon(
+                              kindIcon,
+                              size: 16,
+                              color: kindIcon == Icons.call_missed
+                                  ? T.danger
+                                  : T.muted,
+                            ),
+                          ),
                         Expanded(
                           child: Text(
                             preview,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 13,
+                              fontSize: 13.5,
                               color: strong ? T.ink : T.secondary,
                             ),
                           ),

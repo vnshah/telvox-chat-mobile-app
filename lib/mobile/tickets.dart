@@ -6,9 +6,12 @@ import '../ui/theme.dart';
 import 'api.dart';
 import 'chat.dart' show LiveChat;
 import 'contact_actions.dart' show MediaGalleryPage;
+import 'detail_layout.dart';
 import 'editors.dart';
+import 'models.dart' show MobileClock, formatPhone;
+import 'send_policy.dart' show flag;
 import 'realtime.dart';
-import 'screens.dart' show LoadingBar, failure, mobileNotice, openPage;
+import 'screens.dart' show failure, mobileNotice, openPage;
 
 class TicketPage extends StatefulWidget {
   const TicketPage(this.session, this.id, {super.key});
@@ -121,254 +124,296 @@ class _TicketPageState extends State<TicketPage> {
     ], 'inbox/tickets/${widget.id}/$key');
   }
 
+  void editSubject(Json t) => action(
+    () => edit('Ticket subject', [
+      EditField('subject', 'Subject', value: t['subject'], required: true),
+    ], 'inbox/tickets/${widget.id}/subject'),
+  );
+
+  void assign(Json t) => action(() async {
+    final users = rows(await api.request('inbox/users'));
+    if (!mounted) return;
+    await edit('Assign ticket', [
+      EditField(
+        'user_id',
+        'Assignee',
+        options: users,
+        value: t['assign_user_id'],
+        required: true,
+      ),
+    ], 'inbox/tickets/${widget.id}/assign');
+  });
+
+  void disposition(Json t) => action(() async {
+    final r = await api.get('inbox/tickets/${widget.id}/dispositions');
+    final choices = [
+      for (final c in rows(r['data']))
+        for (final d in rows(c['dispositions']))
+          {...d, 'name': '${c['name']} · ${d['name']}'},
+    ];
+    if (!mounted) return;
+    await edit('Ticket disposition', [
+      EditField(
+        'disposition_id',
+        'Disposition',
+        value: t['disposition_id'],
+        required: true,
+        options: choices,
+      ),
+    ], 'inbox/tickets/${widget.id}/disposition');
+  });
+
+  void addTag() => action(() async {
+    final r = await api.get('inbox/tickets/${widget.id}/unattached-tags');
+    if (!mounted) return;
+    await openPage(
+      context,
+      ActionEditor(
+        title: 'Add tag',
+        fields: [
+          EditField('tag_id', 'Tag', options: rows(r['data']), required: true),
+        ],
+        save: (v) async {
+          await api.post('inbox/tickets/${widget.id}/tags/${v['tag_id']}');
+        },
+      ),
+    );
+  });
+
+  void note([Json? existing]) => action(
+    () => edit(
+      existing == null ? 'Add ticket note' : 'Edit note',
+      [
+        EditField(
+          'note',
+          'Note',
+          value: existing?['content'],
+          required: true,
+          lines: 4,
+        ),
+      ],
+      existing == null
+          ? 'inbox/ticket/${widget.id}/notes'
+          : 'inbox/ticket/${widget.id}/notes/${existing['id']}',
+      method: existing == null ? 'POST' : 'PUT',
+    ),
+  );
+
+  void deleteNote(Json existing) => action(() async {
+    if (await confirmAction(
+      context,
+      'Delete note',
+      'Delete this internal ticket note?',
+    )) {
+      await api.request(
+        'inbox/ticket/${widget.id}/notes/${existing['id']}',
+        method: 'DELETE',
+      );
+    }
+  });
+
+  void messages() =>
+      openPage(
+        context,
+        LiveChat(widget.session, object(data!['contact']), ticketId: widget.id),
+      ).then((_) {
+        if (mounted) load();
+      });
+
   @override
   Widget build(BuildContext context) {
     final t = object(data?['ticket']);
-    return Scaffold(
-      appBar: AppBar(title: Text('${t['ticket_number'] ?? 'Ticket'}')),
-      body: data == null
-          ? error == null
-                ? const Center(child: CircularProgressIndicator())
-                : failure(error!, load)
-          : RefreshIndicator(
-              onRefresh: load,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  LoadingBar(busy),
-                  Text(
-                    '${t['subject'] ?? ''}',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  AppButton.filled(
-                    onPressed: () =>
-                        openPage(
-                          context,
-                          LiveChat(
-                            widget.session,
-                            object(data!['contact']),
-                            ticketId: widget.id,
-                          ),
-                        ).then((_) {
-                          if (mounted) load();
-                        }),
-                    child: const Text('Open ticket messages'),
-                  ),
-                  AppListTile(
-                    title: const Text('Subject'),
-                    subtitle: Text('${t['subject'] ?? ''}'),
-                    onTap: busy
-                        ? null
-                        : () => action(
-                            () => edit('Ticket subject', [
-                              EditField(
-                                'subject',
-                                'Subject',
-                                value: t['subject'],
-                                required: true,
-                              ),
-                            ], 'inbox/tickets/${widget.id}/subject'),
-                          ),
-                  ),
-                  AppListTile(
-                    title: const Text('Status'),
-                    subtitle: Text(
-                      '${object(t['status'])['name'] ?? t['status_name'] ?? ''}',
+    final number = '${t['ticket_number'] ?? 'Ticket'}';
+    if (data == null) {
+      return DetailScaffold(
+        title: number,
+        children: [
+          SizedBox(
+            height: 400,
+            child: error == null
+                ? const Center(child: CircularProgressIndicator.adaptive())
+                : failure(error!, load),
+          ),
+        ],
+      );
+    }
+    final contact = object(data!['contact']);
+    final status = '${object(t['status'])['name'] ?? t['status_name'] ?? ''}';
+    final closed =
+        flag(t['status_is_closed']) || flag(object(t['status'])['is_closed']);
+    final priority =
+        '${object(t['priority'])['name'] ?? t['priority_name'] ?? 'Not set'}';
+    final assignee = '${object(t['assign_user'])['name'] ?? 'Unassigned'}';
+    final notes = rows(data!['ticket_notes']);
+    final tags = rows(data!['ticket_tags']);
+    final sla = [
+      for (final entry in object(data!['sla_badge']).entries)
+        if (entry.value is Map) object(entry.value)..['key'] = entry.key,
+    ];
+    final apple = isCupertino(context);
+    final who = '${contact['profile_name'] ?? ''}';
+    return DetailScaffold(
+      title: number,
+      busy: busy,
+      onRefresh: load,
+      children: [
+        DetailHero(
+          centered: false,
+          title: '${t['subject'] ?? number}',
+          subtitle: [
+            who,
+            formatPhone(contact['display_wa_id'] ?? contact['wa_id']),
+          ].where((p) => p.isNotEmpty).join(' · '),
+          onTitleTap: busy ? null : () => editSubject(t),
+          chips: [
+            if (status.isNotEmpty)
+              StatusChip(
+                status,
+                icon: closed ? Icons.lock_outline : Icons.schedule,
+                positive: !closed,
+              ),
+            StatusChip(priority, icon: Icons.flag_outlined),
+          ],
+          actions: [
+            QuickAction(
+              Icons.chat_outlined,
+              'Messages',
+              messages,
+              primary: true,
+            ),
+            QuickAction(
+              Icons.timelapse,
+              'Status',
+              busy
+                  ? null
+                  : () => action(() => choose('status', 'Status', 'statuses')),
+            ),
+            QuickAction(
+              Icons.person_add_alt_1_outlined,
+              'Assign',
+              busy ? null : () => assign(t),
+            ),
+            QuickAction(
+              Icons.flag_outlined,
+              'Priority',
+              busy
+                  ? null
+                  : () => action(
+                      () => choose('priority', 'Priority', 'priorities'),
                     ),
-                    onTap: busy
-                        ? null
-                        : () => action(
-                            () => choose('status', 'Status', 'statuses'),
-                          ),
-                  ),
-                  AppListTile(
-                    title: const Text('Priority'),
-                    subtitle: Text(
-                      '${object(t['priority'])['name'] ?? t['priority_name'] ?? 'Not set'}',
+            ),
+          ],
+        ),
+        DetailSection(
+          title: 'Details',
+          children: [
+            DetailRow(
+              icon: Icons.timelapse,
+              tile: closed ? T.muted : T.green,
+              label: 'Status',
+              value: status.isEmpty ? 'Not set' : status,
+              onTap: busy
+                  ? null
+                  : () => action(() => choose('status', 'Status', 'statuses')),
+            ),
+            DetailRow(
+              icon: Icons.flag_outlined,
+              label: 'Priority',
+              value: priority,
+              onTap: busy
+                  ? null
+                  : () => action(
+                      () => choose('priority', 'Priority', 'priorities'),
                     ),
-                    onTap: busy
-                        ? null
-                        : () => action(
-                            () => choose('priority', 'Priority', 'priorities'),
-                          ),
+            ),
+            DetailRow(
+              icon: Icons.person_outline,
+              label: 'Assigned to',
+              value: assignee,
+              onTap: busy ? null : () => assign(t),
+            ),
+            DetailRow(
+              icon: Icons.check_circle_outline,
+              label: 'Disposition',
+              value: '${object(t['disposition'])['name'] ?? 'Not set'}',
+              onTap: busy ? null : () => disposition(t),
+            ),
+          ],
+        ),
+        if (sla.isNotEmpty)
+          DetailSection(
+            title: 'SLA',
+            children: [
+              for (final s in sla)
+                DetailRow(
+                  icon: Icons.schedule,
+                  tile: T.green,
+                  label: '${s['label'] ?? s['key']}',
+                  value: '${s['due_at'] ?? ''}',
+                ),
+            ],
+          ),
+        DetailSection(
+          title: 'Tags',
+          children: [
+            TagWrap(
+              tags: [for (final tag in tags) '${tag['name']}'],
+              onRemove: busy
+                  ? null
+                  : (i) => action(() async {
+                      await api.request(
+                        'inbox/tickets/${widget.id}/tags/${tags[i]['id']}',
+                        method: 'DELETE',
+                      );
+                    }),
+              onAdd: busy ? null : addTag,
+            ),
+          ],
+        ),
+        DetailSection(
+          title: 'Internal notes',
+          action: 'Add',
+          onAction: busy ? null : note,
+          children: [
+            if (notes.isEmpty)
+              const DetailRow(
+                icon: Icons.sticky_note_2_outlined,
+                label: 'No notes yet',
+              ),
+            for (final n in notes)
+              DetailRow(
+                icon: Icons.sticky_note_2_outlined,
+                label: '${n['content'] ?? ''}',
+                subtitle: [
+                  '${object(n['author'])['name'] ?? ''}',
+                  const MobileClock().listTime(n['created_at']),
+                ].where((p) => p.isNotEmpty).join(' · '),
+                onTap: busy ? null : () => note(n),
+                trailing: AppIconButton(
+                  tooltip: 'Delete note',
+                  onPressed: busy ? null : () => deleteNote(n),
+                  icon: AppIcon(
+                    Icons.delete_outline_rounded,
+                    size: 20,
+                    color: apple ? T.danger : T.muted,
                   ),
-                  AppListTile(
-                    title: const Text('Assigned to'),
-                    subtitle: Text(
-                      '${object(t['assign_user'])['name'] ?? 'Unassigned'}',
-                    ),
-                    onTap: busy
-                        ? null
-                        : () => action(() async {
-                            final users = rows(
-                              await api.request('inbox/users'),
-                            );
-                            if (!mounted) return;
-                            await edit('Assign ticket', [
-                              EditField(
-                                'user_id',
-                                'Assignee',
-                                options: users,
-                                value: t['assign_user_id'],
-                                required: true,
-                              ),
-                            ], 'inbox/tickets/${widget.id}/assign');
-                          }),
-                  ),
-                  AppListTile(
-                    title: const Text('Disposition'),
-                    subtitle: Text(
-                      '${object(t['disposition'])['name'] ?? 'Not set'}',
-                    ),
-                    onTap: busy
-                        ? null
-                        : () => action(() async {
-                            final r = await api.get(
-                              'inbox/tickets/${widget.id}/dispositions',
-                            );
-                            final choices = [
-                              for (final c in rows(r['data']))
-                                for (final d in rows(c['dispositions']))
-                                  {...d, 'name': '${c['name']} · ${d['name']}'},
-                            ];
-                            if (!mounted) return;
-                            await edit('Ticket disposition', [
-                              EditField(
-                                'disposition_id',
-                                'Disposition',
-                                value: t['disposition_id'],
-                                required: true,
-                                options: choices,
-                              ),
-                            ], 'inbox/tickets/${widget.id}/disposition');
-                          }),
-                  ),
-                  for (final entry in object(data!['sla_badge']).entries)
-                    if (entry.value is Map)
-                      ListTile(
-                        title: Text(
-                          '${object(entry.value)['label'] ?? entry.key}',
-                        ),
-                        subtitle: Text(
-                          '${object(entry.value)['due_at'] ?? ''}',
-                        ),
-                      ),
-                  const Section('Tags'),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (final tag in rows(data!['ticket_tags']))
-                        InputChip(
-                          label: Text('${tag['name']}'),
-                          onDeleted: busy
-                              ? null
-                              : () => action(() async {
-                                  await api.request(
-                                    'inbox/tickets/${widget.id}/tags/${tag['id']}',
-                                    method: 'DELETE',
-                                  );
-                                }),
-                        ),
-                    ],
-                  ),
-                  AppButton.text(
-                    onPressed: busy
-                        ? null
-                        : () => action(() async {
-                            final r = await api.get(
-                              'inbox/tickets/${widget.id}/unattached-tags',
-                            );
-                            if (!context.mounted) return;
-                            await openPage(
-                              context,
-                              ActionEditor(
-                                title: 'Add tag',
-                                fields: [
-                                  EditField(
-                                    'tag_id',
-                                    'Tag',
-                                    options: rows(r['data']),
-                                    required: true,
-                                  ),
-                                ],
-                                save: (v) async {
-                                  await api.post(
-                                    'inbox/tickets/${widget.id}/tags/${v['tag_id']}',
-                                  );
-                                },
-                              ),
-                            );
-                          }),
-                    child: const Text('Add existing tag'),
-                  ),
-                  const Section('Internal notes'),
-                  for (final note in rows(data!['ticket_notes']))
-                    AppListTile(
-                      title: Text('${note['content'] ?? ''}'),
-                      subtitle: Text('${object(note['author'])['name'] ?? ''}'),
-                      onTap: busy
-                          ? null
-                          : () => action(
-                              () => edit(
-                                'Edit note',
-                                [
-                                  EditField(
-                                    'note',
-                                    'Note',
-                                    value: note['content'],
-                                    required: true,
-                                    lines: 4,
-                                  ),
-                                ],
-                                'inbox/ticket/${widget.id}/notes/${note['id']}',
-                                method: 'PUT',
-                              ),
-                            ),
-                      trailing: AppIconButton(
-                        tooltip: 'Delete note',
-                        onPressed: busy
-                            ? null
-                            : () => action(() async {
-                                if (await confirmAction(
-                                  context,
-                                  'Delete note',
-                                  'Delete this internal ticket note?',
-                                )) {
-                                  await api.request(
-                                    'inbox/ticket/${widget.id}/notes/${note['id']}',
-                                    method: 'DELETE',
-                                  );
-                                }
-                              }),
-                        icon: const Icon(Icons.delete_outline),
-                      ),
-                    ),
-                  AppButton.text(
-                    onPressed: busy
-                        ? null
-                        : () => action(
-                            () => edit('Add ticket note', [
-                              const EditField(
-                                'note',
-                                'Note',
-                                required: true,
-                                lines: 4,
-                              ),
-                            ], 'inbox/ticket/${widget.id}/notes'),
-                          ),
-                    child: const Text('Add note'),
-                  ),
-                  AppListTile(
-                    title: const Text('Ticket media'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => openPage(
-                      context,
-                      MediaGalleryPage(widget.session, ticketId: widget.id),
-                    ),
-                  ),
-                ],
+                ),
+              ),
+          ],
+        ),
+        DetailSection(
+          children: [
+            DetailRow(
+              icon: Icons.perm_media_outlined,
+              label: 'Ticket media',
+              onTap: () => openPage(
+                context,
+                MediaGalleryPage(widget.session, ticketId: widget.id),
               ),
             ),
+          ],
+        ),
+      ],
     );
   }
 }

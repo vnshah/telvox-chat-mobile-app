@@ -121,6 +121,18 @@ class MobileClock {
   }
 }
 
+/// Readable phone number: `+91 99999 99999` for Indian numbers, `+` and the digits
+/// otherwise. Masked numbers (with *) are shown exactly as the server sends.
+String formatPhone(Object? raw) {
+  final text = '${raw ?? ''}'.trim();
+  if (text.isEmpty || text.contains('*') || text.contains(' ')) return text;
+  final digits = text.replaceAll(RegExp(r'[^0-9]'), '');
+  if (digits.length == 12 && digits.startsWith('91')) {
+    return '+91 ${digits.substring(2, 7)} ${digits.substring(7)}';
+  }
+  return digits.isEmpty ? text : '+$digits';
+}
+
 class ApiMessage {
   ApiMessage(this.json);
   final Json json;

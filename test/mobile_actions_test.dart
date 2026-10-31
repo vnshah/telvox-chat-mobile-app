@@ -316,8 +316,9 @@ void main() {
       await tester.scrollUntilVisible(find.text('Call after six'), 200);
       expect(find.text('Call after six'), findsOneWidget);
       expect(find.text('VIP'), findsOneWidget);
-      await tester.scrollUntilVisible(find.text('Subject'), -300);
-      await tester.tap(find.text('Subject'));
+      // The subject is edited by tapping it in the ticket header.
+      await tester.scrollUntilVisible(find.text('Old subject'), -300);
+      await tester.tap(find.text('Old subject'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextFormField), 'Changed subject');
       await tester.tap(find.text('Save'));
@@ -361,7 +362,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Edit contact name'));
+      await tester.tap(find.byTooltip('Edit name'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextFormField), 'Priya Sharma');
       await tester.tap(find.text('Save'));

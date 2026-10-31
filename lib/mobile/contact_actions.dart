@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 import '../ui/theme.dart';
 import 'api.dart';
 import 'editors.dart';
+import 'detail_layout.dart';
 import 'media.dart';
+import 'message_content.dart' show readableText;
+import 'models.dart' show MobileClock, formatPhone;
 import 'screens.dart' show failure, mobileNotice, openPage;
 
 class ContactActionsPage extends StatefulWidget {
@@ -74,293 +77,322 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
     await api.request(path, method: method, data: body);
   }
 
+  Json get contact => object(data?['contact']);
+  bool get closed => number(contact['conversation_status']) == 0;
+
+  void editName() => action(
+    () => edit('Edit contact', [
+      EditField(
+        'profile_name',
+        'Name',
+        value: contact['profile_name'],
+        required: true,
+      ),
+    ], (v) => mutate('inbox/contacts/${widget.id}/profile', body: v)),
+  );
+
+  void assign() => action(() async {
+    final multi = data!['multiple_assignment_enabled'] == true;
+    final users = rows(data!['users']);
+    await edit(
+      'Assign contact',
+      [
+        EditField(
+          multi ? 'user_ids' : 'user_id',
+          'Assignee',
+          value: multi
+              ? data!['assigned_user_ids']
+              : number(contact['assigned_to']),
+          multiple: multi,
+          options: multi
+              ? users
+              : [
+                  {'id': 0, 'name': 'Unassigned'},
+                  ...users,
+                ],
+        ),
+      ],
+      (v) => mutate(
+        'inbox/contacts/${widget.id}/assign',
+        body: multi ? v : {'user_id': v['user_id'] == 0 ? null : v['user_id']},
+      ),
+    );
+  });
+
+  void favourite() =>
+      action(() => mutate('inbox/contacts/${widget.id}/favorite'));
+
+  void closeOrReopen() => action(
+    () => mutate(
+      'inbox/conversation/${closed ? 'reopen' : 'close'}',
+      body: {'contact_id': widget.id},
+    ),
+  );
+
+  bool can(String mode) =>
+      data!['can_${mode == 'block' ? (data!['is_blocked'] == true ? 'unblock' : 'block') : (data!['is_dnd'] == true ? 'remove_dnd' : 'add_dnd')}'] ==
+      true;
+
+  void toggle(String mode) => action(() async {
+    final remove = data![mode == 'block' ? 'is_blocked' : 'is_dnd'] == true;
+    if (await confirmAction(
+      context,
+      'Update contact',
+      '${remove ? 'Remove' : 'Apply'} ${mode == 'block' ? 'WhatsApp blocking' : 'marketing do-not-disturb'} for this contact?',
+    )) {
+      await mutate(
+        'inbox/contacts/${widget.id}/$mode',
+        method: remove ? 'DELETE' : 'POST',
+      );
+    }
+  });
+
+  void removeTag(Json tag) => action(
+    () => mutate(
+      'inbox/contacts/tag/remove',
+      body: {'contact_id': widget.id, 'tag_id': tag['id']},
+    ),
+  );
+
+  void addTag() => action(() async {
+    final tags = rows(
+      (await api.get('inbox/tags', query: {'contact_id': widget.id}))['data'],
+    );
+    if (!mounted) return;
+    await edit(
+      'Add tag',
+      [EditField('tag_id', 'Tag', options: tags, required: true)],
+      (v) => mutate(
+        'inbox/contacts/tag/add',
+        body: {'contact_id': widget.id, ...v},
+      ),
+    );
+  });
+
+  void note([Json? existing]) => action(
+    () => edit(
+      existing == null ? 'Add note' : 'Edit note',
+      [
+        EditField(
+          'note',
+          'Note',
+          value: existing?['content'],
+          required: true,
+          lines: 4,
+        ),
+      ],
+      (v) => mutate(
+        'inbox/notes',
+        body: {
+          'contact_id': widget.id,
+          if (existing != null) 'note_id': existing['id'],
+          ...v,
+        },
+      ),
+    ),
+  );
+
+  void deleteNote(Json existing) => action(() async {
+    if (await confirmAction(
+      context,
+      'Delete note',
+      'Delete this internal note?',
+    )) {
+      await mutate('inbox/notes/${existing['id']}', method: 'DELETE');
+    }
+  });
+
+  /// Opened from a chat, Message simply returns to that conversation.
+  void message() {
+    if (Navigator.canPop(context)) Navigator.pop(context);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final c = object(data?['contact']);
-    return Scaffold(
-      appBar: AppBar(title: const Text('Contact details')),
-      body: data == null
-          ? error == null
-                ? const Center(child: CircularProgressIndicator())
-                : failure(error!, load)
-          : RefreshIndicator(
-              onRefresh: load,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  if (busy) const LinearProgressIndicator(),
-                  Text(
-                    '${c['profile_name'] ?? ''}',
-                    style: Theme.of(context).textTheme.titleLarge,
+    final c = contact;
+    if (data == null) {
+      return DetailScaffold(
+        title: 'Contact',
+        children: [
+          SizedBox(
+            height: 400,
+            child: error == null
+                ? const Center(child: CircularProgressIndicator.adaptive())
+                : failure(error!, load),
+          ),
+        ],
+      );
+    }
+    final name = '${c['profile_name'] ?? c['waba_profile_name'] ?? ''}';
+    final initials = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .take(2)
+        .map((p) => p[0].toUpperCase())
+        .join();
+    final assignee = '${object(data!['assignUser'])['name'] ?? 'Unassigned'}';
+    final favourite = data!['is_favourite'] == true;
+    final notes = rows(data!['notes']);
+    final tags = rows(data!['tags']);
+    final apple = isCupertino(context);
+    return DetailScaffold(
+      title: 'Contact',
+      busy: busy,
+      onRefresh: load,
+      actions: [
+        AppIconButton(
+          tooltip: 'Edit name',
+          onPressed: busy ? null : editName,
+          icon: const AppIcon(Icons.edit_outlined),
+        ),
+      ],
+      children: [
+        DetailHero(
+          avatar: initials.isEmpty ? '?' : initials,
+          title: name.isEmpty ? formatPhone(c['wa_id']) : name,
+          subtitle: formatPhone(c['display_wa_id'] ?? c['wa_id']),
+          onTitleTap: busy ? null : editName,
+          chips: [
+            StatusChip(
+              closed ? 'Closed' : 'Open',
+              icon: closed ? Icons.lock_outline : Icons.schedule,
+              positive: !closed,
+            ),
+            StatusChip(
+              assignee == 'Unassigned' ? 'Unassigned' : 'Assigned to $assignee',
+              icon: Icons.person_outline,
+            ),
+            if (favourite)
+              const StatusChip('Favourite', icon: Icons.star_rounded),
+          ],
+          actions: [
+            QuickAction(Icons.chat_outlined, 'Message', message, primary: true),
+            QuickAction(
+              favourite ? Icons.star_rounded : Icons.star_border_rounded,
+              favourite ? 'Unfavourite' : 'Favourite',
+              busy ? null : this.favourite,
+            ),
+            if (data!['can_assign_contact'] == true)
+              QuickAction(
+                Icons.person_add_alt_1_outlined,
+                'Assign',
+                busy ? null : assign,
+              ),
+            QuickAction(
+              closed ? Icons.replay : Icons.task_alt,
+              closed ? 'Reopen' : 'Close',
+              busy ? null : closeOrReopen,
+            ),
+          ],
+        ),
+        DetailSection(
+          title: 'Conversation',
+          children: [
+            DetailRow(
+              icon: Icons.person_outline,
+              label: 'Assigned to',
+              value: assignee,
+              onTap: data!['can_assign_contact'] == true && !busy
+                  ? assign
+                  : null,
+            ),
+            DetailRow(
+              icon: closed ? Icons.lock_outline : Icons.schedule,
+              tile: closed ? T.muted : T.green,
+              label: 'Status',
+              value: closed ? 'Closed' : 'Open',
+            ),
+          ],
+        ),
+        DetailSection(
+          title: 'Tags',
+          children: [
+            TagWrap(
+              tags: [for (final t in tags) '${t['name']}'],
+              onRemove: busy ? null : (i) => removeTag(tags[i]),
+              onAdd: busy ? null : addTag,
+            ),
+          ],
+        ),
+        DetailSection(
+          title: 'Notes',
+          action: 'Add',
+          onAction: busy ? null : note,
+          children: [
+            if (notes.isEmpty)
+              const DetailRow(
+                icon: Icons.sticky_note_2_outlined,
+                label: 'No notes yet',
+              ),
+            for (final n in notes)
+              DetailRow(
+                icon: Icons.sticky_note_2_outlined,
+                label: '${n['content'] ?? ''}',
+                subtitle: [
+                  readableText(object(n['user'])['name']),
+                  const MobileClock().listTime(n['created_at']),
+                ].where((p) => p.isNotEmpty).join(' · '),
+                onTap: busy ? null : () => note(n),
+                trailing: AppIconButton(
+                  tooltip: 'Delete note',
+                  onPressed: busy ? null : () => deleteNote(n),
+                  icon: AppIcon(
+                    Icons.delete_outline_rounded,
+                    size: 20,
+                    color: apple ? T.danger : T.muted,
                   ),
-                  Text('${c['display_wa_id'] ?? c['wa_id'] ?? ''}'),
-                  AppListTile(
-                    title: const Text('Edit contact name'),
-                    leading: const Icon(Icons.edit_outlined),
-                    onTap: busy
-                        ? null
-                        : () => action(
-                            () => edit(
-                              'Edit contact',
-                              [
-                                EditField(
-                                  'profile_name',
-                                  'Name',
-                                  value: c['profile_name'],
-                                  required: true,
-                                ),
-                              ],
-                              (v) => mutate(
-                                'inbox/contacts/${widget.id}/profile',
-                                body: v,
-                              ),
-                            ),
-                          ),
-                  ),
-                  if (data!['can_assign_contact'] == true)
-                    AppListTile(
-                      title: const Text('Assignment'),
-                      subtitle: Text(
-                        '${object(data!['assignUser'])['name'] ?? 'Unassigned'}',
-                      ),
-                      onTap: busy
-                          ? null
-                          : () => action(() async {
-                              final multi =
-                                  data!['multiple_assignment_enabled'] == true;
-                              final users = rows(data!['users']);
-                              await edit(
-                                'Assign contact',
-                                [
-                                  EditField(
-                                    multi ? 'user_ids' : 'user_id',
-                                    'Assignee',
-                                    value: multi
-                                        ? data!['assigned_user_ids']
-                                        : number(c['assigned_to']),
-                                    multiple: multi,
-                                    options: multi
-                                        ? users
-                                        : [
-                                            {'id': 0, 'name': 'Unassigned'},
-                                            ...users,
-                                          ],
-                                  ),
-                                ],
-                                (v) => mutate(
-                                  'inbox/contacts/${widget.id}/assign',
-                                  body: multi
-                                      ? v
-                                      : {
-                                          'user_id': v['user_id'] == 0
-                                              ? null
-                                              : v['user_id'],
-                                        },
-                                ),
-                              );
-                            }),
-                    ),
-                  AppListTile(
-                    title: Text(
-                      data!['is_favourite'] == true
-                          ? 'Remove from favourites'
-                          : 'Add to favourites',
-                    ),
-                    leading: const Icon(Icons.star_outline),
-                    onTap: busy
-                        ? null
-                        : () => action(
-                            () =>
-                                mutate('inbox/contacts/${widget.id}/favorite'),
-                          ),
-                  ),
-                  AppListTile(
-                    title: Text(
-                      number(c['conversation_status']) == 0
-                          ? 'Reopen conversation'
-                          : 'Close conversation',
-                    ),
-                    onTap: busy
-                        ? null
-                        : () => action(
-                            () => mutate(
-                              'inbox/conversation/${number(c['conversation_status']) == 0 ? 'reopen' : 'close'}',
-                              body: {'contact_id': widget.id},
-                            ),
-                          ),
-                  ),
-                  for (final mode in ['block', 'dnd'])
-                    if (data!['can_${mode == 'block' ? (data!['is_blocked'] == true ? 'unblock' : 'block') : (data!['is_dnd'] == true ? 'remove_dnd' : 'add_dnd')}'] ==
-                        true)
-                      AppListTile(
-                        title: Text(
-                          mode == 'block'
-                              ? (data!['is_blocked'] == true
-                                    ? 'Unblock contact'
-                                    : 'Block contact')
-                              : (data!['is_dnd'] == true
-                                    ? 'Remove marketing DND'
-                                    : 'Add marketing DND'),
-                        ),
-                        onTap: busy
-                            ? null
-                            : () => action(() async {
-                                final remove =
-                                    data![mode == 'block'
-                                        ? 'is_blocked'
-                                        : 'is_dnd'] ==
-                                    true;
-                                if (await confirmAction(
-                                  context,
-                                  'Update contact',
-                                  '${remove ? 'Remove' : 'Apply'} ${mode == 'block' ? 'WhatsApp blocking' : 'marketing do-not-disturb'} for this contact?',
-                                )) {
-                                  await mutate(
-                                    'inbox/contacts/${widget.id}/$mode',
-                                    method: remove ? 'DELETE' : 'POST',
-                                  );
-                                }
-                              }),
-                      ),
-                  const Section('Tags'),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (final tag in rows(data!['tags']))
-                        InputChip(
-                          label: Text('${tag['name']}'),
-                          onDeleted: busy
-                              ? null
-                              : () => action(
-                                  () => mutate(
-                                    'inbox/contacts/tag/remove',
-                                    body: {
-                                      'contact_id': widget.id,
-                                      'tag_id': tag['id'],
-                                    },
-                                  ),
-                                ),
-                        ),
-                    ],
-                  ),
-                  AppButton.text(
-                    onPressed: busy
-                        ? null
-                        : () => action(() async {
-                            final tags = rows(
-                              (await api.get(
-                                'inbox/tags',
-                                query: {'contact_id': widget.id},
-                              ))['data'],
-                            );
-                            if (!mounted) return;
-                            await edit(
-                              'Add tag',
-                              [
-                                EditField(
-                                  'tag_id',
-                                  'Tag',
-                                  options: tags,
-                                  required: true,
-                                ),
-                              ],
-                              (v) => mutate(
-                                'inbox/contacts/tag/add',
-                                body: {'contact_id': widget.id, ...v},
-                              ),
-                            );
-                          }),
-                    child: const Text('Add existing tag'),
-                  ),
-                  const Section('Internal notes'),
-                  for (final note in rows(data!['notes']))
-                    AppListTile(
-                      title: Text('${note['content'] ?? ''}'),
-                      subtitle: Text('${object(note['user'])['name'] ?? ''}'),
-                      onTap: busy
-                          ? null
-                          : () => action(
-                              () => edit(
-                                'Edit note',
-                                [
-                                  EditField(
-                                    'note',
-                                    'Note',
-                                    value: note['content'],
-                                    required: true,
-                                    lines: 4,
-                                  ),
-                                ],
-                                (v) => mutate(
-                                  'inbox/notes',
-                                  body: {
-                                    'contact_id': widget.id,
-                                    'note_id': note['id'],
-                                    ...v,
-                                  },
-                                ),
-                              ),
-                            ),
-                      trailing: AppIconButton(
-                        tooltip: 'Delete note',
-                        onPressed: busy
-                            ? null
-                            : () => action(() async {
-                                if (await confirmAction(
-                                  context,
-                                  'Delete note',
-                                  'Delete this internal note?',
-                                )) {
-                                  await mutate(
-                                    'inbox/notes/${note['id']}',
-                                    method: 'DELETE',
-                                  );
-                                }
-                              }),
-                        icon: const Icon(Icons.delete_outline),
-                      ),
-                    ),
-                  AppButton.text(
-                    onPressed: busy
-                        ? null
-                        : () => action(
-                            () => edit(
-                              'Add note',
-                              [
-                                const EditField(
-                                  'note',
-                                  'Note',
-                                  required: true,
-                                  lines: 4,
-                                ),
-                              ],
-                              (v) => mutate(
-                                'inbox/notes',
-                                body: {'contact_id': widget.id, ...v},
-                              ),
-                            ),
-                          ),
-                    child: const Text('Add note'),
-                  ),
-                  AppListTile(
-                    title: const Text('Custom fields'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => openPage(
-                      context,
-                      ContactFieldsPage(widget.session, widget.id),
-                    ),
-                  ),
-                  AppListTile(
-                    title: const Text('Shared media and documents'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => openPage(
-                      context,
-                      MediaGalleryPage(widget.session, contactId: widget.id),
-                    ),
-                  ),
-                ],
+                ),
+              ),
+          ],
+        ),
+        DetailSection(
+          title: 'More',
+          children: [
+            DetailRow(
+              icon: Icons.tune_outlined,
+              label: 'Details',
+              subtitle: 'Custom fields',
+              onTap: () => openPage(
+                context,
+                ContactFieldsPage(widget.session, widget.id),
               ),
             ),
+            DetailRow(
+              icon: Icons.perm_media_outlined,
+              label: 'Media, docs and links',
+              onTap: () => openPage(
+                context,
+                MediaGalleryPage(widget.session, contactId: widget.id),
+              ),
+            ),
+          ],
+        ),
+        if (can('dnd') || can('block'))
+          DetailSection(
+            title: 'Privacy',
+            children: [
+              if (can('dnd'))
+                DetailRow(
+                  icon: Icons.do_not_disturb_on_outlined,
+                  label: 'Marketing do not disturb',
+                  trailing: Switch.adaptive(
+                    value: data!['is_dnd'] == true,
+                    onChanged: busy ? null : (_) => toggle('dnd'),
+                  ),
+                ),
+              if (can('block'))
+                DetailRow(
+                  icon: Icons.block,
+                  label: data!['is_blocked'] == true
+                      ? 'Unblock contact'
+                      : 'Block contact',
+                  destructive: data!['is_blocked'] != true,
+                  onTap: busy ? null : () => toggle('block'),
+                ),
+            ],
+          ),
+      ],
     );
   }
 }

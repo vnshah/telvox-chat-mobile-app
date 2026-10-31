@@ -209,6 +209,12 @@ class MobileSession extends ChangeNotifier {
     return phone == null || '$phone'.isEmpty ? null : '$phone';
   }
 
+  /// Name of the selected WhatsApp number, shown on the number switcher.
+  String get wabaName {
+    final waba = object(object(config?['inbox'])['waba_user']);
+    return '${waba['name'] ?? waba['phone'] ?? 'Number'}';
+  }
+
   int? get authUserId =>
       number(object(object(config?['inbox'])['auth_user'])['id']) ??
       number(user?['id']);

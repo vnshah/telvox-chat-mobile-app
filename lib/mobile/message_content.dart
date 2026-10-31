@@ -29,8 +29,31 @@ class MessageContent {
       : fields.isNotEmpty
       ? 'Form response'
       : media.isNotEmpty
-      ? '${media.first['type']} attachment'
+      ? switch ('${media.first['type']}') {
+          'image' => 'Photo',
+          'video' => 'Video',
+          'audio' => 'Voice message',
+          'sticker' => 'Sticker',
+          _ => readableText(
+            media.first['media_name'] ?? media.first['filename'],
+          ).ifEmpty('Document'),
+        }
       : 'Message';
+
+  /// What kind of message this is, so lists can show its icon instead of an
+  /// emoji: call, missed_call, image, video, audio, document, sticker,
+  /// location, contact, or null for text.
+  String? get kind {
+    final type = '${row['message_type'] ?? 'text'}';
+    if (voiceCall != null) return voiceCall!.missed ? 'missed_call' : 'call';
+    return switch (type) {
+      'image' || 'video' || 'audio' || 'document' || 'sticker' => type,
+      'location' => 'location',
+      'contacts' => 'contact',
+      _ => null,
+    };
+  }
+
   void line(Object? value) {
     final next = readableText(value);
     if (next.isNotEmpty) text = text.isEmpty ? next : '$text\n$next';
@@ -119,7 +142,7 @@ class MessageContent {
     }
     final c = voiceCall!;
     text =
-        '📞 ${c.title}${c.subtitle == null || c.subtitle == 'Calling…' ? '' : ' · ${c.subtitle}'}';
+        '${c.title}${c.subtitle == null || c.subtitle == 'Calling…' ? '' : ' · ${c.subtitle}'}';
   }
 
   static String callDuration(Object? seconds) {
@@ -264,4 +287,8 @@ class VoiceCall {
   final bool incoming, missed;
   final String title;
   final String? subtitle;
+}
+
+extension on String {
+  String ifEmpty(String fallback) => isEmpty ? fallback : this;
 }

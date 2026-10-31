@@ -1004,12 +1004,12 @@ class ChatWallpaper extends CustomPainter {
         ..shader = const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          // Deeper than both bubble colours, so bubbles read as raised.
-          colors: [Color(0xFFDFE8DD), Color(0xFFD3DFD3)],
+          // Warm paper, deeper than both bubbles so they read as raised.
+          colors: [Color(0xFFEBE5DB), Color(0xFFE2DBCF)],
         ).createShader(Offset.zero & size),
     );
     final line = Paint()
-      ..color = T.brass.withValues(alpha: .11)
+      ..color = T.brass.withValues(alpha: .13)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.1
       ..strokeCap = StrokeCap.round;

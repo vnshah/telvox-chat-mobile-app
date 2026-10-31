@@ -70,6 +70,40 @@ class AppIcon extends StatelessWidget {
     Icons.lock_outline: CupertinoIcons.lock,
     Icons.shield_outlined: CupertinoIcons.shield,
     Icons.event_outlined: CupertinoIcons.calendar,
+    // Message kinds, actions and detail rows (Material Symbols on Android,
+    // their SF Symbols counterparts on iOS).
+    Icons.call_missed: CupertinoIcons.phone_down,
+    Icons.call_received: CupertinoIcons.phone_arrow_down_left,
+    Icons.call_made: CupertinoIcons.phone_arrow_up_right,
+    Icons.videocam_outlined: CupertinoIcons.videocam,
+    Icons.emoji_emotions_outlined: CupertinoIcons.smiley,
+    Icons.person_add_alt_1_outlined: CupertinoIcons.person_badge_plus,
+    Icons.chat_outlined: CupertinoIcons.chat_bubble,
+    Icons.chat: CupertinoIcons.chat_bubble_fill,
+    Icons.task_alt: CupertinoIcons.check_mark_circled,
+    Icons.replay: CupertinoIcons.arrow_counterclockwise,
+    Icons.sell_outlined: CupertinoIcons.tag,
+    Icons.sticky_note_2_outlined: CupertinoIcons.doc_plaintext,
+    Icons.perm_media_outlined: CupertinoIcons.photo_on_rectangle,
+    Icons.block: CupertinoIcons.nosign,
+    Icons.do_not_disturb_on_outlined: CupertinoIcons.minus_circle,
+    Icons.schedule: CupertinoIcons.time,
+    Icons.flag_outlined: CupertinoIcons.flag,
+    Icons.timelapse: CupertinoIcons.timer,
+    Icons.swap_horiz: CupertinoIcons.arrow_right_arrow_left,
+    Icons.logout: CupertinoIcons.square_arrow_right,
+    Icons.mail_outline: CupertinoIcons.mail,
+    Icons.visibility_outlined: CupertinoIcons.eye,
+    Icons.visibility_off_outlined: CupertinoIcons.eye_slash,
+    Icons.account_circle_outlined: CupertinoIcons.person_crop_circle,
+    Icons.info_outline: CupertinoIcons.info_circle,
+    Icons.group_outlined: CupertinoIcons.person_2,
+    Icons.group: CupertinoIcons.person_2_fill,
+    Icons.confirmation_number: CupertinoIcons.ticket_fill,
+    Icons.bolt: CupertinoIcons.bolt,
+    Icons.attach_file: CupertinoIcons.paperclip,
+    Icons.mic: CupertinoIcons.mic_fill,
+    Icons.send: CupertinoIcons.arrow_up,
   };
   @override
   Widget build(BuildContext context) => Icon(
@@ -489,7 +523,7 @@ class PlatformFilters extends StatelessWidget {
         Expanded(
           child: CupertinoSlidingSegmentedControl<String>(
             groupValue: selected,
-            backgroundColor: const Color(0xFFEDEDEF),
+            backgroundColor: const Color(0x24766C60),
             children: {
               for (final option in primary)
                 option: Padding(
@@ -677,17 +711,25 @@ class _AppTextFormFieldState extends State<AppTextFormField> {
             maxLength: widget.maxLength,
             placeholder: widget.decoration.hintText,
             placeholderStyle: Theme.of(context).textTheme.bodyMedium
-                ?.copyWith(color: const Color(0xFF85898C)),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ?.copyWith(color: const Color(0xFFA39A90)),
+            // iOS fields: borderless white rounded rows on the grouped
+            // background, 44 pt tall; red only when invalid.
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            prefix: widget.decoration.prefixIcon == null
+                ? null
+                : Padding(
+                    padding: const EdgeInsets.only(left: 12),
+                    child: widget.decoration.prefixIcon,
+                  ),
             suffix: widget.decoration.suffixIcon,
             decoration: BoxDecoration(
-              color: const Color(0xFFF2F2F5),
+              color: CupertinoColors.white,
               border: Border.all(
                 color: field.hasError
                     ? CupertinoColors.systemRed
-                    : const Color(0xFFE3E4E7),
+                    : const Color(0x00000000),
               ),
-              borderRadius: BorderRadius.circular(9),
+              borderRadius: BorderRadius.circular(10),
             ),
             onChanged: (value) {
               field.didChange(value);
@@ -1007,9 +1049,10 @@ PreferredSizeWidget platformAppBar(
   return CupertinoNavigationBar(
     middle: title,
     leading: leading,
-    backgroundColor: const Color(0xFAFCFCFC),
+    // Warm translucent bar and hairline, in the telvox palette.
+    backgroundColor: const Color(0xF2FAF8F4),
     border: const Border(
-      bottom: BorderSide(color: Color(0xFFE5E6E8), width: .5),
+      bottom: BorderSide(color: Color(0x293C3228), width: .5),
     ),
     trailing: actions == null
         ? null

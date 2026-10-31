@@ -366,22 +366,22 @@ void main() {
       'message_body': body,
       'type': ?type,
     }).text;
-    expect(call('Start calling...', 1), '📞 Voice call');
+    expect(call('Start calling...', 1), 'Voice call');
     expect(
       call('{"status":"COMPLETED","duration":65,"direction":"USER_INITIATED"}'),
-      '📞 Voice call · 1 min 5 secs',
+      'Voice call · 1 min 5 secs',
     );
     expect(
       call('{"status":"COMPLETED","duration":0,"direction":"USER_INITIATED"}'),
-      '📞 Missed voice call',
+      'Missed voice call',
     );
     expect(
       call(
         '{"status":"COMPLETED","duration":0,"direction":"BUSINESS_INITIATED"}',
       ),
-      '📞 Voice call · No answer',
+      'Voice call · No answer',
     );
-    expect(call('{"status":"FAILED"}', 1), '📞 Voice call · Failed');
+    expect(call('{"status":"FAILED"}', 1), 'Voice call · Failed');
   });
 
   testWidgets('stickers have no bubble and calls show the call row', (

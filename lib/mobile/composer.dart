@@ -347,7 +347,7 @@ class _ChatComposerState extends State<ChatComposer> {
                 AppIconButton(
                   tooltip: 'Quick replies',
                   onPressed: widget.onQuickReplies,
-                  icon: const Icon(Icons.bolt, color: T.brass),
+                  icon: const AppIcon(Icons.bolt, color: T.brass),
                 ),
                 Expanded(
                   child: AppTextField(
@@ -380,7 +380,7 @@ class _ChatComposerState extends State<ChatComposer> {
                   onPressed: widget.onAttach,
                   icon: Transform.rotate(
                     angle: -.6,
-                    child: const Icon(Icons.attach_file, color: T.brass),
+                    child: const AppIcon(Icons.attach_file, color: T.brass),
                   ),
                 ),
               ],
@@ -424,7 +424,7 @@ class _ChatComposerState extends State<ChatComposer> {
                       scale: animation,
                       child: FadeTransition(opacity: animation, child: child),
                     ),
-                    child: Icon(
+                    child: AppIcon(
                       sendMode ? Icons.send : Icons.mic,
                       key: ValueKey(sendMode),
                       color: Colors.white,
