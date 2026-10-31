@@ -22,6 +22,7 @@ void main() {
     expect(find.text('renav@studionorth.co'), findsNothing);
     expect(find.text('Create account'), findsNothing);
     await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
     session.dispose();
   });
   testWidgets('bound login opens real inbox and expiry clears navigation', (
@@ -53,6 +54,7 @@ void main() {
     expect(find.text('Sign in'), findsOneWidget);
     expect(find.text('Inbox'), findsNothing);
     await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
     session.dispose();
   });
   testWidgets(
@@ -119,6 +121,7 @@ void main() {
       expect(find.textContaining('Customer session expired'), findsOneWidget);
       expect(find.byTooltip('Delete for me'), findsNothing);
       await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
       session.dispose();
     },
   );

@@ -84,6 +84,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     load(quiet: messages.isNotEmpty);
     details();
     subscribeLive();
+    focus(true);
     widget.session.visibleConversation = visibleKey;
     widget.session.visibleContacts.add('contact:$contactId');
   }
@@ -138,11 +139,46 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       load(quiet: true);
       details();
+      focus(true);
+    } else if (state == AppLifecycleState.paused) {
+      focus(false);
     }
+  }
+
+  bool focused = false;
+  DateTime? typedAt;
+
+  /// Tells the server this chat is open on the phone (as the web inbox does),
+  /// so messages arriving while it is on screen are not counted as unread and
+  /// opening it marks it read; leaving or backgrounding the app releases it.
+  void focus(bool open) {
+    if (widget.ticketId != null || open == focused) return;
+    focused = open;
+    widget.session.api
+        .post('inbox/conversation/focus', {
+          open ? 'contact_id' : 'previous_contact_id': contactId,
+        })
+        .catchError((_) => <String, dynamic>{});
+  }
+
+  /// WhatsApp shows the customer "typing…" for up to 25 seconds per
+  /// indicator, so it is re-sent at most every 20 seconds while typing.
+  void typing() {
+    if (!policy.canSend) return;
+    final now = DateTime.now();
+    if (typedAt != null &&
+        now.difference(typedAt!) < const Duration(seconds: 20)) {
+      return;
+    }
+    typedAt = now;
+    widget.session.api
+        .post('inbox/typing', {'contact_id': contactId})
+        .catchError((_) => <String, dynamic>{});
   }
 
   @override
   void dispose() {
+    focus(false);
     if (widget.session.visibleConversation == visibleKey) {
       widget.session.visibleConversation = null;
     }
@@ -389,6 +425,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       mobileNotice(context, policy.reason!);
       return;
     }
+    // A sent message ends WhatsApp's indicator; typing again shows it again.
+    typedAt = null;
     final text = composer.text.trim();
     if (text.isEmpty && attachment == null) return;
     final item = PendingSend({
@@ -934,6 +972,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                   onAttach: () => attachMenu(permission.canTemplate),
                   onQuickReplies: quickReplies,
                   onVoiceNote: sendVoiceNote,
+                  onTyping: typing,
                 ),
               ),
             ],

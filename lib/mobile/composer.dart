@@ -142,6 +142,7 @@ class ChatComposer extends StatefulWidget {
     required this.onAttach,
     required this.onQuickReplies,
     required this.onVoiceNote,
+    this.onTyping,
     this.enabled = true,
     this.busy = false,
     this.replyAuthor,
@@ -158,6 +159,9 @@ class ChatComposer extends StatefulWidget {
   final Attachment? attachment;
   final VoidCallback onSend, onAttach, onQuickReplies;
   final ValueChanged<Attachment> onVoiceNote;
+
+  /// Called on each edit with text, so the customer can be shown "typing…".
+  final VoidCallback? onTyping;
   final VoiceRecorder? recorder;
   @override
   State<ChatComposer> createState() => _ChatComposerState();
@@ -356,6 +360,8 @@ class _ChatComposerState extends State<ChatComposer> {
                       if (v == '/') {
                         widget.controller.clear();
                         widget.onQuickReplies();
+                      } else if (v.trim().isNotEmpty) {
+                        widget.onTyping?.call();
                       }
                     },
                     decoration: const InputDecoration(

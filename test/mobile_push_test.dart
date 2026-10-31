@@ -155,6 +155,7 @@ void main() {
     expect(session.visibleConversation, 'contact:12');
     expect(session.visibleContacts, {'contact:12'});
     await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
     session.dispose();
   });
 }

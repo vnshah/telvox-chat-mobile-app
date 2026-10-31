@@ -255,6 +255,7 @@ void main() {
       findsOneWidget,
     );
     await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
     session.realtime.stop();
     await tester.pump();
     session.dispose();

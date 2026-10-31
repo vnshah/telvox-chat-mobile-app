@@ -69,6 +69,7 @@ void main() {
     expect(find.text('Templates'), findsNothing);
     expect(find.byType(LiveChat), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
     session.dispose();
   });
 
@@ -97,6 +98,7 @@ void main() {
     expect(calls['inbox/messages'], 1);
     expect(find.byType(LinearProgressIndicator), findsNothing);
     await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
     session.dispose();
   });
 
@@ -125,6 +127,7 @@ void main() {
       expect(find.byTooltip('Hold to record a voice note'), findsOneWidget);
       await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
       session.dispose();
     },
   );
@@ -173,6 +176,7 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing);
     await tester.pumpAndSettle();
     await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
     session.dispose();
   });
 
@@ -245,6 +249,7 @@ void main() {
     expect(find.text('Sam'), findsOneWidget);
     expect(find.text('No messages yet'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
     session.dispose();
   });
 
@@ -299,6 +304,46 @@ void main() {
     expect(find.text('PS'), findsOneWidget);
     expect(find.text('UNASSIGNED'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    session.dispose();
+  });
+
+  testWidgets('an open chat holds focus and typing shows the customer typing', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    final bodies = <Object?>[];
+    final api = fakeApi((r, h) {
+      calls.add(r.path);
+      if (r.path == 'inbox/conversation/focus') bodies.add(r.data);
+      answer(r, h, switch (r.path) {
+        'inbox/getContactDetails' => {'success': true, 'data': details()},
+        'inbox/messages' => {
+          'success': true,
+          'data': sampleMessages,
+          'meta': {'has_more': false},
+        },
+        _ => {'success': true},
+      });
+    });
+    final session = MobileSession(api, MemoryStore())..user = {'id': 1};
+    await tester.pumpWidget(app(LiveChat(session, contact)));
+    await tester.pumpAndSettle();
+    expect(bodies, [
+      {'contact_id': 12},
+    ]);
+
+    await tester.enterText(find.byType(TextField), 'H');
+    await tester.enterText(find.byType(TextField), 'He');
+    await tester.enterText(find.byType(TextField), 'Hel');
+    await tester.pumpAndSettle();
+    expect(calls.where((p) => p == 'inbox/typing'), hasLength(1));
+
+    await tester.pumpWidget(const SizedBox());
+
+    await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
+    expect(bodies.last, {'previous_contact_id': 12});
     session.dispose();
   });
 }

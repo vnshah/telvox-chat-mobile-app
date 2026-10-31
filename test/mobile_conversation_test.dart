@@ -226,6 +226,7 @@ void main() {
       expect(find.textContaining('Messaging window closed'), findsOneWidget);
       expect(sends, 0);
       await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
       session.dispose();
     },
   );
@@ -284,6 +285,7 @@ void main() {
         findsOneWidget,
       );
       await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
       session.dispose();
     },
   );
@@ -334,6 +336,7 @@ void main() {
         'build/review/live-chat-${platform.name}.png',
       );
       await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
       session.dispose();
     }
   });
