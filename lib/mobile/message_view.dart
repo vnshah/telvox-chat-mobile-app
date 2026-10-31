@@ -1,3 +1,8 @@
+import 'dart:io';
+import 'dart:math' as math;
+
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
@@ -10,6 +15,7 @@ import 'api.dart';
 import 'media.dart';
 import 'models.dart';
 import 'message_content.dart';
+import 'voice_waveform.dart';
 
 /// [contactName] names the quoted author: a customer usually quotes the
 /// business, and an agent quotes the customer.
@@ -118,7 +124,7 @@ class LiveMessageView extends StatelessWidget {
       'document' when file != null => MessageBubble(
         message: bare(c.text),
         first: first,
-        maxWidth: width,
+        maxWidth: 250 + 17,
         contentBefore: DocumentCard(
           file,
           outgoing: m.outgoing,
@@ -128,7 +134,8 @@ class LiveMessageView extends StatelessWidget {
       'audio' when file != null => MessageBubble(
         message: bare(''),
         first: first,
-        maxWidth: width,
+        maxWidth: 252 + 17,
+        showStamp: false,
         contentBefore: AudioNote(
           file,
           voice:
@@ -138,6 +145,7 @@ class LiveMessageView extends StatelessWidget {
                 '.ogg',
               ),
           outgoing: m.outgoing,
+          stamp: presentation,
         ),
       ),
       'location' when location['latitude'] != null => MessageBubble(
@@ -174,7 +182,8 @@ class LiveMessageView extends StatelessWidget {
                             deliveryStatus: presentation.deliveryStatus,
                           ),
                           first: first,
-                          contentBefore: CallTile(call),
+                          showStamp: false,
+                          contentBefore: CallTile(call, stamp: presentation),
                         )
                       : MessageBubble(
                           message: presentation,
@@ -396,17 +405,19 @@ class StickerView extends StatelessWidget {
 /// A call row as WhatsApp shows it: round icon with the call's direction,
 /// "Voice call" or "Missed voice call", and the duration or outcome.
 class CallTile extends StatelessWidget {
-  const CallTile(this.call, {super.key});
+  const CallTile(this.call, {super.key, this.stamp});
   final VoiceCall call;
+
+  /// The time and ticks, on the call row's last line as WhatsApp places it.
+  final Message? stamp;
   @override
   Widget build(BuildContext context) {
     final colour = call.missed ? T.danger : T.green;
     return ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: 190),
+      constraints: const BoxConstraints(minWidth: 220, maxWidth: 240),
       child: Padding(
         padding: const EdgeInsets.only(top: 3, bottom: 2),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               width: 40,
@@ -426,7 +437,7 @@ class CallTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 10),
-            Flexible(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -447,6 +458,14 @@ class CallTile extends StatelessWidget {
                 ],
               ),
             ),
+            if (stamp != null) ...[
+              const SizedBox(width: 10),
+              // Level with the bottom of the call icon.
+              Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: MessageStamp(stamp!),
+              ),
+            ],
           ],
         ),
       ),
@@ -668,23 +687,74 @@ class DocumentCard extends StatelessWidget {
   }
 }
 
-/// A voice note or audio file that plays inside its bubble.
+/// A voice note's file, fetched once: its waveform, length, and a local copy
+/// to play from. The file is public media, so no API credentials go with it.
+class VoiceNoteFile {
+  const VoiceNoteFile(this.file, this.waveform);
+  final File file;
+  final VoiceWaveform? waveform;
+
+  static final _loaded = <String, Future<VoiceNoteFile>>{};
+
+  /// Replaced in tests, which have no network.
+  @visibleForTesting
+  static Future<Uint8List> Function(Uri url) fetch = (url) async {
+    final response = await Dio().getUri<List<int>>(
+      url,
+      options: Options(responseType: ResponseType.bytes),
+    );
+    return Uint8List.fromList(response.data ?? const []);
+  };
+
+  static Future<VoiceNoteFile> of(Uri url) =>
+      _loaded[url.toString()] ??= _load(url).catchError((Object e) {
+        _loaded.remove(url.toString());
+        throw e;
+      });
+
+  static Future<VoiceNoteFile> _load(Uri url) async {
+    final bytes = await fetch(url);
+    final file = File(
+      '${Directory.systemTemp.path}/voice-${url.toString().hashCode.toUnsigned(32)}.ogg',
+    );
+    await file.writeAsBytes(bytes, flush: true);
+    return VoiceNoteFile(file, VoiceWaveform.read(bytes));
+  }
+}
+
+/// A voice note or audio file that plays inside its bubble, laid out as
+/// WhatsApp does: the voice note's waveform, its length and the time on one
+/// line beneath it. An audio file shows a plain track instead of a waveform.
 class AudioNote extends StatefulWidget {
   const AudioNote(
     this.media, {
     super.key,
     required this.voice,
     required this.outgoing,
+    required this.stamp,
   });
   final MessageMedia media;
   final bool voice, outgoing;
+  final Message stamp;
   @override
   State<AudioNote> createState() => _AudioNoteState();
 }
 
 class _AudioNoteState extends State<AudioNote> {
   VideoPlayerController? player;
+  VoiceNoteFile? note;
   bool loading = false, failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // A voice note is a few kilobytes: fetched up front for its waveform.
+    if (widget.voice) {
+      VoiceNoteFile.of(widget.media.url).then((loaded) {
+        if (mounted) setState(() => note = loaded);
+      }, onError: (_) {});
+    }
+  }
 
   @override
   void dispose() {
@@ -692,7 +762,7 @@ class _AudioNoteState extends State<AudioNote> {
     super.dispose();
   }
 
-  /// Loaded on first play, so a long chat does not open a stream per note.
+  /// Loaded on first play, so a long chat does not open a player per note.
   Future<void> toggle() async {
     final current = player;
     if (current != null && current.value.isInitialized) {
@@ -703,7 +773,17 @@ class _AudioNoteState extends State<AudioNote> {
       loading = true;
       failed = false;
     });
-    final controller = VideoPlayerController.networkUrl(widget.media.url);
+    VoiceNoteFile? local = note;
+    if (widget.voice && local == null) {
+      try {
+        local = await VoiceNoteFile.of(widget.media.url);
+      } catch (_) {
+        // Fall back to streaming it.
+      }
+    }
+    final controller = local != null
+        ? VideoPlayerController.file(local.file)
+        : VideoPlayerController.networkUrl(widget.media.url);
     try {
       await controller.initialize();
       if (!mounted) {
@@ -712,11 +792,17 @@ class _AudioNoteState extends State<AudioNote> {
       }
       controller.addListener(() {
         final v = controller.value;
-        if (v.isInitialized && !v.isPlaying && v.position >= v.duration) {
-          controller.seekTo(Duration.zero);
+        if (v.isInitialized &&
+            !v.isPlaying &&
+            v.duration > Duration.zero &&
+            v.position >= v.duration) {
+          controller
+            ..pause()
+            ..seekTo(Duration.zero);
         }
       });
       setState(() {
+        note = local ?? note;
         player = controller;
         loading = false;
       });
@@ -732,121 +818,18 @@ class _AudioNoteState extends State<AudioNote> {
     }
   }
 
+  void seek(double fraction, Duration total) {
+    final current = player;
+    if (current == null || !current.value.isInitialized) return;
+    current.seekTo(total * fraction.clamp(0.0, 1.0));
+  }
+
   static String clock(Duration d) =>
       '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
     final current = player;
-    Widget body(VideoPlayerValue? v) {
-      final playing = v?.isPlaying ?? false;
-      final total = v?.duration ?? Duration.zero;
-      final position = v?.position ?? Duration.zero;
-      final progress = total.inMilliseconds == 0
-          ? 0.0
-          : (position.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
-      return SizedBox(
-        width: 240,
-        child: Row(
-          children: [
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                CircleAvatar(
-                  radius: 21,
-                  backgroundColor: widget.voice
-                      ? T.selected
-                      : const Color(0xFFFF7F21),
-                  child: Icon(
-                    widget.voice ? Icons.person : Icons.headphones,
-                    color: widget.voice ? T.forest : Colors.white,
-                  ),
-                ),
-                if (widget.voice)
-                  const Positioned(
-                    right: -3,
-                    bottom: -2,
-                    child: Icon(Icons.mic, size: 17, color: T.green),
-                  ),
-              ],
-            ),
-            AppIconButton(
-              tooltip: playing ? 'Pause' : 'Play',
-              onPressed: loading ? null : toggle,
-              icon: loading
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      failed
-                          ? Icons.error_outline
-                          : playing
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                      size: 32,
-                      color: failed ? T.danger : T.secondary,
-                    ),
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(height: 8),
-                  LayoutBuilder(
-                    builder: (context, box) => Stack(
-                      alignment: Alignment.centerLeft,
-                      children: [
-                        Container(
-                          height: 3,
-                          decoration: BoxDecoration(
-                            color: T.control,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ),
-                        Container(
-                          height: 3,
-                          width: box.maxWidth * progress,
-                          decoration: BoxDecoration(
-                            color: T.green,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ),
-                        Positioned(
-                          left: (box.maxWidth - 11) * progress,
-                          child: Container(
-                            width: 11,
-                            height: 11,
-                            decoration: const BoxDecoration(
-                              color: T.green,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    failed
-                        ? 'Could not play'
-                        : clock(
-                            playing || position > Duration.zero
-                                ? position
-                                : total,
-                          ),
-                    style: const TextStyle(fontSize: 11, color: T.muted),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
     return current == null
         ? body(null)
         : ValueListenableBuilder<VideoPlayerValue>(
@@ -854,6 +837,187 @@ class _AudioNoteState extends State<AudioNote> {
             builder: (_, value, _) => body(value),
           );
   }
+
+  Widget body(VideoPlayerValue? v) {
+    final playing = v?.isPlaying ?? false;
+    final known = note?.waveform?.duration ?? Duration.zero;
+    final total = (v?.duration ?? Duration.zero) > Duration.zero
+        ? v!.duration
+        : known;
+    final position = v?.position ?? Duration.zero;
+    final progress = total.inMilliseconds == 0
+        ? 0.0
+        : (position.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
+    final avatar = Stack(
+      key: const ValueKey('audio-avatar'),
+      clipBehavior: Clip.none,
+      children: [
+        CircleAvatar(
+          radius: 22,
+          backgroundColor: widget.voice ? T.selected : const Color(0xFFFF7F21),
+          child: Icon(
+            widget.voice ? Icons.person : Icons.headphones,
+            color: widget.voice ? T.forest : Colors.white,
+          ),
+        ),
+        if (widget.voice)
+          Positioned(
+            right: widget.outgoing ? null : -4,
+            left: widget.outgoing ? -4 : null,
+            bottom: -3,
+            child: const Icon(Icons.mic, size: 18, color: T.green),
+          ),
+      ],
+    );
+    final button = SizedBox(
+      width: 40,
+      height: 40,
+      child: AppIconButton(
+        tooltip: playing ? 'Pause' : 'Play',
+        onPressed: loading ? null : toggle,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+        icon: loading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(
+                failed
+                    ? Icons.error_outline
+                    : playing
+                    ? Icons.pause_rounded
+                    : Icons.play_arrow_rounded,
+                size: 34,
+                color: failed ? T.danger : T.secondary,
+              ),
+      ),
+    );
+    final bars = note?.waveform?.bars;
+    final track = LayoutBuilder(
+      builder: (context, box) {
+        void at(Offset local) => seek(local.dx / box.maxWidth, total);
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (d) => at(d.localPosition),
+          onHorizontalDragUpdate: (d) => at(d.localPosition),
+          child: SizedBox(
+            height: 26,
+            width: box.maxWidth,
+            child: CustomPaint(
+              key: ValueKey(widget.voice ? 'voice-waveform' : 'audio-track'),
+              painter: _TrackPainter(
+                // A voice note still loading shows a flat waveform.
+                bars: widget.voice ? (bars ?? List.filled(32, .14)) : null,
+                progress: progress,
+                played: widget.outgoing ? T.green : T.blue,
+                rest: T.muted.withValues(alpha: .45),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    final label = failed
+        ? 'Could not play'
+        : playing || position > Duration.zero
+        ? clock(position)
+        : total > Duration.zero
+        ? clock(total)
+        : widget.voice
+        ? ''
+        : 'Audio';
+    return SizedBox(
+      width: 252,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (!widget.outgoing) ...[avatar, const SizedBox(width: 6)],
+          button,
+          const SizedBox(width: 2),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 10),
+                track,
+                const SizedBox(height: 4),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: failed ? T.danger : T.muted,
+                      ),
+                    ),
+                    const Spacer(),
+                    MessageStamp(widget.stamp),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (widget.outgoing) ...[const SizedBox(width: 8), avatar],
+        ],
+      ),
+    );
+  }
+}
+
+/// A voice note's waveform, or an audio file's plain track, filled up to the
+/// play position, with the position's dot.
+class _TrackPainter extends CustomPainter {
+  _TrackPainter({
+    required this.bars,
+    required this.progress,
+    required this.played,
+    required this.rest,
+  });
+  final List<double>? bars;
+  final double progress;
+  final Color played, rest;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final mid = size.height / 2;
+    final split = size.width * progress;
+    final values = bars;
+    if (values == null) {
+      final line = Paint()
+        ..strokeWidth = 3
+        ..strokeCap = StrokeCap.round;
+      canvas
+        ..drawLine(Offset(0, mid), Offset(size.width, mid), line..color = rest)
+        ..drawLine(Offset(0, mid), Offset(split, mid), line..color = played);
+    } else {
+      final step = size.width / values.length;
+      final bar = Paint()
+        ..strokeWidth = math.min(3, step * .6)
+        ..strokeCap = StrokeCap.round;
+      for (var i = 0; i < values.length; i++) {
+        final x = step * (i + .5);
+        final half = math.max(1.5, values[i] * (size.height / 2 - 1));
+        bar.color = x <= split ? played : rest;
+        canvas.drawLine(Offset(x, mid - half), Offset(x, mid + half), bar);
+      }
+    }
+    canvas.drawCircle(
+      Offset(split.clamp(6, size.width - 6), mid),
+      6,
+      Paint()..color = played,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrackPainter old) =>
+      old.progress != progress ||
+      old.bars != bars ||
+      old.played != played ||
+      old.rest != rest;
 }
 
 /// A shared location: a map-styled tile with the place, opening Maps on tap.

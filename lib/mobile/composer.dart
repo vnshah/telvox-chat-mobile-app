@@ -28,7 +28,7 @@ class DeviceVoiceRecorder implements VoiceRecorder {
   Future<bool> start() async {
     if (!await _recorder.hasPermission()) return false;
     final path =
-        '${Directory.systemTemp.path}/voice-${DateTime.now().millisecondsSinceEpoch}.m4a';
+        '${Directory.systemTemp.path}/voice-note-${DateTime.now().millisecondsSinceEpoch}.m4a';
     // Mono AAC: small, and the server re-encodes it to WhatsApp's Ogg/Opus.
     await _recorder.start(
       const RecordConfig(numChannels: 1, sampleRate: 16000, bitRate: 32000),

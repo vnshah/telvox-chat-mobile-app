@@ -74,33 +74,7 @@ class _MessageText extends StatelessWidget {
         (starred ? 13 : 0);
     final stampHeight = math.max(14.0, painter.height);
     painter.dispose();
-    final stamp = Row(
-      key: const ValueKey('message-receipt'),
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (starred)
-          const Padding(
-            padding: EdgeInsets.only(right: 3),
-            child: AppIcon(Icons.star_rounded, size: 10, color: T.brass),
-          ),
-        Text(time, style: stampStyle),
-        if (message.out)
-          Padding(
-            padding: const EdgeInsets.only(left: 3),
-            child: AppIcon(
-              switch (message.deliveryStatus) {
-                0 => Icons.schedule,
-                2 || 3 => Icons.done_all,
-                4 || 5 => Icons.error_outline,
-                _ => message.read ? Icons.done_all : Icons.check,
-              },
-              size: 15,
-              color: message.read ? T.blue : T.muted,
-              semanticLabel: message.read ? 'Read' : 'Sent',
-            ),
-          ),
-      ],
-    );
+    final stamp = MessageStamp(message, starred: starred);
     if (metadataOnly) {
       return Align(alignment: Alignment.centerRight, child: stamp);
     }
@@ -475,6 +449,51 @@ class _MessageActionsLayout extends MultiChildLayoutDelegate {
   @override
   bool shouldRelayout(_MessageActionsLayout oldDelegate) =>
       anchor != oldDelegate.anchor || out != oldDelegate.out;
+}
+
+/// The time and delivery ticks in a bubble's corner. Public so content that
+/// lays out its own last line (a voice note, a call) can place it there, as
+/// WhatsApp does, instead of on a row of its own.
+class MessageStamp extends StatelessWidget {
+  const MessageStamp(this.message, {super.key, this.starred = false});
+  final Message message;
+  final bool starred;
+  @override
+  Widget build(BuildContext context) {
+    final style = DefaultTextStyle.of(context).style.copyWith(
+      fontSize: 10.5,
+      height: 1.15,
+      fontWeight: FontWeight.w400,
+      color: T.muted,
+    );
+    return Row(
+      key: const ValueKey('message-receipt'),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (starred)
+          const Padding(
+            padding: EdgeInsets.only(right: 3),
+            child: AppIcon(Icons.star_rounded, size: 10, color: T.brass),
+          ),
+        Text(message.time == 'Now' ? 'now' : message.time, style: style),
+        if (message.out)
+          Padding(
+            padding: const EdgeInsets.only(left: 3),
+            child: AppIcon(
+              switch (message.deliveryStatus) {
+                0 => Icons.schedule,
+                2 || 3 => Icons.done_all,
+                4 || 5 => Icons.error_outline,
+                _ => message.read ? Icons.done_all : Icons.check,
+              },
+              size: 15,
+              color: message.read ? T.blue : T.muted,
+              semanticLabel: message.read ? 'Read' : 'Sent',
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 class MessageBubble extends StatelessWidget {

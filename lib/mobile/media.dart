@@ -143,6 +143,16 @@ Uri? mediaUri(Object? value, String apiBase) {
       resolved.userInfo.isNotEmpty) {
     return null;
   }
+  // A sent voice note's link is the route WhatsApp fetches it from, which
+  // older servers refused for the phone app's file names. The same file is on
+  // the public disk, which the phone plays as well.
+  final voice = RegExp(r'^/media/voice-notes/([^/]+)/([^/]+)/([^/]+\.ogg)$')
+      .firstMatch(resolved.path);
+  if (voice != null && resolved.host == base.host) {
+    return resolved.replace(
+      path: '/storage/${voice[1]}/${voice[2]}/audio/${voice[3]}',
+    );
+  }
   return resolved;
 }
 
