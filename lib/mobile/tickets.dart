@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../ui/theme.dart';
 import 'api.dart';
 import 'chat.dart' show LiveChat;
-import 'contact_actions.dart' show MediaGalleryPage;
+import 'shared_media.dart' show MediaGalleryPage;
 import 'detail_layout.dart';
 import 'editors.dart';
 import 'models.dart' show MobileClock, formatPhone;
@@ -405,7 +405,7 @@ class _TicketPageState extends State<TicketPage> {
           children: [
             DetailRow(
               icon: Icons.perm_media_outlined,
-              label: 'Ticket media',
+              label: 'Media, documents and links',
               onTap: () => openPage(
                 context,
                 MediaGalleryPage(widget.session, ticketId: widget.id),

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'local_cache.dart';
 import 'screens.dart';
 
 class MobileApplication extends StatefulWidget {
@@ -17,7 +18,11 @@ class MobileApplication extends StatefulWidget {
 
 class _MobileApplicationState extends State<MobileApplication> {
   late final session =
-      widget.session ?? MobileSession(MobileApi(), SecureSessionStore());
+      widget.session ??
+      (() {
+        final store = SecureSessionStore();
+        return MobileSession(MobileApi(), store, cache: SqlLocalCache(store));
+      })();
   @override
   void initState() {
     super.initState();

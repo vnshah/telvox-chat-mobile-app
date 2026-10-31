@@ -21,6 +21,15 @@ class MobileClock {
     }
   }
 
+  /// The instant in the display timezone, for grouping by day or month.
+  DateTime? local(Object? raw) {
+    _ensure();
+    final instant = MobileClock.instant(raw);
+    return instant == null
+        ? null
+        : tz.TZDateTime.from(instant, tz.getLocation(timezone));
+  }
+
   String time(Object? raw) {
     _ensure();
     final instant = MobileClock.instant(raw);

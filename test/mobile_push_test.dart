@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:telvox_chat_mobile_app/mobile/api.dart';
+import 'package:telvox_chat_mobile_app/mobile/app.dart';
 import 'package:telvox_chat_mobile_app/mobile/chat.dart';
 import 'package:telvox_chat_mobile_app/mobile/push.dart';
 import 'package:telvox_chat_mobile_app/mobile/screens.dart';
@@ -158,4 +160,67 @@ void main() {
     await tester.pumpAndSettle();
     session.dispose();
   });
+  testWidgets(
+    'a notification for another number switches to it and opens that chat there',
+    (tester) async {
+      final push = FakePush();
+      final asked = <String, String>{};
+      final store = MemoryStore();
+      // A signed-in phone on number 7, as the app restores it on launch.
+      await store.write(
+        'session.dev.example.test',
+        jsonEncode({'token': 'token', 'waba_id': 7}),
+      );
+      final session = MobileSession(
+        fakeApi((r, h) {
+          asked[r.path] = '${r.headers['X-Waba-User-Id']}';
+          answer(r, h, switch (r.path) {
+            'inbox/getContactDetails' => {
+              'success': true,
+              'data': {
+                ...details(),
+                'contact': {
+                  ...object(details()['contact']),
+                  'id': 12,
+                  'profile_name': 'Rahil',
+                  'wa_id': '919724105194',
+                },
+              },
+            },
+            'inbox/messages' => {
+              'success': true,
+              'data': sampleMessages,
+              'meta': {'has_more': false},
+            },
+            'inbox/contacts' => <Object>[],
+            'me' => {'id': 1},
+            'config' => {'inbox': {}, 'capabilities': {}},
+            _ => {'success': true},
+          });
+        }),
+        store,
+        pushTransport: push,
+      );
+      await tester.pumpWidget(MobileApplication(session: session));
+      await tester.pumpAndSettle();
+      expect(session.api.wabaId, 7);
+      push.taps.add(
+        const PushMessage(
+          data: {'type': 'message', 'waba_user_id': '9', 'contact_id': '12'},
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(session.api.wabaId, 9);
+      expect(find.byType(LiveChat), findsOneWidget);
+      expect(find.text('Rahil'), findsOneWidget);
+      // Every read for that chat was made as the number it arrived on.
+      expect(asked['config'], '9');
+      expect(asked['inbox/getContactDetails'], '9');
+      expect(asked['inbox/messages'], '9');
+      expect(session.pendingOpen, isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      session.dispose();
+    },
+  );
 }

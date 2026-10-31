@@ -14,6 +14,7 @@ import 'models.dart';
 import 'screens.dart';
 import 'media.dart';
 import 'composer.dart';
+import 'local_cache.dart';
 import 'contact_actions.dart';
 import 'message_content.dart' show readableText;
 import 'templates.dart';
@@ -66,6 +67,80 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   // live event that arrived mid-request, so it is fetched right after.
   bool busy = false, more = false, loadedOnce = false, again = false;
   int? oldest;
+
+  /// The kept copy was too old to catch up change by change: the next read
+  /// starts over from the newest page instead, so history never has a gap.
+  bool replaceNext = false;
+
+  /// Beyond this, catching up change by change costs more than starting over.
+  static const catchUpLimit = Duration(days: 3);
+
+  /// Where this conversation's next sync starts, kept with its messages.
+  Json get cursor => {
+    'sync': sync,
+    'oldest': oldest,
+    'more': more,
+    'synced_at': DateTime.now().toUtc().toIso8601String(),
+  };
+
+  /// Renders from this run's memory or the phone's copy at once, then asks
+  /// the server only for what changed since the saved cursor.
+  Future<void> openConversation() async {
+    final memory = widget.session.viewCache[cacheKey] as List<ApiMessage>?;
+    var saved = memory == null
+        ? null
+        : CachedConversation(
+            const [],
+            object(widget.session.viewCache['cursor:$cacheKey']),
+          );
+    if (memory != null) {
+      messages = memory;
+    } else {
+      try {
+        saved = await widget.session.cache.conversation(cacheKey);
+      } catch (_) {}
+      if (!mounted) return;
+      if (saved != null && saved.messages.isNotEmpty) {
+        setState(() => messages = saved!.messages.map(ApiMessage.new).toList());
+      }
+    }
+    final c = saved?.cursor ?? const <String, dynamic>{};
+    final syncedAt = DateTime.tryParse('${c['synced_at'] ?? ''}');
+    if (messages.isNotEmpty && saved != null) {
+      if (syncedAt == null ||
+          DateTime.now().toUtc().difference(syncedAt) > catchUpLimit) {
+        replaceNext = true;
+      } else {
+        sync = c['sync'] as String?;
+        // Older history continues from the oldest message actually kept.
+        oldest = number(messages.first.id);
+        // The phone keeps only the newest messages; older ones page in.
+        more =
+            c['more'] == true ||
+            messages.length >= cacheMessagesPerConversation;
+        loadedOnce = true;
+      }
+    }
+    load(quiet: messages.isNotEmpty);
+  }
+
+  /// Keeps what the server just returned, for this run and the next launch,
+  /// and moves this conversation's inbox row to its latest message.
+  void remember([List<ApiMessage> rows = const [], bool replace = false]) {
+    if (rows.isNotEmpty) announce();
+    final c = cursor;
+    widget.session.viewCache[cacheKey] = messages;
+    widget.session.viewCache['cursor:$cacheKey'] = c;
+    widget.session.cache
+        .putMessages(
+          cacheKey,
+          [for (final m in rows) m.json],
+          c,
+          replace: replace,
+        )
+        .catchError((_) {});
+  }
+
   final live = <RealtimeSubscription>[];
   Timer? liveDebounce;
   late final repository = InboxRepository(widget.session.api);
@@ -76,13 +151,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     scroll.addListener(() => scrolledUp.value = scroll.offset > 400);
-    messages = (widget.session.viewCache[cacheKey] as List<ApiMessage>?) ?? [];
     final cached = widget.session.viewCache[detailKey] as List<Json?>?;
     if (cached != null) {
       detail = cached.first;
       ticket = cached.last;
     }
-    load(quiet: messages.isNotEmpty);
+    openConversation();
     details();
     subscribeLive();
     focus(true);
@@ -323,11 +397,15 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       if (!older && meta['sync_from'] != null) sync = '${meta['sync_from']}';
       // Many refreshes change nothing (tickets re-send the latest page);
       // rebuilding and re-sorting every bubble then is pure jank.
-      if (!changed && loadedOnce && error == null) return;
+      final replace = replaceNext && !older;
+      if (!changed && loadedOnce && error == null && !replace) {
+        remember();
+        return;
+      }
       final wasLoaded = loadedOnce;
       setState(() {
-        messages = mergeMessages(messages, incoming);
-        widget.session.viewCache[cacheKey] = messages;
+        messages = mergeMessages(replace ? [] : messages, incoming);
+        replaceNext = false;
         final ids = incoming
             .map((m) => m.tempId)
             .where((id) => id.isNotEmpty)
@@ -342,6 +420,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         loadedOnce = true;
         error = null;
       });
+      remember(replace ? messages : incoming, replace);
       final arrived = fresh.where((m) => !m.outgoing);
       if (arrived.isNotEmpty) {
         markRead();
@@ -461,6 +540,27 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     deliver(item);
   }
 
+  /// Tells the inbox list this chat's newest message, whoever sent it (the
+  /// agent, the customer, the bot, an automation or a colleague on the web);
+  /// it is read here, so nothing is unread.
+  void announce() {
+    if (widget.ticketId != null) return;
+    ApiMessage? last;
+    for (final m in messages.reversed) {
+      if (!m.log) {
+        last = m;
+        break;
+      }
+    }
+    if (last == null) return;
+    widget.session.conversationActivity.value = {
+      'id': contactId,
+      'last_message': last.json,
+      'last_message_date': last.json['created_at'],
+      'unread_message_count': 0,
+    };
+  }
+
   /// The reply quote a sent message will carry, so its bubble does not change
   /// shape when the server's copy arrives.
   Json? quoteOf(ApiMessage? m) => m == null || m.wamid.isEmpty
@@ -499,6 +599,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           pending.remove(item);
         }
       });
+      final saved = object(result['sent_message']);
+      if (saved.isNotEmpty) remember([ApiMessage(saved)]);
       load(quiet: true);
     } catch (e) {
       if (mounted) {

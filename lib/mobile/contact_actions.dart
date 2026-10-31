@@ -9,6 +9,7 @@ import 'media.dart';
 import 'message_content.dart' show readableText;
 import 'models.dart' show MobileClock, formatPhone;
 import 'screens.dart' show failure, mobileNotice, openPage;
+import 'shared_media.dart';
 
 class ContactActionsPage extends StatefulWidget {
   const ContactActionsPage(this.session, this.id, {super.key, this.initial});
@@ -358,14 +359,23 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
                 ContactFieldsPage(widget.session, widget.id),
               ),
             ),
-            DetailRow(
-              icon: Icons.perm_media_outlined,
-              label: 'Media, docs and links',
-              onTap: () => openPage(
-                context,
-                MediaGalleryPage(widget.session, contactId: widget.id),
+            for (final (kind, icon) in [
+              (SharedKind.media, Icons.photo_library_outlined),
+              (SharedKind.documents, Icons.description_outlined),
+              (SharedKind.links, Icons.link),
+            ])
+              DetailRow(
+                icon: icon,
+                label: kind.label,
+                onTap: () => openPage(
+                  context,
+                  MediaGalleryPage(
+                    widget.session,
+                    contactId: widget.id,
+                    initial: kind,
+                  ),
+                ),
               ),
-            ),
           ],
         ),
         if (can('dnd') || can('block'))
@@ -542,100 +552,5 @@ class _ContactFieldsPageState extends State<ContactFieldsPage> {
                 ),
             ],
           ),
-  );
-}
-
-class MediaGalleryPage extends StatefulWidget {
-  const MediaGalleryPage(
-    this.session, {
-    super.key,
-    this.contactId,
-    this.ticketId,
-  });
-  final MobileSession session;
-  final int? contactId, ticketId;
-  @override
-  State<MediaGalleryPage> createState() => _MediaGalleryPageState();
-}
-
-class _MediaGalleryPageState extends State<MediaGalleryPage> {
-  String type = 'media';
-  int serial = 0;
-  List<Json>? items;
-  String? error;
-  @override
-  void initState() {
-    super.initState();
-    load();
-  }
-
-  Future<void> load() async {
-    final request = ++serial;
-    setState(() {
-      items = null;
-      error = null;
-    });
-    try {
-      final r = widget.ticketId == null
-          ? await widget.session.api.post('inbox/getMediaData', {
-              'contact_id': widget.contactId,
-              'type': type,
-            })
-          : await widget.session.api.post(
-              'inbox/tickets/${widget.ticketId}/media-data',
-              {'type': type},
-            );
-      if (mounted && request == serial) setState(() => items = rows(r['data']));
-    } catch (e) {
-      if (mounted && request == serial) setState(() => error = '$e');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Shared media')),
-    body: Column(
-      children: [
-        Wrap(
-          spacing: 8,
-          children: [
-            for (final t in ['media', 'document', 'link'])
-              ChoiceChip(
-                label: Text(t),
-                selected: type == t,
-                onSelected: (_) {
-                  type = t;
-                  load();
-                },
-              ),
-          ],
-        ),
-        Expanded(
-          child: items == null
-              ? error == null
-                    ? const Center(child: CircularProgressIndicator())
-                    : failure(error!, load)
-              : ListView(
-                  children: [
-                    if (items!.isEmpty)
-                      const ListTile(title: Text('No shared media')),
-                    for (final i in items!)
-                      if (mediaUri(
-                            i['media_link'],
-                            widget.session.api.dio.options.baseUrl,
-                          )
-                          case final Uri url)
-                        MediaTile(
-                          MessageMedia(
-                            '${i['type']}',
-                            url,
-                            '${i['media_name'] ?? 'Media'}',
-                          ),
-                        ),
-                  ],
-                ),
-        ),
-      ],
-    ),
   );
 }

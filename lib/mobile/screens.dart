@@ -9,6 +9,7 @@ import 'api.dart';
 import 'chat.dart';
 import 'models.dart';
 import 'realtime.dart';
+import 'list_sync.dart';
 import 'message_content.dart';
 import 'send_policy.dart' show flag;
 import 'tickets.dart';
@@ -929,18 +930,69 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   void reload() {
     final cached = widget.session.viewCache[cacheKey] as List<Json>?;
     setState(() => items = cached ?? []);
-    load(quiet: cached != null);
+    if (cached != null) {
+      load(quiet: true);
+    } else {
+      openFromDevice();
+    }
   }
+
+  ListSync get sync => widget.kind == 2 ? ListSync.tickets : ListSync.contacts;
+
+  /// Searches are not kept on the phone; each tab's own list is.
+  bool get persisted => search.text.isEmpty;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     items = (widget.session.viewCache[cacheKey] as List<Json>?) ?? [];
-    load(quiet: items.isNotEmpty);
+    if (items.isNotEmpty) {
+      load(quiet: true);
+    } else {
+      openFromDevice();
+    }
     loadPeople();
     subscribeLive();
     widget.refresh?.addListener(load);
+    widget.session.conversationActivity.addListener(followChat);
+  }
+
+  /// An open chat synced a newer message: its row moves now, without a
+  /// request. Conversations this list does not show are left to the server.
+  void followChat() {
+    final activity = widget.session.conversationActivity.value;
+    if (activity == null || widget.kind == 2) return;
+    final next = sync.follow(items, activity, filter: filter);
+    if (next == null || !mounted) return;
+    keep(next);
+    setState(() => items = next);
+  }
+
+  /// Shows the list kept on the phone from the last visit at once, then
+  /// refreshes quietly in the background.
+  Future<void> openFromDevice() async {
+    final key = cacheKey, request = serial;
+    List<Json>? saved;
+    if (persisted) {
+      try {
+        saved = await widget.session.cache.list(key);
+      } catch (_) {}
+    }
+    if (!mounted || key != cacheKey || request != serial) return;
+    if (saved != null && items.isEmpty) {
+      widget.session.viewCache[key] = saved;
+      setState(() => items = saved!);
+    }
+    load(quiet: items.isNotEmpty);
+  }
+
+  /// Remembers the list for the next visit, on the phone and for this run.
+  void keep(List<Json> rows) {
+    widget.session.viewCache[cacheKey] = rows;
+    if (persisted) {
+      widget.session.cache.putList(cacheKey, rows).catchError((_) {});
+    }
   }
 
   /// Same channels as the web inbox and ticket inbox. Each event means "the
@@ -958,16 +1010,32 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
     if (channel == null) return;
     live = session.realtime.listen(
       channel,
-      (_, _) => liveRefresh(),
+      (_, data) => liveEvent(data),
       onResync: liveRefresh,
     );
+  }
+
+  /// A conversation the list already shows moves to its new place at once,
+  /// from the event; the server's first page then confirms it. Anything the
+  /// list does not show yet comes only from the server, which applies this
+  /// account's permissions and the tab's filter.
+  void liveEvent(Object? data) {
+    final row = object(object(data)['contact']);
+    final patched = row.isEmpty || widget.kind == 2
+        ? null
+        : sync.patch(items, row, filter: filter);
+    if (patched != null) {
+      keep(patched);
+      setState(() => items = patched);
+    }
+    liveRefresh();
   }
 
   /// Bursts (a message plus its status updates) collapse into one request.
   void liveRefresh() {
     liveDebounce?.cancel();
     liveDebounce = Timer(const Duration(milliseconds: 300), () {
-      if (mounted) load(quiet: true);
+      if (mounted) load(quiet: true, firstPage: true);
     });
   }
 
@@ -997,7 +1065,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Covers the case where live updates are unavailable; with them, the
     // channel's resync on reconnect does the same.
-    if (state == AppLifecycleState.resumed) load(quiet: true);
+    if (state == AppLifecycleState.resumed) load(quiet: true, firstPage: true);
   }
 
   @override
@@ -1007,17 +1075,26 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
     liveDebounce?.cancel();
     live?.cancel();
     widget.refresh?.removeListener(load);
+    widget.session.conversationActivity.removeListener(followChat);
     search.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
-  Future<void> load({bool append = false, bool quiet = false}) async {
+  /// [firstPage]: a background check after a live event or resume. Only the
+  /// first page is read and reconciled; rows further down stay as loaded.
+  Future<void> load({
+    bool append = false,
+    bool quiet = false,
+    bool firstPage = false,
+  }) async {
     final request = ++serial;
     if (!quiet) setState(() => busy = true);
-    // A quiet refresh re-reads every page already scrolled through, so a live
-    // update never drops rows the agent loaded with "Load more".
-    final limit = append || !quiet ? 30 : items.length.clamp(30, 100);
+    // A plain quiet refresh (pull, the + action) re-reads the pages already
+    // scrolled through, so it never drops rows loaded with "Load more".
+    final limit = append || !quiet || firstPage
+        ? 30
+        : items.length.clamp(30, 100);
     try {
       final List<Json> next;
       if (widget.kind == 2) {
@@ -1037,15 +1114,19 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
         );
       }
       if (!mounted || request != serial) return;
-      final merged = [if (append) ...items, ...next];
-      widget.session.viewCache[cacheKey] = merged;
+      final merged = append
+          ? sync.append(items, next)
+          : firstPage
+          ? sync.reconcile(items, next, complete: next.length < limit)
+          : next;
       // Live refreshes often return identical rows; skip the rebuild.
       if (!append && error == null && jsonEncode(merged) == jsonEncode(items)) {
         return;
       }
+      keep(merged);
       setState(() {
         items = merged;
-        more = next.length == limit;
+        if (!firstPage) more = next.length == limit;
         error = null;
       });
     } catch (e) {
@@ -1495,25 +1576,31 @@ class LiveConversationRow extends StatelessWidget {
                               style: mono(size: 9, color: T.muted),
                             ),
                           ),
+                        // WhatsApp's count of new messages: a green pill
+                        // under the time, which turns green with it.
                         if (unread > 0)
                           Container(
-                            margin: const EdgeInsets.only(left: 7),
+                            key: ValueKey('unread-${item['id']}'),
+                            margin: const EdgeInsets.only(left: 8),
                             constraints: const BoxConstraints(
-                              minWidth: 20,
-                              minHeight: 20,
+                              minWidth: 21,
+                              minHeight: 21,
                             ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            alignment: Alignment.center,
                             decoration: BoxDecoration(
                               color: T.green,
-                              borderRadius: BorderRadius.circular(10),
+                              borderRadius: BorderRadius.circular(11),
                             ),
                             child: Text(
                               unread >= 99 ? '99+' : '$unread',
                               textAlign: TextAlign.center,
-                              style: mono(size: 10, color: Colors.white),
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                height: 1.1,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
                             ),
                           ),
                       ],

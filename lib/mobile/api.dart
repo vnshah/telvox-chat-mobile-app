@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../core/config/app_config.dart';
+import 'local_cache.dart';
 import 'push.dart';
 import 'realtime.dart';
 
@@ -173,11 +174,29 @@ class MobileSession extends ChangeNotifier {
     this.store, {
     this.realtimeConnector,
     this.pushTransport,
-  }) {
+    LocalCache? cache,
+  }) : cache = cache ?? MemoryLocalCache() {
     api.onUnauthorized = _expired;
   }
   final MobileApi api;
   final SessionStore store;
+
+  /// The on-device copy screens render from first; see [LocalCache].
+  final LocalCache cache;
+
+  /// The latest message an open chat has synced, from any sender, so the
+  /// inbox row follows at once: `{id, last_message, last_message_date,
+  /// unread_message_count}`.
+  final conversationActivity = ValueNotifier<Json?>(null);
+
+  /// Opens the cache for this server and account. A failure only costs speed.
+  Future<void> _openCache() async {
+    try {
+      await cache.open('${api.dio.options.baseUrl}#${user?['id']}');
+    } catch (_) {}
+  }
+
+  void _wipeCache() => cache.wipe().catchError((_) {});
 
   /// Tests replace the websocket transport; the app uses the platform one.
   final RealtimeConnector? realtimeConnector;
@@ -274,6 +293,7 @@ class MobileSession extends ChangeNotifier {
       api.token = saved['token'] as String?;
       if (api.token != null) {
         user = await api.get('me');
+        await _openCache();
         final selected =
             number(user?['bound_waba_user_id']) ?? number(saved['waba_id']);
         if (selected != null) await selectNumber(selected);
@@ -364,6 +384,7 @@ class MobileSession extends ChangeNotifier {
     config = null;
     await _persist();
     user = await api.get('me');
+    await _openCache();
     try {
       final bound = number(user?['bound_waba_user_id']);
       if (bound != null) await selectNumber(bound);
@@ -402,6 +423,8 @@ class MobileSession extends ChangeNotifier {
   void _expired() {
     realtime.stop();
     viewCache.clear();
+    // A session that ended, was revoked or signed out leaves no chats behind.
+    _wipeCache();
     generation++;
     api.token = null;
     api.wabaId = null;
@@ -425,6 +448,7 @@ class MobileSession extends ChangeNotifier {
   @override
   void dispose() {
     api.onUnauthorized = null;
+    conversationActivity.dispose();
     realtime.dispose();
     push.dispose();
     super.dispose();

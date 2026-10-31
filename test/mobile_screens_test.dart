@@ -9,6 +9,7 @@ import 'package:telvox_chat_mobile_app/mobile/contact_actions.dart';
 import 'package:telvox_chat_mobile_app/mobile/chat.dart';
 import 'package:telvox_chat_mobile_app/mobile/templates.dart';
 import 'package:telvox_chat_mobile_app/mobile/editors.dart';
+import 'package:telvox_chat_mobile_app/mobile/shared_media.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
 import 'mobile_api_test.dart' show fakeApi, answer, MemoryStore;
@@ -206,27 +207,76 @@ void main() {
       }
     },
   );
-  testWidgets('shared media uses the server document/link filter names', (
-    tester,
-  ) async {
-    final types = <String>[];
-    final session = MobileSession(
-      fakeApi((r, h) {
-        types.add('${r.data['type']}');
-        answer(r, h, {'success': true, 'data': []});
-      }),
-      MemoryStore(),
-    );
-    await tester.pumpWidget(
-      MaterialApp(home: MediaGalleryPage(session, contactId: 12)),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('document'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('link'));
-    await tester.pumpAndSettle();
-    expect(types, ['media', 'document', 'link']);
-    await tester.pumpWidget(const SizedBox());
-    session.dispose();
-  });
+  testWidgets(
+    'shared media tabs use the server filters, load once, and lay out each kind',
+    (tester) async {
+      final types = <String>[];
+      final session = MobileSession(
+        fakeApi((r, h) {
+          final type = '${r.data['type']}';
+          types.add(type);
+          answer(r, h, {
+            'success': true,
+            'data': switch (type) {
+              'document' => [
+                {
+                  'type': 'document',
+                  'media_link': 'storage/919/doc/invoice-oct.pdf',
+                  'media_name': 'invoice-oct.pdf',
+                  'media_size': '1.2 MB',
+                  'created_at': '2026-10-31T09:00:00Z',
+                },
+              ],
+              'link' => [
+                {
+                  'type': 'link',
+                  'media_link':
+                      'Track it here https://www.example.com/track/42 thanks',
+                  'media_name':
+                      'Track it here https://www.example.com/track/42 thanks',
+                  'created_at': '2026-10-31T09:00:00Z',
+                },
+                {
+                  'type': 'link',
+                  'media_link':
+                      'Mail R@gmail.com or see telvox.in/brochure.pdf',
+                  'created_at': '2026-10-30T09:00:00Z',
+                },
+              ],
+              _ => <dynamic>[],
+            },
+          });
+        }),
+        MemoryStore(),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: T.themeFor(TargetPlatform.android),
+          home: MediaGalleryPage(session, contactId: 12),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('No media yet'), findsOneWidget);
+      Finder segment(String label) => find.descendant(
+        of: find.byType(SegmentedButton<SharedKind>),
+        matching: find.text(label),
+      );
+      await tester.tap(segment('Documents'));
+      await tester.pumpAndSettle();
+      expect(find.text('invoice-oct.pdf'), findsOneWidget);
+      expect(find.text('PDF'), findsOneWidget);
+      expect(find.textContaining('PDF · 1.2 MB · 31 Oct 2026'), findsOneWidget);
+      await tester.tap(segment('Links'));
+      await tester.pumpAndSettle();
+      expect(find.text('example.com'), findsOneWidget);
+      expect(find.text('https://www.example.com/track/42'), findsOneWidget);
+      expect(find.text('telvox.in'), findsOneWidget);
+      await tester.tap(segment('Documents'));
+      await tester.pumpAndSettle();
+      // Each tab loads once while the page is open.
+      expect(types, ['media', 'document', 'link']);
+      await tester.pumpWidget(const SizedBox());
+      session.dispose();
+    },
+  );
 }
