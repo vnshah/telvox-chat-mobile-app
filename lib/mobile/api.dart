@@ -217,7 +217,7 @@ class MobileSession extends ChangeNotifier {
   final CallMedia Function()? callMedia;
 
   /// WhatsApp calls on this phone; joined by the signed-in home.
-  late final calls = PhoneCalls(this, media: callMedia);
+  late final calls = PhoneCalls(this, mediaFactory: callMedia);
 
   /// `contact:12` / `ticket:7` while that chat is on screen, so a push for it
   /// is not shown on top of the conversation itself.

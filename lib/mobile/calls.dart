@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
@@ -13,6 +14,18 @@ import 'call_push.dart';
 import 'message_content.dart' show readableText;
 import 'models.dart';
 import 'realtime.dart';
+
+/// Where call audio plays: the earpiece, the loudspeaker, a Bluetooth or
+/// wired headset.
+class AudioOutput {
+  const AudioOutput(this.id, this.label);
+  final String id, label;
+  bool get speaker => id.toLowerCase().contains('speaker');
+  bool get headset =>
+      id.toLowerCase().contains('bluetooth') ||
+      id.toLowerCase().contains('wired') ||
+      id.toLowerCase().contains('headset');
+}
 
 /// The audio side of a WhatsApp call, behind a seam so tests need no
 /// microphone or network.
@@ -31,24 +44,33 @@ abstract class CallMedia {
 
   Future<void> mute(bool muted);
   Future<void> speaker(bool on);
+
+  /// The outputs the call can play on right now.
+  Future<List<AudioOutput>> outputs();
+  Future<void> route(AudioOutput output);
   Future<void> close();
 }
 
 /// WebRTC through flutter_webrtc, as the web inbox does it in the browser:
-/// one audio track, Opus by default, Google STUN for the phone's public
-/// address. Meta's side takes the whole SDP in one request, so the SDP is
-/// sent once ICE gathering has finished (or after a short wait), never
-/// trickled.
+/// one audio track, Opus by default. WhatsApp's media servers are ICE-lite
+/// with a public address, so the phone's own candidates matter little; the
+/// SDP goes once gathering finishes, a public (srflx) candidate is found, or
+/// after a short wait — never trickled.
 class WebRtcCallMedia implements CallMedia {
-  static const _ice = {
-    'iceServers': [
-      {'urls': 'stun:stun.l.google.com:19302'},
-      {'urls': 'stun:stun1.l.google.com:19302'},
-    ],
-    'sdpSemantics': 'unified-plan',
-  };
-  static const _gathering = Duration(seconds: 3);
+  WebRtcCallMedia({List<Object?>? iceServers})
+    : _iceServers = iceServers == null || iceServers.isEmpty
+          ? defaultIceServers
+          : iceServers;
 
+  /// The web inbox's servers; the server can send its own (with TURN) in
+  /// `config.calls.ice_servers`.
+  static const defaultIceServers = [
+    {'urls': 'stun:stun.l.google.com:19302'},
+    {'urls': 'stun:stun1.l.google.com:19302'},
+  ];
+  static const _gathering = Duration(milliseconds: 800);
+
+  final List<Object?> _iceServers;
   RTCPeerConnection? _peer;
   MediaStream? _local;
   final _connected = ValueNotifier(false);
@@ -65,30 +87,41 @@ class WebRtcCallMedia implements CallMedia {
       },
       'video': false,
     });
-    final peer = await createPeerConnection(_ice);
+    final peer = await createPeerConnection({
+      'iceServers': _iceServers,
+      'sdpSemantics': 'unified-plan',
+    });
     for (final track in _local!.getAudioTracks()) {
       await peer.addTrack(track, _local!);
     }
     peer.onConnectionState = (state) => _connected.value =
         state == RTCPeerConnectionState.RTCPeerConnectionStateConnected;
-    // Calls use the earpiece until the agent turns the speaker on.
+    // The earpiece, or a connected headset, until the agent picks the speaker.
     await Helper.setSpeakerphoneOn(false);
     return _peer = peer;
   }
 
-  /// Waits for ICE gathering so the SDP carries the candidates.
+  /// Waits briefly for candidates so the SDP carries the phone's addresses.
   Future<String> _gathered(RTCPeerConnection peer) async {
-    if (peer.iceGatheringState !=
-        RTCIceGatheringState.RTCIceGatheringStateComplete) {
-      final done = Completer<void>();
-      peer.onIceGatheringState = (state) {
-        if (state == RTCIceGatheringState.RTCIceGatheringStateComplete &&
-            !done.isCompleted) {
-          done.complete();
-        }
-      };
-      await done.future.timeout(_gathering, onTimeout: () {});
+    final done = Completer<void>();
+    void finish() {
+      if (!done.isCompleted) done.complete();
     }
+
+    peer.onIceGatheringState = (state) {
+      if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) finish();
+    };
+    peer.onIceCandidate = (candidate) {
+      final line = candidate.candidate ?? '';
+      if (line.contains(' typ srflx') || line.contains(' typ relay')) {
+        Timer(const Duration(milliseconds: 100), finish);
+      }
+    };
+    if (peer.iceGatheringState ==
+        RTCIceGatheringState.RTCIceGatheringStateComplete) {
+      finish();
+    }
+    await done.future.timeout(_gathering, onTimeout: () {});
     return (await peer.getLocalDescription())!.sdp!;
   }
 
@@ -130,6 +163,16 @@ class WebRtcCallMedia implements CallMedia {
   Future<void> speaker(bool on) => Helper.setSpeakerphoneOn(on);
 
   @override
+  Future<List<AudioOutput>> outputs() async => [
+    for (final d in await navigator.mediaDevices.enumerateDevices())
+      if (d.kind == 'audiooutput')
+        AudioOutput(d.deviceId, d.label.isEmpty ? d.deviceId : d.label),
+  ];
+
+  @override
+  Future<void> route(AudioOutput output) => Helper.selectAudioOutput(output.id);
+
+  @override
   Future<void> close() async {
     for (final track in _local?.getTracks() ?? <MediaStreamTrack>[]) {
       await track.stop();
@@ -139,6 +182,22 @@ class WebRtcCallMedia implements CallMedia {
     _local = null;
     _peer = null;
     _connected.value = false;
+  }
+}
+
+/// Call audio the WebRTC package does not cover, from the app's Android
+/// activity: the ringback tone while a customer's phone rings, and the screen
+/// turning off at the ear. Quietly absent elsewhere (tests, iOS).
+abstract final class CallAudio {
+  static const _channel = MethodChannel('telvox/call_audio');
+  static Future<void> ringback(bool on) => _quiet('ringback', on);
+  static Future<void> proximity(bool on) => _quiet('proximity', on);
+  static Future<void> _quiet(String method, bool on) async {
+    try {
+      await _channel.invokeMethod<void>(method, on);
+    } catch (_) {
+      /* Not on this platform. */
+    }
   }
 }
 
@@ -204,11 +263,16 @@ enum CallState {
 /// WhatsApp calls on this phone, as the web inbox's call widget runs them:
 /// the same endpoints, states and events, with the phone answering as its own
 /// presence session ("mobile:{device id}").
+///
+/// Every call is also registered with Android's call system (the incoming
+/// call screen, the ongoing-call notification): that runs the foreground
+/// service which keeps the microphone working with the screen locked.
 class PhoneCalls extends ChangeNotifier {
-  PhoneCalls(this.session, {CallMedia Function()? media})
-    : _media = media ?? WebRtcCallMedia.new;
+  PhoneCalls(this.session, {this.mediaFactory});
   final MobileSession session;
-  final CallMedia Function() _media;
+
+  /// Tests replace WebRTC; the app builds it from the server's ICE servers.
+  final CallMedia Function()? mediaFactory;
 
   CallState state = CallState.idle;
   Json contact = const {};
@@ -216,16 +280,35 @@ class PhoneCalls extends ChangeNotifier {
   DateTime? connectedAt;
   bool muted = false, speaker = false;
 
+  /// The headset the call plays on, when not the earpiece or speaker.
+  AudioOutput? output;
+
   /// The call screen is showing; a second ring or tap does not open another.
   bool screenOpen = false;
-  String? _offer;
 
-  /// The call answered from the system's incoming-call screen, whose
-  /// ongoing-call notification ends with it.
-  String? _pushed;
+  void showingScreen(bool open) {
+    screenOpen = open;
+    notifyListeners();
+  }
+
+  /// The app's navigator, for the ongoing-call bar to reopen the call screen.
+  GlobalKey<NavigatorState>? navigator;
+
+  String? _offer;
   CallMedia? _call;
-  Timer? _expiry, _buzz, _reset;
+  Timer? _expiry, _reset;
   final _subscriptions = <RealtimeSubscription>[];
+
+  /// WhatsApp's media answer was applied: a repeat delivery is ignored.
+  bool _answerApplied = false;
+
+  /// The customer declined; the end that follows says so.
+  bool _declined = false;
+
+  /// The call's id with Android's call system, and whether that system's own
+  /// screen accepted it (which already started the ongoing-call service).
+  String? _system;
+  bool _systemAccepted = false;
 
   /// False once the server says this account cannot take calls.
   bool _canAnswer = true;
@@ -236,6 +319,13 @@ class PhoneCalls extends ChangeNotifier {
     final device = number(object(session.user?['device'])['id']);
     return device == null ? null : 'mobile:$device';
   }
+
+  CallMedia _newMedia() =>
+      mediaFactory?.call() ??
+      WebRtcCallMedia(
+        iceServers: (object(session.config?['calls'])['ice_servers'] as List?)
+            ?.cast<Object?>(),
+      );
 
   /// Joins the call channels for the selected number and this account.
   void attach() {
@@ -286,13 +376,14 @@ class PhoneCalls extends ChangeNotifier {
 
   Future<void> start(Json customer) async {
     if (busy) return;
-    _reset?.cancel();
+    _fresh();
     contact = customer;
-    callId = null;
-    notice = null;
-    muted = speaker = false;
     _set(CallState.dialing);
-    final media = _call = _media();
+    _system = callUuid('out:${DateTime.now().microsecondsSinceEpoch}');
+    unawaited(_systemOngoing());
+    unawaited(CallAudio.ringback(true));
+    unawaited(CallAudio.proximity(true));
+    final media = _call = _newMedia();
     try {
       final sdp = await media.offer();
       if (state != CallState.dialing) return;
@@ -311,42 +402,70 @@ class PhoneCalls extends ChangeNotifier {
           : null;
       if (state == CallState.dialing) _set(CallState.ringing);
     } catch (e) {
+      if (state != CallState.dialing) return;
       await _end(e is ApiFailure ? e.message : 'The call could not start.');
     }
   }
 
+  /// Events for calls placed from this number. WhatsApp's media answer
+  /// (connect) comes as the customer's phone starts to ring, and Meta can
+  /// deliver it twice: it is applied once. Applying it again made WebRTC throw
+  /// and the call hang up three seconds into ringing. The call goes live on
+  /// the ACCEPTED status, when the customer answers.
   void _outgoing(String event, Object? data) {
     if (event != 'calls') return;
     final d = object(data);
     if (d['direction'] != 'BUSINESS_INITIATED') return;
-    if (state != CallState.dialing &&
-        state != CallState.ringing &&
-        state != CallState.active) {
-      return;
-    }
     // Every session on the number hears this channel: only our call counts.
     final id = '${d['call_id'] ?? ''}';
-    if (callId != null && id != callId) return;
+    if (callId != null && id.isNotEmpty && id != callId) return;
     if (callId == null &&
+        number(object(d['contact'])['id']) != null &&
         number(object(d['contact'])['id']) != number(contact['id'])) {
       return;
     }
-    callId ??= id;
-    if (d['event'] == 'connect' && d['sdp'] != null) {
-      _connectOutgoing('${d['sdp']}');
-    } else if (d['event'] == 'terminate') {
-      _end(state == CallState.active ? 'Call ended' : 'No answer');
+    final placing = state == CallState.dialing || state == CallState.ringing;
+    switch (d['event']) {
+      case 'connect':
+        if (!placing || _answerApplied || d['sdp'] == null) return;
+        _answerApplied = true;
+        if (id.isNotEmpty) callId ??= id;
+        unawaited(_applyAnswer('${d['sdp']}'));
+      case 'status':
+        if (!placing) return;
+        switch ('${d['status'] ?? ''}'.toUpperCase()) {
+          case 'ACCEPTED':
+            _answered();
+          case 'REJECTED':
+            _declined = true;
+          case 'RINGING':
+            if (state == CallState.dialing) _set(CallState.ringing);
+        }
+      case 'terminate':
+        if (!busy) return;
+        _end(
+          state == CallState.active
+              ? 'Call ended'
+              : _declined
+              ? 'Declined'
+              : 'No answer',
+        );
     }
   }
 
-  Future<void> _connectOutgoing(String sdp) async {
+  Future<void> _applyAnswer(String sdp) async {
     try {
       await _call?.remoteAnswer(sdp);
-      connectedAt = DateTime.now();
-      _set(CallState.active);
     } catch (_) {
-      await hangUp(reason: 'The call could not connect.');
+      if (busy) await hangUp(reason: 'The call could not connect.');
     }
+  }
+
+  void _answered() {
+    unawaited(CallAudio.ringback(false));
+    connectedAt = DateTime.now();
+    _set(CallState.active);
+    unawaited(_systemConnected());
   }
 
   // Incoming.
@@ -358,14 +477,24 @@ class PhoneCalls extends ChangeNotifier {
       case 'call_ringing' || 'call_initiated':
         if (d['target_client_session_id'] != sessionId) return;
         if (busy || d['sdp'] == null) return;
-        _reset?.cancel();
+        _fresh();
         callId = id;
         contact = object(d['contact']);
         _offer = '${d['sdp']}';
-        notice = null;
-        muted = speaker = false;
         _set(CallState.incoming);
-        _ring();
+        // The system's incoming-call screen, with the phone's ringtone.
+        _system = callUuid(id);
+        unawaited(
+          showCallFromPush({
+            'type': 'call',
+            'call_id': id,
+            'waba_user_id': '${session.api.wabaId ?? ''}',
+            'contact_id': '${contact['id'] ?? ''}',
+            'contact_name': '${contact['profile_name'] ?? ''}',
+            'contact_phone': '${contact['phone'] ?? ''}',
+            'expires_at': '${d['expires_at'] ?? ''}',
+          }),
+        );
         final expires = DateTime.tryParse('${d['expires_at'] ?? ''}');
         final wait = expires == null
             ? const Duration(seconds: 30)
@@ -393,44 +522,51 @@ class PhoneCalls extends ChangeNotifier {
     }
   }
 
-  /// Vibrates like a ringing phone until answered, declined or gone.
-  void _ring() {
-    _buzz?.cancel();
-    HapticFeedback.heavyImpact();
-    _buzz = Timer.periodic(const Duration(milliseconds: 1400), (_) {
-      if (state != CallState.incoming) {
-        _buzz?.cancel();
-        return;
-      }
-      HapticFeedback.heavyImpact();
-    });
-  }
-
   Future<void> accept() async {
     final id = callId, offer = _offer;
     if (state != CallState.incoming || id == null || offer == null) return;
-    _buzz?.cancel();
     _expiry?.cancel();
     _set(CallState.connecting);
+    if (!_systemAccepted) {
+      // Answered on the app's own screen: take down the system's ringing
+      // screen and start its ongoing-call service instead. Answering does
+      // not wait for either.
+      final uuid = _system;
+      unawaited(() async {
+        if (uuid != null) {
+          await callkit(
+            () => FlutterCallkitIncoming.hideCallkitIncoming(
+              CallKitParams(id: uuid),
+            ),
+          );
+        }
+        await _systemOngoing();
+      }());
+    }
     await _answer(id, offer);
   }
 
-  /// Accept on the system's incoming-call screen, for a call that woke the
-  /// phone by push: the ringing event never reached the app, so the offer is
-  /// fetched first.
+  /// Accept on the system's incoming-call screen. For a call that rang the
+  /// open app the offer is here already; for one that woke the phone by push
+  /// it is fetched first.
   Future<void> acceptPushed(Json data) async {
     final id = '${data['call_id'] ?? ''}';
-    if (id.isEmpty || (busy && callId == id)) return;
+    if (id.isEmpty) return;
+    if (state == CallState.incoming && callId == id) {
+      _systemAccepted = true;
+      return accept();
+    }
     if (busy) {
-      // Already on another call: give this one back.
-      unawaited(_post('inbox/calls/decline', {'call_id': id}));
+      if (callId != id) {
+        // Already on another call: give this one back.
+        unawaited(_post('inbox/calls/decline', {'call_id': id}));
+      }
       return;
     }
-    _reset?.cancel();
+    _fresh();
     callId = id;
-    _pushed = id;
-    notice = null;
-    muted = speaker = false;
+    _system = callUuid(id);
+    _systemAccepted = true;
     contact = {
       'id': number(data['contact_id']),
       'profile_name': data['contact_name'],
@@ -466,7 +602,8 @@ class PhoneCalls extends ChangeNotifier {
   }
 
   Future<void> _answer(String id, String offer) async {
-    final media = _call = _media();
+    final media = _call = _newMedia();
+    unawaited(CallAudio.proximity(true));
     try {
       final answer = await media.answer(offer);
       if (state != CallState.connecting) return;
@@ -485,11 +622,7 @@ class PhoneCalls extends ChangeNotifier {
       await session.api.post('inbox/calls/connected', {'call_id': id});
       connectedAt = DateTime.now();
       _set(CallState.active);
-      if (_pushed == id) {
-        unawaited(
-          callkit(() => FlutterCallkitIncoming.setCallConnected(callUuid(id))),
-        );
-      }
+      unawaited(_systemConnected());
     } catch (e) {
       if (state != CallState.connecting) return;
       // Give the call back to the other agents rather than hanging up on it.
@@ -547,8 +680,29 @@ class PhoneCalls extends ChangeNotifier {
 
   Future<void> toggleSpeaker() async {
     speaker = !speaker;
+    output = null;
     notifyListeners();
+    // The screen stays on with the phone away from the ear.
+    unawaited(CallAudio.proximity(!speaker));
     await _call?.speaker(speaker);
+  }
+
+  /// The outputs to offer when a headset is connected; empty otherwise.
+  Future<List<AudioOutput>> headsetOutputs() async {
+    try {
+      final all = await _call?.outputs() ?? const <AudioOutput>[];
+      return all.any((o) => o.headset) ? all : const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> routeTo(AudioOutput choice) async {
+    speaker = choice.speaker;
+    output = choice.headset ? choice : null;
+    notifyListeners();
+    unawaited(CallAudio.proximity(!speaker && output == null));
+    await _call?.route(choice);
   }
 
   Future<void> _post(String path, Json body) async {
@@ -559,15 +713,68 @@ class PhoneCalls extends ChangeNotifier {
     }
   }
 
+  // Android's call system.
+
+  Future<void> _systemOngoing() async {
+    final uuid = _system;
+    if (uuid == null) return;
+    await callkit(
+      () => FlutterCallkitIncoming.startCall(
+        CallKitParams(
+          id: uuid,
+          nameCaller: _name,
+          appName: 'Telvox Chat',
+          handle: '${contact['phone'] ?? contact['wa_id'] ?? ''}',
+          type: 0,
+          extra: {'call_id': callId ?? ''},
+          callingNotification: const NotificationParams(
+            showNotification: true,
+            isShowCallback: false,
+            subtitle: 'WhatsApp call',
+          ),
+          android: const AndroidParams(
+            isCustomNotification: true,
+            isShowFullLockedScreen: false,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _systemConnected() async {
+    final uuid = _system;
+    if (uuid != null) {
+      await callkit(() => FlutterCallkitIncoming.setCallConnected(uuid));
+    }
+  }
+
+  String get _name {
+    final name = readableText(contact['profile_name']);
+    if (name.isNotEmpty) return name;
+    final phone = '${contact['phone'] ?? contact['wa_id'] ?? ''}';
+    return phone.isEmpty ? 'WhatsApp call' : '+$phone';
+  }
+
+  void _fresh() {
+    _reset?.cancel();
+    callId = null;
+    notice = null;
+    connectedAt = null;
+    muted = speaker = false;
+    output = null;
+    _offer = null;
+    _answerApplied = _declined = _systemAccepted = false;
+    _system = null;
+  }
+
   Future<void> _end(String reason) async {
-    _buzz?.cancel();
     _expiry?.cancel();
-    final pushed = _pushed;
-    _pushed = null;
-    if (pushed != null) {
-      unawaited(
-        callkit(() => FlutterCallkitIncoming.endCall(callUuid(pushed))),
-      );
+    unawaited(CallAudio.ringback(false));
+    unawaited(CallAudio.proximity(false));
+    final system = _system;
+    _system = null;
+    if (system != null) {
+      unawaited(callkit(() => FlutterCallkitIncoming.endCall(system)));
     }
     final media = _call;
     _call = null;
@@ -593,7 +800,6 @@ class PhoneCalls extends ChangeNotifier {
   @override
   void dispose() {
     detach();
-    _buzz?.cancel();
     _expiry?.cancel();
     _reset?.cancel();
     unawaited(_call?.close());
@@ -672,9 +878,9 @@ class _CallScreenState extends State<CallScreen> {
               .take(2)
               .map((w) => w.characters.first.toUpperCase())
               .join();
+    // Back leaves the call running; the ongoing-call bar brings it back.
     return PopScope(
-      // A call in progress is ended from the screen, not by going back.
-      canPop: !c.busy,
+      canPop: c.state != CallState.incoming,
       child: AnnotatedRegion<SystemUiOverlayStyle>(
         value: SystemUiOverlayStyle.light,
         child: Scaffold(
@@ -690,7 +896,17 @@ class _CallScreenState extends State<CallScreen> {
             child: SafeArea(
               child: Column(
                 children: [
-                  const SizedBox(height: 18),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: c.state == CallState.incoming
+                        ? const SizedBox(height: 48)
+                        : IconButton(
+                            tooltip: 'Back to chats',
+                            color: Colors.white70,
+                            icon: const Icon(Icons.keyboard_arrow_down),
+                            onPressed: () => Navigator.of(context).maybePop(),
+                          ),
+                  ),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -705,7 +921,7 @@ class _CallScreenState extends State<CallScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 56),
+                  const SizedBox(height: 32),
                   CircleAvatar(
                     radius: 58,
                     backgroundColor: T.greenWash,
@@ -759,6 +975,41 @@ class _CallScreenState extends State<CallScreen> {
 class _CallControls extends StatelessWidget {
   const _CallControls(this.calls);
   final PhoneCalls calls;
+
+  /// With a headset connected, choose where the call plays; otherwise the
+  /// button switches between the earpiece and the speaker.
+  Future<void> _audio(BuildContext context) async {
+    final outputs = await calls.headsetOutputs();
+    if (outputs.isEmpty || !context.mounted) {
+      await calls.toggleSpeaker();
+      return;
+    }
+    final choice = await showModalBottomSheet<AudioOutput>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final o in outputs)
+              ListTile(
+                leading: Icon(
+                  o.speaker
+                      ? Icons.volume_up
+                      : o.headset
+                      ? Icons.headset
+                      : Icons.phone_in_talk,
+                ),
+                title: Text(o.label),
+                onTap: () => Navigator.pop(context, o),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (choice != null) await calls.routeTo(choice);
+  }
+
   @override
   Widget build(BuildContext context) {
     final live = calls.busy;
@@ -773,10 +1024,14 @@ class _CallControls extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           _RoundButton(
-            label: 'Speaker',
-            icon: calls.speaker ? Icons.volume_up : Icons.volume_up_outlined,
-            on: calls.speaker,
-            onPressed: live ? calls.toggleSpeaker : null,
+            label: calls.output?.label ?? 'Speaker',
+            icon: calls.output != null
+                ? Icons.bluetooth_audio
+                : calls.speaker
+                ? Icons.volume_up
+                : Icons.volume_up_outlined,
+            on: calls.speaker || calls.output != null,
+            onPressed: live ? () => _audio(context) : null,
           ),
           _RoundButton(
             label: calls.muted ? 'Unmute' : 'Mute',
@@ -926,17 +1181,108 @@ Future<void> startCall(
 }
 
 /// Opens the call screen unless it is already showing.
-Future<void> showCallScreen(BuildContext context, PhoneCalls calls) async {
+Future<void> showCallScreen(BuildContext context, PhoneCalls calls) =>
+    _openCallScreen(Navigator.of(context, rootNavigator: true), calls);
+
+Future<void> _openCallScreen(NavigatorState navigator, PhoneCalls calls) async {
   if (calls.screenOpen) return;
-  calls.screenOpen = true;
+  calls.showingScreen(true);
   try {
-    await Navigator.of(context, rootNavigator: true).push(
+    await navigator.push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
         builder: (_) => CallScreen(calls),
       ),
     );
   } finally {
-    calls.screenOpen = false;
+    calls.showingScreen(false);
   }
+}
+
+/// A call in progress while the call screen is closed: a green bar over every
+/// screen, as WhatsApp shows one, that reopens the call.
+class OngoingCallBar extends StatefulWidget {
+  const OngoingCallBar(this.calls, {super.key, required this.child});
+  final PhoneCalls calls;
+  final Widget child;
+  @override
+  State<OngoingCallBar> createState() => _OngoingCallBarState();
+}
+
+class _OngoingCallBarState extends State<OngoingCallBar> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (widget.calls.state == CallState.active && !widget.calls.screenOpen) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: widget.calls,
+    builder: (context, _) {
+      final c = widget.calls;
+      final show = c.busy && c.state != CallState.incoming && !c.screenOpen;
+      if (!show) return widget.child;
+      final at = c.connectedAt;
+      final label = c.state == CallState.active && at != null
+          ? 'Ongoing call · ${_CallScreenState._clock(DateTime.now().difference(at))}'
+          : c.state == CallState.connecting
+          ? 'Connecting…'
+          : 'Calling…';
+      return Column(
+        children: [
+          Material(
+            color: const Color(0xFF1E7A4F),
+            child: InkWell(
+              key: const ValueKey('ongoing-call-bar'),
+              onTap: () {
+                final navigator = c.navigator?.currentState;
+                if (navigator != null) _openCallScreen(navigator, c);
+              },
+              child: SafeArea(
+                bottom: false,
+                child: SizedBox(
+                  height: 36,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.call, size: 16, color: Colors.white),
+                      const SizedBox(width: 8),
+                      Text(
+                        '$label  ·  Tap to return',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: MediaQuery.removePadding(
+              context: context,
+              removeTop: true,
+              child: widget.child,
+            ),
+          ),
+        ],
+      );
+    },
+  );
 }

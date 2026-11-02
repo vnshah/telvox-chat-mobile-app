@@ -1,5 +1,77 @@
 package com.telvox.telvox_chat_mobile_app
 
+import android.content.Context
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.PowerManager
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
 
-class MainActivity : FlutterActivity()
+/**
+ * Call audio the WebRTC package does not cover:
+ *  - ringback: the "ringing" tone while a customer's phone rings, played on the
+ *    voice-call stream so it comes out of the earpiece like a phone call's;
+ *  - proximity: the screen turns off at the ear during a call, so a cheek
+ *    cannot tap Mute or End call.
+ */
+class MainActivity : FlutterActivity() {
+    private var tone: ToneGenerator? = null
+    private var proximity: PowerManager.WakeLock? = null
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "telvox/call_audio")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "ringback" -> {
+                        if (call.arguments == true) startRingback() else stopRingback()
+                        result.success(null)
+                    }
+                    "proximity" -> {
+                        if (call.arguments == true) holdProximity() else releaseProximity()
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun startRingback() {
+        stopRingback()
+        tone = try {
+            ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80).also {
+                it.startTone(ToneGenerator.TONE_SUP_RINGTONE)
+            }
+        } catch (_: RuntimeException) {
+            null
+        }
+    }
+
+    private fun stopRingback() {
+        tone?.stopTone()
+        tone?.release()
+        tone = null
+    }
+
+    private fun holdProximity() {
+        if (proximity?.isHeld == true) return
+        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!power.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) return
+        proximity = power.newWakeLock(
+            PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+            "telvox:call-proximity",
+        ).also { it.acquire(4 * 60 * 60 * 1000L) }
+    }
+
+    private fun releaseProximity() {
+        proximity?.let { if (it.isHeld) it.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY) }
+        proximity = null
+    }
+
+    override fun onDestroy() {
+        stopRingback()
+        releaseProximity()
+        super.onDestroy()
+    }
+}

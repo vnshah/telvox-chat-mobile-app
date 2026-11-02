@@ -32,8 +32,22 @@ class FakeCallMedia implements CallMedia {
     return 'v=0\r\nlocal-answer\r\n';
   }
 
+  /// WebRTC refuses an answer once one is applied, as the real one does.
   @override
-  Future<void> remoteAnswer(String sdp) async => remote = sdp;
+  Future<void> remoteAnswer(String sdp) async {
+    if (remote != null) throw StateError('answer already applied');
+    remote = sdp;
+  }
+
+  List<AudioOutput> devices = const [
+    AudioOutput('earpiece', 'Phone'),
+    AudioOutput('speaker', 'Speaker'),
+  ];
+  @override
+  Future<List<AudioOutput>> outputs() async => devices;
+  @override
+  Future<void> route(AudioOutput output) async =>
+      calls.add('route:${output.id}');
   @override
   Future<void> mute(bool muted) async => calls.add('mute:$muted');
   @override
@@ -222,6 +236,28 @@ void main() {
     }, channel: 'private-calls.7');
     await settle(tester);
     expect(h.media.remote, 'v=0\r\ncustomer-answer\r\n');
+    // WhatsApp's media answer comes as the phone rings: not answered yet.
+    expect(h.session.calls.state, CallState.ringing);
+
+    // Meta delivered the connect twice. The repeat used to hang the call up.
+    h.socket.server('calls', {
+      'call_id': 'wacid.OUT',
+      'event': 'connect',
+      'direction': 'BUSINESS_INITIATED',
+      'sdp': 'v=0\r\ncustomer-answer\r\n',
+    }, channel: 'private-calls.7');
+    await settle(tester);
+    expect(h.session.calls.state, CallState.ringing);
+    expect(h.posts.where((r) => r.path == 'inbox/calls/terminate'), isEmpty);
+
+    // The customer answers.
+    h.socket.server('calls', {
+      'call_id': 'wacid.OUT',
+      'event': 'status',
+      'status': 'ACCEPTED',
+      'direction': 'BUSINESS_INITIATED',
+    }, channel: 'private-calls.7');
+    await settle(tester);
     expect(h.session.calls.state, CallState.active);
     expect(find.text('00:00'), findsOneWidget);
 
@@ -451,4 +487,111 @@ void main() {
     await tester.pump();
     h.session.dispose();
   });
+
+  testWidgets('a customer declining shows Declined, not No answer', (
+    tester,
+  ) async {
+    final h = await harness(tester);
+    unawaited(h.session.calls.start(permitted));
+    await settle(tester);
+    for (final event in [
+      {'event': 'connect', 'sdp': 'v=0\r\nanswer\r\n'},
+      {'event': 'status', 'status': 'RINGING'},
+      {'event': 'status', 'status': 'REJECTED'},
+      {'event': 'terminate', 'status': 'COMPLETED'},
+    ]) {
+      h.socket.server('calls', {
+        'call_id': 'wacid.OUT',
+        'direction': 'BUSINESS_INITIATED',
+        ...event,
+      }, channel: 'private-calls.7');
+      await settle(tester);
+    }
+    expect(h.session.calls.notice, 'Declined');
+    // Meta ended it; the phone did not.
+    expect(h.posts.where((r) => r.path == 'inbox/calls/terminate'), isEmpty);
+    await tester.pump(const Duration(seconds: 2));
+    h.session.realtime.stop();
+    await tester.pump();
+    h.session.dispose();
+  });
+
+  testWidgets(
+    'with a headset connected the audio button offers where to play',
+    (tester) async {
+      final h = await harness(tester);
+      h.media.devices = const [
+        AudioOutput('earpiece', 'Phone'),
+        AudioOutput('speaker', 'Speaker'),
+        AudioOutput('bluetooth', 'Galaxy Buds'),
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: T.themeFor(TargetPlatform.android),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: CallButton(session: h.session, contact: permitted),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byTooltip('Voice call'));
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('call-speaker')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Galaxy Buds'));
+      await tester.pumpAndSettle();
+      expect(h.media.calls, contains('route:bluetooth'));
+      expect(h.session.calls.output?.label, 'Galaxy Buds');
+      expect(find.text('Galaxy Buds'), findsOneWidget);
+      await h.session.calls.hangUp();
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      h.session.realtime.stop();
+      await tester.pump();
+      h.session.dispose();
+    },
+  );
+
+  testWidgets(
+    'leaving the call screen keeps the call, and the bar brings it back',
+    (tester) async {
+      final h = await harness(tester);
+      final navigator = GlobalKey<NavigatorState>();
+      h.session.calls.navigator = navigator;
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigator,
+          theme: T.themeFor(TargetPlatform.android),
+          builder: (_, child) => OngoingCallBar(h.session.calls, child: child!),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: CallButton(session: h.session, contact: permitted),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byTooltip('Voice call'));
+      await settle(tester);
+      expect(find.byType(CallScreen), findsOneWidget);
+      await tester.tap(find.byTooltip('Back to chats'));
+      await tester.pumpAndSettle();
+      expect(find.byType(CallScreen), findsNothing);
+      expect(h.session.calls.busy, true);
+      expect(find.byKey(const ValueKey('ongoing-call-bar')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('ongoing-call-bar')));
+      await tester.pumpAndSettle();
+      expect(find.byType(CallScreen), findsOneWidget);
+      await h.session.calls.hangUp();
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      h.session.realtime.stop();
+      await tester.pump();
+      h.session.dispose();
+    },
+  );
 }

@@ -16,8 +16,66 @@ import 'api.dart';
 /// Runs in Firebase's background isolate, so it touches nothing but the
 /// system call UI; answering happens in the app, see [CallPushBridge].
 @pragma('vm:entry-point')
-Future<void> backgroundCallPush(RemoteMessage message) =>
-    showCallFromPush(Map<String, dynamic>.from(message.data));
+Future<void> backgroundCallPush(RemoteMessage message) async {
+  final data = Map<String, dynamic>.from(message.data);
+  await showCallFromPush(data);
+  if (data['type'] == 'call') await _declineWhileClosed(data);
+}
+
+/// Decline on the incoming-call screen of a closed app: the app is not
+/// running to tell the server, so this isolate does — with the sign-in the
+/// app keeps in secure storage — and the call moves on to the other agents
+/// at once rather than after the ring timeout.
+Future<void> _declineWhileClosed(Map<String, dynamic> data) async {
+  final id = '${data['call_id'] ?? ''}';
+  final uuid = callUuid(id);
+  final declined = Completer<bool>();
+  StreamSubscription<CallEvent?>? events;
+  try {
+    events = FlutterCallkitIncoming.onEvent.listen((event) {
+      final same = switch (event) {
+        CallEventActionCallDecline(:final callKitParams) =>
+          callKitParams.id == uuid,
+        CallEventActionCallAccept(:final callKitParams) =>
+          callKitParams.id == uuid,
+        CallEventActionCallEnded(:final callKitParams) =>
+          callKitParams.id == uuid,
+        CallEventActionCallTimeout(:final id) => id == uuid,
+        _ => false,
+      };
+      if (same && !declined.isCompleted) {
+        declined.complete(event is CallEventActionCallDecline);
+      }
+    });
+    final expires = DateTime.tryParse('${data['expires_at'] ?? ''}');
+    final wait = expires == null
+        ? const Duration(seconds: 35)
+        : expires.difference(DateTime.now()) + const Duration(seconds: 5);
+    final declinedHere = await declined.future.timeout(
+      wait.isNegative ? Duration.zero : wait,
+      onTimeout: () => false,
+    );
+    if (!declinedHere) return;
+    final api = MobileApi();
+    final saved = object(
+      decoded(
+        await SecureSessionStore().read(
+          'session.${Uri.parse(api.dio.options.baseUrl).host}',
+        ),
+      ),
+    );
+    final token = saved['token'];
+    if (token == null || '$token'.isEmpty) return;
+    api
+      ..token = '$token'
+      ..wabaId = number(data['waba_user_id']) ?? number(saved['waba_id']);
+    await api.post('inbox/calls/decline', {'call_id': id});
+  } catch (_) {
+    /* The ring timeout moves the call on. */
+  } finally {
+    await events?.cancel();
+  }
+}
 
 Future<void> showCallFromPush(Map<String, dynamic> data) async {
   final id = '${data['call_id'] ?? ''}';
