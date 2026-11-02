@@ -880,15 +880,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: T.incoming,
                 borderRadius: BorderRadius.circular(8),
-                boxShadow: [
-                  BoxShadow(
-                    color: T.ink.withValues(alpha: .1),
-                    offset: const Offset(0, 1),
-                    blurRadius: 2,
-                  ),
-                ],
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
@@ -927,6 +920,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     final permission = policy;
     return Scaffold(
       appBar: AppBar(
+        shape: const Border(bottom: BorderSide(color: T.hairline)),
         titleSpacing: 0,
         // Tapping the name opens contact details, as on WhatsApp and the web inbox.
         title: InkWell(
@@ -1264,7 +1258,7 @@ class _WindowStatusState extends State<WindowStatus> {
   }
 }
 
-/// White raised card on the chat wallpaper, where the composer would be when
+/// Warm grey card on the white chat, where the composer would be when
 /// sending is not allowed (closed window, closed chat, not assigned).
 class _ComposerCard extends StatelessWidget {
   const _ComposerCard({required this.child});
@@ -1274,15 +1268,8 @@ class _ComposerCard extends StatelessWidget {
     margin: const EdgeInsets.fromLTRB(8, 4, 8, 4),
     padding: const EdgeInsets.all(12),
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: T.incoming,
       borderRadius: BorderRadius.circular(14),
-      boxShadow: [
-        BoxShadow(
-          color: T.ink.withValues(alpha: .12),
-          offset: const Offset(0, 1),
-          blurRadius: 3,
-        ),
-      ],
     ),
     child: child,
   );

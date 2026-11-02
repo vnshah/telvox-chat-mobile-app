@@ -998,18 +998,10 @@ class ChatWallpaper extends CustomPainter {
   const ChatWallpaper();
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          // Warm paper, deeper than both bubbles so they read as raised.
-          colors: [Color(0xFFEBE5DB), Color(0xFFE2DBCF)],
-        ).createShader(Offset.zero & size),
-    );
+    canvas.drawRect(Offset.zero & size, Paint()..color = Colors.white);
+    // A faint trace of the Telvox motif; the bubbles carry the contrast.
     final line = Paint()
-      ..color = T.brass.withValues(alpha: .13)
+      ..color = T.brass.withValues(alpha: .07)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.1
       ..strokeCap = StrokeCap.round;

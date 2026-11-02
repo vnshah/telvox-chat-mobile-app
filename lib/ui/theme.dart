@@ -28,8 +28,8 @@ abstract final class T {
   static const onSelected = Color(0xFF3D3022);
   static const greenWash = Color(0xFFDCEBDD);
 
-  /// Material 3 surfaces derived from the paper tone.
-  static const surface = Color(0xFFFBF8F3);
+  /// Screens are white; the warm tones stay in controls, tags and bubbles.
+  static const surface = Colors.white;
   static const surfaceHigh = Color(0xFFEFEAE2);
 
   /// iOS grouped background and bar tint in the same warm family.
@@ -37,8 +37,15 @@ abstract final class T {
   static const iosBar = Color(0xF2FAF8F4);
   static const iosSeparator = Color(0x293C3228);
 
-  /// The web inbox's sage: your messages stay green on the warm wallpaper.
+  /// The web inbox's sage: your messages stay green on the white chat.
   static const outgoing = Color(0xFFD5E8D6);
+
+  /// A customer's message, and the day and activity pills: a light warm grey
+  /// that stands apart from the white chat.
+  static const incoming = Color(0xFFF4F2EE);
+
+  /// Hairlines between inbox rows and around the chat's bars.
+  static const hairline = Color(0xFFEFECE7);
   static const firm = Color(0xFF1C1B1A);
   static const danger = Color(0xFFC2335E);
   static const blue = Color(0xFF137BA4);
@@ -198,7 +205,7 @@ abstract final class T {
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: const Color(0xFFF3EFE8),
+        backgroundColor: surface,
         indicatorColor: selected,
         surfaceTintColor: Colors.transparent,
         height: 72,

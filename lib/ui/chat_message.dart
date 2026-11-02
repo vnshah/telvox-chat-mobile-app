@@ -521,7 +521,7 @@ class MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final m = message;
-    final color = m.out ? T.outgoing : Colors.white;
+    final color = m.out ? T.outgoing : T.incoming;
     final media = m.type != 'text';
     final width = media ? math.min(maxWidth, 280.0) : maxWidth;
     final emojiCount = m.type == 'text' && m.reply == null
@@ -563,13 +563,6 @@ class MessageBubble extends StatelessWidget {
             bottomLeft: const Radius.circular(9),
             bottomRight: const Radius.circular(9),
           ),
-          boxShadow: [
-            BoxShadow(
-              color: T.ink.withValues(alpha: .14),
-              offset: const Offset(0, 1),
-              blurRadius: 2,
-            ),
-          ],
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,

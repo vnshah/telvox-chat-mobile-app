@@ -318,15 +318,8 @@ class _ChatComposerState extends State<ChatComposer> {
         : const Duration(milliseconds: 160);
     final pill = Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: T.incoming,
         borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: T.ink.withValues(alpha: .12),
-            offset: const Offset(0, 1),
-            blurRadius: 3,
-          ),
-        ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -443,8 +436,12 @@ class _ChatComposerState extends State<ChatComposer> {
       child: AnimatedOpacity(
         opacity: widget.enabled ? 1 : .45,
         duration: motion,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(top: BorderSide(color: T.hairline)),
+          ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [

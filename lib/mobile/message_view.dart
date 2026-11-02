@@ -61,7 +61,7 @@ class LiveMessageView extends StatelessWidget {
         child: Center(
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: .78),
+              color: T.incoming,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Padding(
@@ -634,7 +634,7 @@ class DocumentCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: outgoing
               ? Colors.black.withValues(alpha: .05)
-              : const Color(0xFFF2F4F3),
+              : Colors.white.withValues(alpha: .7),
           borderRadius: BorderRadius.circular(7),
         ),
         child: Row(

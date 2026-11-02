@@ -1211,7 +1211,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
                     final item = items[index];
                     final ticket = widget.kind == 2;
                     final contact = ticket ? object(item['contact']) : item;
-                    return LiveConversationRow(
+                    final row = LiveConversationRow(
                       session: widget.session,
                       item: item,
                       ticket: ticket,
@@ -1231,6 +1231,17 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
                         if (mounted) load(quiet: true);
                       },
                     );
+                    // Thin dividers keep the rows' structure on white.
+                    return index == 0
+                        ? row
+                        : DecoratedBox(
+                            decoration: const BoxDecoration(
+                              border: Border(
+                                top: BorderSide(color: T.hairline),
+                              ),
+                            ),
+                            child: row,
+                          );
                   },
                 ),
               ),
