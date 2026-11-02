@@ -362,11 +362,16 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      // Edited in place on the contact page, no separate screen.
       await tester.tap(find.byTooltip('Edit name'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextFormField), 'Priya Sharma');
-      await tester.tap(find.text('Save'));
+      await tester.enterText(
+        find.byKey(const ValueKey('name-editor')),
+        'Priya Sharma',
+      );
+      await tester.tap(find.byTooltip('Save name'));
       await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('name-editor')), findsNothing);
       expect(
         requests.singleWhere((r) => r.path == 'inbox/contacts/12/profile').data,
         {'profile_name': 'Priya Sharma'},

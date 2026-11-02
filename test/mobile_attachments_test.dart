@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart' show XFile;
 import 'package:telvox_chat_mobile_app/mobile/api.dart';
+import 'package:telvox_chat_mobile_app/mobile/camera.dart';
 import 'package:telvox_chat_mobile_app/mobile/chat.dart';
 import 'package:telvox_chat_mobile_app/mobile/location.dart';
 import 'package:telvox_chat_mobile_app/mobile/media.dart';
@@ -235,29 +236,34 @@ void main() {
       await close(tester);
     });
 
-    testWidgets('the camera button takes a photo or records a video', (
+    testWidgets('a photo from the camera is sent with its caption at once', (
       tester,
     ) async {
-      // A cancelled capture: the file checks themselves are tested above.
-      final picker = FakeMediaPicker(null);
-      mediaPicker = picker;
+      openCamera = (_) async => CapturedMedia(
+        temp('camera-shot.jpg', jpeg),
+        video: false,
+        caption: 'Here it is',
+      );
       await openChat(tester);
-      await tester.tap(find.byTooltip('Camera'));
-      await tester.pumpAndSettle();
-      expect(find.text('Take photo'), findsOneWidget);
-      expect(find.text('Up to 30 seconds'), findsOneWidget);
-      await tester.tap(find.text('Take photo'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Camera'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Record video'));
-      await tester.pumpAndSettle();
-      expect(picker.asked, ['photo:true', 'video:true']);
+      // Run on the real event loop: the photo is checked from its file.
+      await tester.runAsync(() async {
+        await tester.tap(find.byTooltip('Camera'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 300)),
+      );
+      await tester.pump();
+      final send = sends.single.data as FormData;
+      final fields = Map.fromEntries(send.fields);
+      expect(fields['message_type'], 'image');
+      expect(fields['body'], 'Here it is');
+      expect(send.files.single.value.filename, endsWith('camera-shot.jpg'));
       // The camera hides while there is text to send, as on WhatsApp.
-      await tester.enterText(find.byType(TextField), 'Here it is');
+      await tester.enterText(find.byType(TextField), 'Typing');
       await tester.pump();
       expect(find.byTooltip('Camera'), findsNothing);
-      expect(sends, isEmpty);
       await close(tester);
     });
 
@@ -275,5 +281,45 @@ void main() {
       expect(find.byKey(const ValueKey('emoji-panel')), findsNothing);
       await close(tester);
     });
+  });
+
+  testWidgets('the preview sends what was taken with the caption, or retakes', (
+    tester,
+  ) async {
+    CapturedMedia? result;
+    var popped = false;
+    final shot = temp('preview.jpg', jpeg);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async {
+              result = await Navigator.of(context).push<CapturedMedia>(
+                MaterialPageRoute(
+                  builder: (_) => MediaPreviewPage(shot, video: false),
+                ),
+              );
+              popped = true;
+            },
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('retake')));
+    await tester.pumpAndSettle();
+    expect(popped, true);
+    expect(result, isNull);
+
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('caption')), 'Invoice');
+    await tester.tap(find.byKey(const ValueKey('send-captured')));
+    await tester.pumpAndSettle();
+    expect(result?.caption, 'Invoice');
+    expect(result?.file.path, shot.path);
+    expect(result?.video, false);
   });
 }

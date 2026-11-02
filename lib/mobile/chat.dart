@@ -11,7 +11,9 @@ import '../ui/data.dart' show Message;
 import '../ui/chat_message.dart';
 import '../ui/conversation.dart' show ChatWallpaper;
 import 'call_history.dart';
+import 'camera.dart';
 import 'calls.dart';
+import 'activity.dart';
 import 'api.dart';
 import 'models.dart';
 import 'screens.dart';
@@ -32,6 +34,16 @@ import 'realtime.dart';
 MediaPicker mediaPicker = DeviceMediaPicker();
 @visibleForTesting
 LocationSource locationSource = DeviceLocationSource();
+
+/// The app's camera; tests replace it.
+@visibleForTesting
+Future<CapturedMedia?> Function(BuildContext context) openCamera = (context) =>
+    Navigator.of(context, rootNavigator: true).push<CapturedMedia>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => CameraScreen(onGallery: mediaPicker.galleryItem),
+      ),
+    );
 
 class LiveChat extends StatefulWidget {
   const LiveChat(this.session, this.contact, {super.key, this.ticketId});
@@ -156,6 +168,10 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   Timer? liveDebounce;
   late final repository = InboxRepository(widget.session.api);
   int get contactId => number(widget.contact['id'])!;
+
+  /// When the customer was last verifiably active in this conversation.
+  DateTime? get activeAt =>
+      customerActiveAt([for (final m in messages) m.json]);
 
   /// The contact as the call rules read it: the list row, updated by details.
   Json get callContact => {...widget.contact, ...object(detail?['contact'])};
@@ -532,42 +548,21 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
-  /// WhatsApp's camera takes a photo or a video.
+  /// WhatsApp's camera: a photo or video, reviewed and captioned, then sent.
   Future<void> camera() async {
     if (!policy.canSend) {
       mobileNotice(context, policy.reason!);
       return;
     }
-    final video = await showModalBottomSheet<bool>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Take photo'),
-              onTap: () => Navigator.pop(context, false),
-            ),
-            ListTile(
-              leading: const Icon(Icons.videocam_outlined),
-              title: const Text('Record video'),
-              subtitle: Text(
-                'Up to ${DeviceMediaPicker.maxVideo.inSeconds} seconds',
-              ),
-              onTap: () => Navigator.pop(context, true),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (!mounted || video == null) return;
-    await pickMedia(
-      () => video
-          ? mediaPicker.video(camera: true)
-          : mediaPicker.photo(camera: true),
-    );
+    final shot = await openCamera(context);
+    if (shot == null || !mounted) return;
+    try {
+      final file = await pickedAttachment(shot.file);
+      if (!mounted) return;
+      queue({'message_type': 'text', 'body': shot.caption}, attachment: file);
+    } catch (e) {
+      if (mounted) mobileNotice(context, e);
+    }
   }
 
   /// Send this phone's location as a map pin, or ask the customer for theirs
@@ -628,8 +623,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   }
 
   /// Sends a message that is not typed text, through the same pending row.
-  void queue(Json fields) {
-    final item = PendingSend({
+  void queue(Json fields, {Attachment? attachment}) {
+    final item = PendingSend(attachment: attachment, {
       'waba_user_id': widget.session.api.wabaId,
       'contact_id': contactId,
       'wa_id': phone,
@@ -878,7 +873,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
     await openPage(
       context,
-      ContactActionsPage(widget.session, contactId, initial: detail),
+      ContactActionsPage(
+        widget.session,
+        contactId,
+        initial: detail,
+        activeAt: activeAt,
+      ),
     );
     if (mounted) details();
   }
@@ -1098,23 +1098,40 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
               children: [
-                Avatar(name, size: 36),
-                const SizedBox(width: 10),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      WindowStatus(
-                        permission.expiresAt,
-                        known: detail != null,
-                        prefix: widget.ticketId == null
-                            ? formatPhone(
-                                widget.contact['display_wa_id'] ?? phone,
-                              )
-                            : 'Ticket conversation',
-                      ),
-                    ],
+                  // As WhatsApp shows "online": recent activity in place of
+                  // the number, from what the customer verifiably did.
+                  child: RecentActivity(
+                    at: activeAt,
+                    builder: (context, ago) => Row(
+                      children: [
+                        Avatar(name, size: 36, online: activeNow(ago)),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              WindowStatus(
+                                permission.expiresAt,
+                                known: detail != null,
+                                prefix: widget.ticketId != null
+                                    ? 'Ticket conversation'
+                                    : activityLabel(ago) ??
+                                          formatPhone(
+                                            widget.contact['display_wa_id'] ??
+                                                phone,
+                                          ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],

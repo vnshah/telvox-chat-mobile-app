@@ -12,8 +12,10 @@
     <!-- "Send your current location" in a chat. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- The incoming-call screen library also asks for the camera; calls here are voice only. -->
-    <uses-permission android:name="android.permission.CAMERA" tools:node="remove" />
+    <!-- The in-app camera, for photos and videos in a chat. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- The incoming-call library asks to run its call service as a camera
+         service too; calls here are voice only. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" tools:node="remove" />
     <application
         android:label="Telvox Chat"

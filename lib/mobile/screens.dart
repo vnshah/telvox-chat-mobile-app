@@ -5,7 +5,10 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
+import 'activity.dart';
 import 'api.dart';
+import 'contact_actions.dart';
+import 'editors.dart';
 import 'call_push.dart';
 import 'calls.dart';
 import 'chat.dart';
@@ -981,6 +984,221 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   int serial = 0;
   // Agent names by id, for the assignee initials on each row.
   Map<int, String> people = {};
+
+  /// What an empty tab says: what is missing, not that something failed.
+  String get emptyText {
+    final tickets = widget.kind == 2;
+    final what = tickets ? 'tickets' : 'chats';
+    return switch (filter) {
+      'mychats' => 'No $what assigned to you right now.',
+      'unread' => 'You are all caught up: no unread $what.',
+      'unassigned' => 'Every ${tickets ? 'ticket' : 'chat'} has someone on it.',
+      'favourite' => 'No favourites yet. Long-press a chat to add one.',
+      'closed' => 'No closed $what.',
+      _ =>
+        tickets
+            ? 'No tickets yet.'
+            : 'No chats yet. Tap + to add a contact and start one.',
+    };
+  }
+
+  /// Long-press on a chat: the everyday changes without opening it.
+  Future<void> quickActions(Json contact) async {
+    final id = number(contact['id']);
+    if (id == null) return;
+    final closed = number(contact['conversation_status']) == 0;
+    final me = number(widget.session.user?['id']);
+    final favourites = decoded(contact['favourite']);
+    final favourite =
+        me != null && favourites is List && favourites.map(number).contains(me);
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SheetTitle(
+                readableText(contact['profile_name']).isEmpty
+                    ? formatPhone(contact['display_wa_id'] ?? contact['wa_id'])
+                    : readableText(contact['profile_name']),
+              ),
+              for (final (key, icon, label) in [
+                ('open', Icons.chat_outlined, 'Open chat'),
+                ('details', Icons.person_outline, 'Contact details'),
+                ('assign', Icons.person_add_alt_1_outlined, 'Assign…'),
+                (
+                  'favourite',
+                  favourite ? Icons.star_rounded : Icons.star_border_rounded,
+                  favourite ? 'Remove from favourites' : 'Add to favourites',
+                ),
+                (
+                  'status',
+                  closed ? Icons.replay : Icons.task_alt,
+                  closed ? 'Reopen conversation' : 'Close conversation',
+                ),
+              ])
+                ListTile(
+                  key: ValueKey('quick-$key'),
+                  leading: Icon(icon, color: T.brass),
+                  title: Text(label),
+                  onTap: () => Navigator.pop(context, key),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    await quick(contact, choice);
+  }
+
+  /// WhatsApp's row swipes: right marks it read, left closes or reopens it.
+  /// The row never vanishes on its own; the quiet reload moves it.
+  Widget swipeable(Json contact, Widget row) {
+    final unread = (number(contact['unread_message_count']) ?? 0) > 0;
+    final closed = number(contact['conversation_status']) == 0;
+    Widget background(bool start, IconData icon, String label, Color colour) =>
+        ColoredBox(
+          color: colour,
+          child: Align(
+            alignment: start ? Alignment.centerLeft : Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+    return Dismissible(
+      key: ValueKey('swipe-${contact['id']}'),
+      direction: unread
+          ? DismissDirection.horizontal
+          : DismissDirection.endToStart,
+      dismissThresholds: const {
+        DismissDirection.startToEnd: 0.3,
+        DismissDirection.endToStart: 0.3,
+      },
+      background: background(
+        true,
+        Icons.mark_chat_read_outlined,
+        'Read',
+        T.brass,
+      ),
+      secondaryBackground: background(
+        false,
+        closed ? Icons.replay : Icons.task_alt,
+        closed ? 'Reopen' : 'Close',
+        closed ? T.bronze : T.green,
+      ),
+      confirmDismiss: (direction) async {
+        await quick(
+          contact,
+          direction == DismissDirection.startToEnd ? 'read' : 'status',
+        );
+        return false;
+      },
+      child: row,
+    );
+  }
+
+  /// One quick change to a chat, from the long-press sheet or a swipe.
+  Future<void> quick(Json contact, String choice) async {
+    final id = number(contact['id']);
+    if (id == null) return;
+    final closed = number(contact['conversation_status']) == 0;
+    final me = number(widget.session.user?['id']);
+    final favourites = decoded(contact['favourite']);
+    final favourite =
+        me != null && favourites is List && favourites.map(number).contains(me);
+    final api = widget.session.api;
+    try {
+      switch (choice) {
+        case 'open':
+          await openPage(context, LiveChat(widget.session, contact));
+        case 'details':
+          await openPage(context, ContactActionsPage(widget.session, id));
+        case 'read':
+          await api.post('inbox/mark-read', {'contact_id': id});
+        case 'favourite':
+          await api.post('inbox/contacts/$id/favorite');
+          if (mounted) {
+            mobileNotice(
+              context,
+              favourite ? 'Removed from favourites.' : 'Added to favourites.',
+            );
+          }
+        case 'status':
+          await api.post('inbox/conversation/${closed ? 'reopen' : 'close'}', {
+            'contact_id': id,
+          });
+          if (mounted) {
+            mobileNotice(
+              context,
+              closed ? 'Conversation reopened.' : 'Conversation closed.',
+            );
+          }
+        case 'assign':
+          final details = object(
+            (await api.post('inbox/getContactDetails', {
+              'contact_id': id,
+            }))['data'],
+          );
+          if (!mounted) return;
+          if (details['can_assign_contact'] != true) {
+            mobileNotice(context, 'You cannot assign this chat.');
+            return;
+          }
+          final multi = details['multiple_assignment_enabled'] == true;
+          final users = rows(details['users']);
+          await showEditorSheet(
+            context,
+            title: 'Assign chat',
+            fields: [
+              EditField(
+                multi ? 'user_ids' : 'user_id',
+                'Assignee',
+                value: multi
+                    ? details['assigned_user_ids']
+                    : number(object(details['contact'])['assigned_to']) ?? 0,
+                multiple: multi,
+                options: multi
+                    ? users
+                    : [
+                        {'id': 0, 'name': 'Unassigned'},
+                        ...users,
+                      ],
+              ),
+            ],
+            save: (v) => api.request(
+              'inbox/contacts/$id/assign',
+              method: 'POST',
+              data: multi
+                  ? v
+                  : {'user_id': v['user_id'] == 0 ? null : v['user_id']},
+            ),
+          );
+      }
+    } catch (e) {
+      if (mounted) mobileNotice(context, e);
+    }
+    if (mounted) load(quiet: true);
+  }
+
   // Same tabs and order as the web inbox; tickets have no favourites.
   Map<String, String> get filters => {
     'all': 'All',
@@ -1263,12 +1481,15 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
                   itemBuilder: (context, index) {
                     if (index == items.length) {
                       return items.isEmpty && !busy
-                          ? const Padding(
-                              padding: EdgeInsets.all(30),
-                              child: Text(
-                                'No results in this view.',
-                                textAlign: TextAlign.center,
-                              ),
+                          ? EmptyView(
+                              search.text.trim().isNotEmpty
+                                  ? 'Nothing matches “${search.text.trim()}”.'
+                                  : emptyText,
+                              icon: search.text.trim().isNotEmpty
+                                  ? Icons.search_off
+                                  : widget.kind == 2
+                                  ? Icons.confirmation_number_outlined
+                                  : Icons.chat_bubble_outline,
                             )
                           : more && items.isNotEmpty
                           ? AppButton.text(
@@ -1299,9 +1520,10 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
                         }
                         if (mounted) load(quiet: true);
                       },
+                      onLongPress: ticket ? null : () => quickActions(contact),
                     );
                     // Thin dividers keep the rows' structure on white.
-                    return index == 0
+                    final divided = index == 0
                         ? row
                         : DecoratedBox(
                             decoration: const BoxDecoration(
@@ -1311,6 +1533,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
                             ),
                             child: row,
                           );
+                    return ticket ? divided : swipeable(contact, divided);
                   },
                 ),
               ),
@@ -1461,6 +1684,7 @@ class LiveConversationRow extends StatelessWidget {
     required this.session,
     required this.item,
     required this.onTap,
+    this.onLongPress,
     this.ticket = false,
     this.people = const {},
   });
@@ -1469,6 +1693,9 @@ class LiveConversationRow extends StatelessWidget {
   final bool ticket;
   final Map<int, String> people;
   final VoidCallback onTap;
+
+  /// Quick actions on the row itself, as WhatsApp offers on a long press.
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -1538,11 +1765,19 @@ class LiveConversationRow extends StatelessWidget {
       child: InkWell(
         key: ValueKey('live-row-${item['id']}'),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
           child: Row(
             children: [
-              Avatar(name, size: 46),
+              // Recently active customers get WhatsApp's green dot.
+              ticket
+                  ? Avatar(name, size: 46)
+                  : RecentActivity(
+                      at: customerActiveAt([last]),
+                      builder: (_, ago) =>
+                          Avatar(name, size: 46, online: activeNow(ago)),
+                    ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -1743,6 +1978,37 @@ class _RowChip extends StatelessWidget {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color),
+    ),
+  );
+}
+
+/// An empty list, said kindly: an icon in the brand wash and what to do next.
+class EmptyView extends StatelessWidget {
+  const EmptyView(this.text, {super.key, this.icon = Icons.inbox_outlined});
+  final String text;
+  final IconData icon;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(32, 48, 32, 32),
+    child: Column(
+      children: [
+        Container(
+          width: 64,
+          height: 64,
+          decoration: const BoxDecoration(
+            color: T.selected,
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: T.bronze, size: 30),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          text,
+          key: const ValueKey('empty-view'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 14.5, color: T.secondary),
+        ),
+      ],
     ),
   );
 }

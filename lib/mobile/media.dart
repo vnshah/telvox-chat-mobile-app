@@ -379,9 +379,6 @@ class DeviceMediaPicker implements MediaPicker {
   final _picker = ImagePicker();
   static const _maxSide = 2560.0, _quality = 85;
 
-  /// Phone camera video grows fast and WhatsApp stops at 16 MB.
-  static const maxVideo = Duration(seconds: 30);
-
   @override
   Future<XFile?> photo({required bool camera}) => _picker.pickImage(
     source: camera ? ImageSource.camera : ImageSource.gallery,
@@ -393,7 +390,6 @@ class DeviceMediaPicker implements MediaPicker {
   @override
   Future<XFile?> video({required bool camera}) => _picker.pickVideo(
     source: camera ? ImageSource.camera : ImageSource.gallery,
-    maxDuration: maxVideo,
   );
 
   @override

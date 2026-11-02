@@ -28,6 +28,9 @@ class DetailHero extends StatelessWidget {
     this.actions = const [],
     this.onTitleTap,
     this.centered = true,
+    this.online = false,
+    this.status,
+    this.titleEditor,
   });
   final String title;
   final String? avatar, subtitle;
@@ -35,6 +38,15 @@ class DetailHero extends StatelessWidget {
   final List<QuickAction> actions;
   final VoidCallback? onTitleTap;
   final bool centered;
+
+  /// A green dot on the avatar: the customer was active moments ago.
+  final bool online;
+
+  /// A short green line under the subtitle, such as "Active 3 min ago".
+  final String? status;
+
+  /// Shown in place of the title while it is being edited.
+  final Widget? titleEditor;
 
   @override
   Widget build(BuildContext context) {
@@ -48,39 +60,68 @@ class DetailHero extends StatelessWidget {
         crossAxisAlignment: align,
         children: [
           if (avatar != null) ...[
-            CircleAvatar(
-              radius: 36,
-              backgroundColor: T.selected,
-              child: Text(
-                avatar!,
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w600,
-                  color: T.onSelected,
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                CircleAvatar(
+                  radius: 36,
+                  backgroundColor: T.selected,
+                  child: Text(
+                    avatar!,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w600,
+                      color: T.onSelected,
+                    ),
+                  ),
                 ),
-              ),
+                if (online)
+                  Positioned(
+                    right: 2,
+                    bottom: 2,
+                    child: Container(
+                      key: const ValueKey('active-dot'),
+                      width: 16,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: T.green,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2.5),
+                      ),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 10),
           ],
-          GestureDetector(
-            onTap: onTitleTap,
-            child: Text(
-              title,
-              textAlign: centered ? TextAlign.center : TextAlign.start,
-              style: TextStyle(
-                fontSize: apple ? 22 : 20,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -.3,
-                color: T.ink,
+          titleEditor ??
+              GestureDetector(
+                onTap: onTitleTap,
+                child: Text(
+                  title,
+                  textAlign: centered ? TextAlign.center : TextAlign.start,
+                  style: TextStyle(
+                    fontSize: apple ? 22 : 20,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -.3,
+                    color: T.ink,
+                  ),
+                ),
               ),
-            ),
-          ),
           if (subtitle != null && subtitle!.isNotEmpty) ...[
             const SizedBox(height: 2),
             Text(
               subtitle!,
               textAlign: centered ? TextAlign.center : TextAlign.start,
               style: const TextStyle(fontSize: 14, color: T.secondary),
+            ),
+          ],
+          if (status != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              status!,
+              key: const ValueKey('active-label'),
+              style: const TextStyle(fontSize: 13, color: T.green),
             ),
           ],
           if (chips.isNotEmpty) ...[
@@ -345,34 +386,54 @@ class DetailRow extends StatelessWidget {
 
 /// Status chip: green while open, neutral otherwise.
 class StatusChip extends StatelessWidget {
-  const StatusChip(this.label, {super.key, this.icon, this.positive = false});
+  const StatusChip(
+    this.label, {
+    super.key,
+    this.icon,
+    this.positive = false,
+    this.onTap,
+  });
   final String label;
   final IconData? icon;
   final bool positive;
+
+  /// Opens a quick change, marked with a small chevron.
+  final VoidCallback? onTap;
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-    decoration: BoxDecoration(
-      color: positive ? T.greenWash : T.wash,
-      border: Border.all(color: positive ? Colors.transparent : T.edge),
-      borderRadius: BorderRadius.circular(8),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (icon != null) ...[
-          AppIcon(icon, size: 14, color: positive ? T.green : T.secondary),
-          const SizedBox(width: 4),
-        ],
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w500,
-            color: positive ? T.green : T.secondary,
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: positive ? T.greenWash : T.wash,
+        border: Border.all(color: positive ? Colors.transparent : T.edge),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            AppIcon(icon, size: 14, color: positive ? T.green : T.secondary),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w500,
+              color: positive ? T.green : T.secondary,
+            ),
           ),
-        ),
-      ],
+          if (onTap != null) ...[
+            const SizedBox(width: 2),
+            AppIcon(
+              Icons.arrow_drop_down,
+              size: 16,
+              color: positive ? T.green : T.secondary,
+            ),
+          ],
+        ],
+      ),
     ),
   );
 }

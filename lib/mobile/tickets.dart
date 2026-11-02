@@ -94,16 +94,18 @@ class _TicketPageState extends State<TicketPage> {
     String path, {
     String method = 'POST',
   }) async {
-    await openPage(
+    // Small changes open over the ticket and save in place. The sheet shows
+    // its own progress; the page is idle while it is open.
+    setState(() => busy = false);
+    await showEditorSheet(
       context,
-      ActionEditor(
-        title: title,
-        fields: fields,
-        save: (v) async {
-          await api.request(path, method: method, data: v);
-        },
-      ),
+      title: title,
+      fields: fields,
+      save: (v) async {
+        await api.request(path, method: method, data: v);
+      },
     );
+    if (mounted) setState(() => busy = true);
   }
 
   Future<void> choose(String key, String label, String listKey) async {
@@ -166,18 +168,18 @@ class _TicketPageState extends State<TicketPage> {
   void addTag() => action(() async {
     final r = await api.get('inbox/tickets/${widget.id}/unattached-tags');
     if (!mounted) return;
-    await openPage(
+    setState(() => busy = false);
+    await showEditorSheet(
       context,
-      ActionEditor(
-        title: 'Add tag',
-        fields: [
-          EditField('tag_id', 'Tag', options: rows(r['data']), required: true),
-        ],
-        save: (v) async {
-          await api.post('inbox/tickets/${widget.id}/tags/${v['tag_id']}');
-        },
-      ),
+      title: 'Add tag',
+      fields: [
+        EditField('tag_id', 'Tag', options: rows(r['data']), required: true),
+      ],
+      save: (v) async {
+        await api.post('inbox/tickets/${widget.id}/tags/${v['tag_id']}');
+      },
     );
+    if (mounted) setState(() => busy = true);
   });
 
   void note([Json? existing]) => action(

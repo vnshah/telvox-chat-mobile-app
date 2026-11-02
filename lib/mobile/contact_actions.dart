@@ -12,11 +12,21 @@ import 'screens.dart' show failure, mobileNotice, openPage;
 import 'shared_media.dart';
 import 'call_history.dart';
 import 'calls.dart' show callEligibility;
+import 'activity.dart';
 
 class ContactActionsPage extends StatefulWidget {
-  const ContactActionsPage(this.session, this.id, {super.key, this.initial});
+  const ContactActionsPage(
+    this.session,
+    this.id, {
+    super.key,
+    this.initial,
+    this.activeAt,
+  });
   final MobileSession session;
   final int id;
+
+  /// When the customer was last seen active, from the open conversation.
+  final DateTime? activeAt;
 
   /// Details the caller already holds, shown while a fresh copy loads.
   final Json? initial;
@@ -65,15 +75,16 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
     }
   }
 
+  /// Small changes open over the page and save in place.
   Future<void> edit(
     String title,
     List<EditField> fields,
     Future<void> Function(Json) save,
   ) async {
-    await openPage(
-      context,
-      ActionEditor(title: title, fields: fields, save: save),
-    );
+    // The sheet shows its own progress; the page is idle while it is open.
+    setState(() => busy = false);
+    await showEditorSheet(context, title: title, fields: fields, save: save);
+    if (mounted) setState(() => busy = true);
   }
 
   Future<void> mutate(String path, {String method = 'POST', Json? body}) async {
@@ -83,15 +94,56 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
   Json get contact => object(data?['contact']);
   bool get closed => number(contact['conversation_status']) == 0;
 
-  void editName() => action(
-    () => edit('Edit contact', [
-      EditField(
-        'profile_name',
-        'Name',
-        value: contact['profile_name'],
-        required: true,
+  /// The name is edited where it is shown.
+  bool editingName = false;
+  late final nameField = TextEditingController();
+
+  void editName() {
+    nameField.text = '${contact['profile_name'] ?? ''}';
+    setState(() => editingName = true);
+  }
+
+  void saveName() {
+    final name = nameField.text.trim();
+    if (name.isEmpty || name == '${contact['profile_name'] ?? ''}') {
+      setState(() => editingName = false);
+      return;
+    }
+    action(() async {
+      await mutate(
+        'inbox/contacts/${widget.id}/profile',
+        body: {'profile_name': name},
+      );
+      if (mounted) setState(() => editingName = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    nameField.dispose();
+    super.dispose();
+  }
+
+  void status() => action(
+    () => edit(
+      'Conversation status',
+      [
+        EditField(
+          'status',
+          'Status',
+          value: closed ? 0 : 1,
+          required: true,
+          options: const [
+            {'id': 1, 'name': 'Open'},
+            {'id': 0, 'name': 'Closed'},
+          ],
+        ),
+      ],
+      (v) => mutate(
+        'inbox/conversation/${v['status'] == 0 ? 'close' : 'reopen'}',
+        body: {'contact_id': widget.id},
       ),
-    ], (v) => mutate('inbox/contacts/${widget.id}/profile', body: v)),
+    ),
   );
 
   void assign() => action(() async {
@@ -251,43 +303,88 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
         ),
       ],
       children: [
-        DetailHero(
-          avatar: initials.isEmpty ? '?' : initials,
-          title: name.isEmpty ? formatPhone(c['wa_id']) : name,
-          subtitle: formatPhone(c['display_wa_id'] ?? c['wa_id']),
-          onTitleTap: busy ? null : editName,
-          chips: [
-            StatusChip(
-              closed ? 'Closed' : 'Open',
-              icon: closed ? Icons.lock_outline : Icons.schedule,
-              positive: !closed,
-            ),
-            StatusChip(
-              assignee == 'Unassigned' ? 'Unassigned' : 'Assigned to $assignee',
-              icon: Icons.person_outline,
-            ),
-            if (favourite)
-              const StatusChip('Favourite', icon: Icons.star_rounded),
-          ],
-          actions: [
-            QuickAction(Icons.chat_outlined, 'Message', message, primary: true),
-            QuickAction(
-              favourite ? Icons.star_rounded : Icons.star_border_rounded,
-              favourite ? 'Unfavourite' : 'Favourite',
-              busy ? null : this.favourite,
-            ),
-            if (data!['can_assign_contact'] == true)
-              QuickAction(
-                Icons.person_add_alt_1_outlined,
-                'Assign',
-                busy ? null : assign,
+        RecentActivity(
+          at: widget.activeAt,
+          builder: (context, ago) => DetailHero(
+            avatar: initials.isEmpty ? '?' : initials,
+            title: name.isEmpty ? formatPhone(c['wa_id']) : name,
+            subtitle: formatPhone(c['display_wa_id'] ?? c['wa_id']),
+            onTitleTap: busy ? null : editName,
+            titleEditor: editingName
+                ? SizedBox(
+                    width: 300,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            key: const ValueKey('name-editor'),
+                            controller: nameField,
+                            autofocus: true,
+                            textAlign: TextAlign.center,
+                            textCapitalization: TextCapitalization.words,
+                            onSubmitted: (_) => saveName(),
+                          ),
+                        ),
+                        AppIconButton(
+                          tooltip: 'Save name',
+                          onPressed: busy ? null : saveName,
+                          icon: const Icon(Icons.check, color: T.green),
+                        ),
+                        AppIconButton(
+                          tooltip: 'Cancel',
+                          onPressed: () => setState(() => editingName = false),
+                          icon: const Icon(Icons.close, color: T.muted),
+                        ),
+                      ],
+                    ),
+                  )
+                : null,
+            online: activeNow(ago),
+            status: activityLabel(ago),
+            chips: [
+              StatusChip(
+                closed ? 'Closed' : 'Open',
+                icon: closed ? Icons.lock_outline : Icons.schedule,
+                positive: !closed,
+                onTap: busy ? null : status,
               ),
-            QuickAction(
-              closed ? Icons.replay : Icons.task_alt,
-              closed ? 'Reopen' : 'Close',
-              busy ? null : closeOrReopen,
-            ),
-          ],
+              StatusChip(
+                assignee == 'Unassigned'
+                    ? 'Unassigned'
+                    : 'Assigned to $assignee',
+                icon: Icons.person_outline,
+                onTap: data!['can_assign_contact'] == true && !busy
+                    ? assign
+                    : null,
+              ),
+              if (favourite)
+                const StatusChip('Favourite', icon: Icons.star_rounded),
+            ],
+            actions: [
+              QuickAction(
+                Icons.chat_outlined,
+                'Message',
+                message,
+                primary: true,
+              ),
+              QuickAction(
+                favourite ? Icons.star_rounded : Icons.star_border_rounded,
+                favourite ? 'Unfavourite' : 'Favourite',
+                busy ? null : this.favourite,
+              ),
+              if (data!['can_assign_contact'] == true)
+                QuickAction(
+                  Icons.person_add_alt_1_outlined,
+                  'Assign',
+                  busy ? null : assign,
+                ),
+              QuickAction(
+                closed ? Icons.replay : Icons.task_alt,
+                closed ? 'Reopen' : 'Close',
+                busy ? null : closeOrReopen,
+              ),
+            ],
+          ),
         ),
         DetailSection(
           title: 'Conversation',
@@ -305,6 +402,7 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
               tile: closed ? T.muted : T.green,
               label: 'Status',
               value: closed ? 'Closed' : 'Open',
+              onTap: busy ? null : status,
             ),
           ],
         ),
@@ -513,33 +611,31 @@ class _ContactFieldsPageState extends State<ContactFieldsPage> {
           lines: kind == 'textarea' ? 4 : 1,
         ),
     ];
-    await openPage(
+    await showEditorSheet(
       context,
-      ActionEditor(
-        title: '${field['name']}',
-        fields: fields,
-        save: (values) async {
-          final body = <String, dynamic>{
-            'contact_id': widget.id,
-            'custom_field_id': field['id'],
-            'field_type': kind,
-            ...values,
-          };
-          if (body['value'] is List) {
-            body['value'] = (body['value'] as List).join(',');
-          }
-          if (body['file'] is Attachment) {
-            body['file'] = (body['file'] as Attachment).multipart();
-            await widget.session.api.request(
-              'inbox/custom-fields/update',
-              method: 'POST',
-              data: FormData.fromMap(body),
-            );
-          } else {
-            await widget.session.api.post('inbox/custom-fields/update', body);
-          }
-        },
-      ),
+      title: '${field['name']}',
+      fields: fields,
+      save: (values) async {
+        final body = <String, dynamic>{
+          'contact_id': widget.id,
+          'custom_field_id': field['id'],
+          'field_type': kind,
+          ...values,
+        };
+        if (body['value'] is List) {
+          body['value'] = (body['value'] as List).join(',');
+        }
+        if (body['file'] is Attachment) {
+          body['file'] = (body['file'] as Attachment).multipart();
+          await widget.session.api.request(
+            'inbox/custom-fields/update',
+            method: 'POST',
+            data: FormData.fromMap(body),
+          );
+        } else {
+          await widget.session.api.post('inbox/custom-fields/update', body);
+        }
+      },
     );
     if (mounted) load();
   }
