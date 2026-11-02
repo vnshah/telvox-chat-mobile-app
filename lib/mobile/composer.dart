@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -46,7 +47,15 @@ class DeviceVoiceRecorder implements VoiceRecorder {
 }
 
 /// What the attach sheet offers, as WhatsApp lays it out.
-enum AttachChoice { document, gallery, audio, quickReplies, templates }
+enum AttachChoice {
+  document,
+  gallery,
+  camera,
+  location,
+  audio,
+  quickReplies,
+  templates,
+}
 
 Future<AttachChoice?> showAttachSheet(
   BuildContext context, {
@@ -88,7 +97,7 @@ Future<AttachChoice?> showAttachSheet(
           borderRadius: BorderRadius.circular(20),
         ),
         child: GridView.count(
-          crossAxisCount: 3,
+          crossAxisCount: 4,
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           childAspectRatio: 1.1,
@@ -104,6 +113,18 @@ Future<AttachChoice?> showAttachSheet(
               Icons.photo,
               'Gallery',
               const Color(0xFFC861FA),
+            ),
+            item(
+              AttachChoice.camera,
+              Icons.photo_camera,
+              'Camera',
+              const Color(0xFFFF2E74),
+            ),
+            item(
+              AttachChoice.location,
+              Icons.location_on,
+              'Location',
+              const Color(0xFF1FA855),
             ),
             item(
               AttachChoice.audio,
@@ -142,6 +163,7 @@ class ChatComposer extends StatefulWidget {
     required this.onAttach,
     required this.onQuickReplies,
     required this.onVoiceNote,
+    this.onCamera,
     this.onTyping,
     this.enabled = true,
     this.busy = false,
@@ -158,6 +180,9 @@ class ChatComposer extends StatefulWidget {
   final VoidCallback? onCancelReply, onCancelAttachment;
   final Attachment? attachment;
   final VoidCallback onSend, onAttach, onQuickReplies;
+
+  /// The camera beside the clip, as on WhatsApp; hidden while typing.
+  final VoidCallback? onCamera;
   final ValueChanged<Attachment> onVoiceNote;
 
   /// Called on each edit with text, so the customer can be shown "typing…".
@@ -178,6 +203,21 @@ class _ChatComposerState extends State<ChatComposer> {
   bool get canSend =>
       widget.controller.text.trim().isNotEmpty || widget.attachment != null;
 
+  /// The emoji panel replaces the keyboard, and the keyboard the panel.
+  final focus = FocusNode();
+  bool emoji = false;
+
+  void _toggleEmoji() {
+    if (emoji) {
+      setState(() => emoji = false);
+      focus.requestFocus();
+    } else {
+      focus.unfocus();
+      SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+      setState(() => emoji = true);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -197,6 +237,7 @@ class _ChatComposerState extends State<ChatComposer> {
 
   @override
   void dispose() {
+    focus.dispose();
     widget.controller.removeListener(_changed);
     ticker?.cancel();
     if (recording) recorder.cancel();
@@ -338,13 +379,19 @@ class _ChatComposerState extends State<ChatComposer> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 AppIconButton(
-                  tooltip: 'Quick replies',
-                  onPressed: widget.onQuickReplies,
-                  icon: const AppIcon(Icons.bolt, color: T.brass),
+                  tooltip: emoji ? 'Keyboard' : 'Emoji',
+                  onPressed: _toggleEmoji,
+                  icon: AppIcon(
+                    emoji
+                        ? Icons.keyboard_outlined
+                        : Icons.emoji_emotions_outlined,
+                    color: T.brass,
+                  ),
                 ),
                 Expanded(
                   child: AppTextField(
                     controller: widget.controller,
+                    focusNode: focus,
                     minLines: 1,
                     maxLines: 6,
                     textCapitalization: TextCapitalization.sentences,
@@ -376,6 +423,15 @@ class _ChatComposerState extends State<ChatComposer> {
                     child: const AppIcon(Icons.attach_file, color: T.brass),
                   ),
                 ),
+                if (widget.onCamera != null && !canSend)
+                  AppIconButton(
+                    tooltip: 'Camera',
+                    onPressed: widget.onCamera,
+                    icon: const AppIcon(
+                      Icons.photo_camera_outlined,
+                      color: T.brass,
+                    ),
+                  ),
               ],
             ),
         ],
@@ -431,7 +487,7 @@ class _ChatComposerState extends State<ChatComposer> {
         ),
       ),
     );
-    return IgnorePointer(
+    final composer = IgnorePointer(
       ignoring: !widget.enabled,
       child: AnimatedOpacity(
         opacity: widget.enabled ? 1 : .45,
@@ -451,6 +507,49 @@ class _ChatComposerState extends State<ChatComposer> {
             ],
           ),
         ),
+      ),
+    );
+    return PopScope(
+      // Back closes the emoji panel before it leaves the chat.
+      canPop: !emoji,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) setState(() => emoji = false);
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          composer,
+          if (emoji && widget.enabled)
+            EmojiPicker(
+              key: const ValueKey('emoji-panel'),
+              textEditingController: widget.controller,
+              onEmojiSelected: (_, _) => widget.onTyping?.call(),
+              config: Config(
+                height: 280,
+                emojiViewConfig: EmojiViewConfig(
+                  columns: 8,
+                  emojiSizeMax: 30,
+                  backgroundColor: Colors.white,
+                ),
+                categoryViewConfig: const CategoryViewConfig(
+                  backgroundColor: Colors.white,
+                  indicatorColor: T.green,
+                  iconColorSelected: T.green,
+                  iconColor: T.muted,
+                  backspaceColor: T.secondary,
+                ),
+                bottomActionBarConfig: const BottomActionBarConfig(
+                  backgroundColor: Colors.white,
+                  buttonColor: Colors.white,
+                  buttonIconColor: T.secondary,
+                ),
+                searchViewConfig: const SearchViewConfig(
+                  backgroundColor: Colors.white,
+                  buttonIconColor: T.secondary,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

@@ -66,6 +66,12 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Take photos and videos to send to customers in a chat.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Choose photos and videos to send to customers in a chat.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Send your current location to a customer in a chat.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Telvox Chat records voice notes while you hold the microphone button.</string>
 </dict>

@@ -1,6 +1,10 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
@@ -64,9 +68,11 @@ class Attachment {
       _ => 100,
     };
     if (size <= 0 || size > maxMb * 1024 * 1024) {
-      throw ApiFailure(
-        'The ${format.$1} must be between 1 byte and $maxMb MB.',
-      );
+      throw ApiFailure(switch (format.$1) {
+        'video' => 'WhatsApp accepts videos up to 16 MB. Record or choose a shorter one.',
+        'image' => 'WhatsApp accepts photos up to 5 MB.',
+        _ => 'The ${format.$1} must be between 1 byte and $maxMb MB.',
+      });
     }
     return Attachment(file, format.$1, size, format.$2);
   }
@@ -354,4 +360,117 @@ class _MediaViewerState extends State<MediaViewer> with WidgetsBindingObserver {
             ),
     ),
   );
+}
+
+/// Where photos and videos come from: the phone's gallery or its camera.
+/// A seam so tests need neither.
+abstract class MediaPicker {
+  Future<XFile?> photo({required bool camera});
+  Future<XFile?> video({required bool camera});
+
+  /// One photo or video from the gallery.
+  Future<XFile?> galleryItem();
+}
+
+/// The system gallery and camera through image_picker. Photos are re-encoded
+/// as WhatsApp sends them: at most 2560 px on the long side, JPEG quality 85,
+/// which also turns an iPhone's HEIC photo into a JPEG WhatsApp accepts.
+class DeviceMediaPicker implements MediaPicker {
+  final _picker = ImagePicker();
+  static const _maxSide = 2560.0, _quality = 85;
+
+  /// Phone camera video grows fast and WhatsApp stops at 16 MB.
+  static const maxVideo = Duration(seconds: 30);
+
+  @override
+  Future<XFile?> photo({required bool camera}) => _picker.pickImage(
+    source: camera ? ImageSource.camera : ImageSource.gallery,
+    maxWidth: _maxSide,
+    maxHeight: _maxSide,
+    imageQuality: _quality,
+  );
+
+  @override
+  Future<XFile?> video({required bool camera}) => _picker.pickVideo(
+    source: camera ? ImageSource.camera : ImageSource.gallery,
+    maxDuration: maxVideo,
+  );
+
+  @override
+  Future<XFile?> galleryItem() => _picker.pickMedia(
+    maxWidth: _maxSide,
+    maxHeight: _maxSide,
+    imageQuality: _quality,
+  );
+}
+
+/// What a picked photo or video is sent as. A re-encoded photo can keep its
+/// original name (IMG_0042.heic) on JPEG data, so the kind is read from the
+/// file itself and the name corrected; anything WhatsApp would refuse is
+/// refused here, before it is uploaded.
+Future<Attachment> pickedAttachment(XFile file) async {
+  final head = await _head(file);
+  final photo = _isJpeg(head)
+      ? 'jpg'
+      : _isPng(head)
+      ? 'png'
+      : null;
+  if (photo != null) {
+    final ext = file.name.split('.').last.toLowerCase();
+    final named = photo == 'jpg' ? ext == 'jpg' || ext == 'jpeg' : ext == 'png';
+    return Attachment.fromFile(
+      named ? file : await _renamed(file, photo),
+      requiredKind: 'image',
+    );
+  }
+  final ext = file.name.split('.').last.toLowerCase();
+  if (ext == 'mp4' || ext == '3gp') {
+    return Attachment.fromFile(file, requiredKind: 'video');
+  }
+  if (_isMp4Family(head)) {
+    // Camera apps name a recording .mov or nothing at all; the data is MP4.
+    return Attachment.fromFile(
+      await _renamed(file, 'mp4'),
+      requiredKind: 'video',
+    );
+  }
+  throw const ApiFailure(
+    'This photo or video format cannot be sent on WhatsApp. Send it as a document instead.',
+  );
+}
+
+Future<Uint8List> _head(XFile file) async {
+  final bytes = <int>[];
+  await for (final chunk in file.openRead(0, 12)) {
+    bytes.addAll(chunk);
+  }
+  return Uint8List.fromList(bytes);
+}
+
+bool _isJpeg(Uint8List b) =>
+    b.length >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF;
+bool _isPng(Uint8List b) =>
+    b.length >= 4 &&
+    b[0] == 0x89 &&
+    b[1] == 0x50 &&
+    b[2] == 0x4E &&
+    b[3] == 0x47;
+
+/// ISO media ("ftyp" box) with an MP4 or 3GP brand, not HEIC/HEIF stills.
+bool _isMp4Family(Uint8List b) {
+  if (b.length < 12 || String.fromCharCodes(b.sublist(4, 8)) != 'ftyp') {
+    return false;
+  }
+  final brand = String.fromCharCodes(b.sublist(8, 12));
+  return !brand.startsWith('hei') &&
+      !brand.startsWith('mif') &&
+      brand != 'avif';
+}
+
+Future<XFile> _renamed(XFile file, String ext) async {
+  final copy = File(
+    '${Directory.systemTemp.path}/media-${DateTime.now().microsecondsSinceEpoch}.$ext',
+  );
+  await copy.writeAsBytes(await file.readAsBytes(), flush: true);
+  return XFile(copy.path, name: copy.uri.pathSegments.last);
 }

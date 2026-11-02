@@ -149,6 +149,8 @@ void main() {
     for (final label in [
       'Document',
       'Gallery',
+      'Camera',
+      'Location',
       'Audio',
       'Quick replies',
       'Template',

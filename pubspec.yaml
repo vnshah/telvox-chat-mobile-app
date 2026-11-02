@@ -52,6 +52,9 @@ dependencies:
   sqflite_sqlcipher: ^3.4.1
   flutter_webrtc: ^1.6.3
   flutter_callkit_incoming: ^3.1.6
+  image_picker: ^1.2.4
+  geolocator: ^14.0.1
+  emoji_picker_flutter: ^4.5.4
 
 dev_dependencies:
   flutter_test:

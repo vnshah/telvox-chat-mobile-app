@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart' show XFile;
 
 import '../ui/theme.dart';
 import '../ui/data.dart' show Message;
@@ -20,8 +21,15 @@ import 'contact_actions.dart';
 import 'message_content.dart' show readableText;
 import 'templates.dart';
 import 'message_view.dart';
+import 'location.dart';
 import 'send_policy.dart';
 import 'realtime.dart';
+
+/// Photos, videos and the phone's position; tests replace them.
+@visibleForTesting
+MediaPicker mediaPicker = DeviceMediaPicker();
+@visibleForTesting
+LocationSource locationSource = DeviceLocationSource();
 
 class LiveChat extends StatefulWidget {
   const LiveChat(this.session, this.contact, {super.key, this.ticketId});
@@ -467,7 +475,11 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       case AttachChoice.document:
         pickAttachment(['document']);
       case AttachChoice.gallery:
-        pickAttachment(['image', 'video']);
+        pickMedia(() => mediaPicker.galleryItem());
+      case AttachChoice.camera:
+        camera();
+      case AttachChoice.location:
+        shareLocation();
       case AttachChoice.audio:
         pickAttachment(['audio']);
       case AttachChoice.quickReplies:
@@ -491,6 +503,137 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       'body': '',
       if (widget.ticketId != null) 'ticket_id': widget.ticketId,
     }, attachment: note);
+    setState(() => pending.add(item));
+    scrollToEnd(animate: true);
+    deliver(item);
+  }
+
+  /// A photo or video from the gallery or the camera, checked and named as
+  /// WhatsApp will accept it, then held in the composer for a caption.
+  Future<void> pickMedia(Future<XFile?> Function() pick) async {
+    if (!policy.canSend || picking) return;
+    setState(() => picking = true);
+    try {
+      final file = await pick();
+      if (file == null) return;
+      final picked = await pickedAttachment(file);
+      if (mounted) {
+        setState(() {
+          attachment = picked;
+          reply = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) mobileNotice(context, e);
+    } finally {
+      if (mounted) setState(() => picking = false);
+    }
+  }
+
+  /// WhatsApp's camera takes a photo or a video.
+  Future<void> camera() async {
+    if (!policy.canSend) {
+      mobileNotice(context, policy.reason!);
+      return;
+    }
+    final video = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Take photo'),
+              onTap: () => Navigator.pop(context, false),
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam_outlined),
+              title: const Text('Record video'),
+              subtitle: Text(
+                'Up to ${DeviceMediaPicker.maxVideo.inSeconds} seconds',
+              ),
+              onTap: () => Navigator.pop(context, true),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || video == null) return;
+    await pickMedia(
+      () => video
+          ? mediaPicker.video(camera: true)
+          : mediaPicker.photo(camera: true),
+    );
+  }
+
+  /// Send this phone's location as a map pin, or ask the customer for theirs
+  /// (WhatsApp shows them a "Send location" button).
+  Future<void> shareLocation() async {
+    if (!policy.canSend) {
+      mobileNotice(context, policy.reason!);
+      return;
+    }
+    final mine = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.my_location),
+              title: const Text('Send your current location'),
+              onTap: () => Navigator.pop(context, true),
+            ),
+            ListTile(
+              leading: const Icon(Icons.share_location_outlined),
+              title: const Text('Ask for their location'),
+              subtitle: const Text('They get a button to share it'),
+              onTap: () => Navigator.pop(context, false),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || mine == null) return;
+    if (!mine) {
+      queue({
+        'message_type': 'location',
+        'body': 'Please share your location.',
+      });
+      return;
+    }
+    setState(() => picking = true);
+    try {
+      final here = await locationSource.current();
+      if (!mounted) return;
+      queue({
+        'message_type': 'send_location',
+        'body': '',
+        'location': {
+          'latitude': '${here.latitude}',
+          'longitude': '${here.longitude}',
+          'name': 'Location',
+        },
+      });
+    } catch (e) {
+      if (mounted) mobileNotice(context, e);
+    } finally {
+      if (mounted) setState(() => picking = false);
+    }
+  }
+
+  /// Sends a message that is not typed text, through the same pending row.
+  void queue(Json fields) {
+    final item = PendingSend({
+      'waba_user_id': widget.session.api.wabaId,
+      'contact_id': contactId,
+      'wa_id': phone,
+      if (widget.ticketId != null) 'ticket_id': widget.ticketId,
+      ...fields,
+    });
     setState(() => pending.add(item));
     scrollToEnd(animate: true);
     deliver(item);
@@ -856,7 +999,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     'id': 'pending:${p.key}',
     'temp_message_id': p.key,
     'type': 1,
-    'message_type': 'text',
+    // A location pin waits as the card it becomes.
+    if (p.body['message_type'] == 'send_location') ...{
+      'message_type': 'location',
+      'message_body_json': jsonEncode({'location': p.body['location']}),
+    } else
+      'message_type': 'text',
     'message_body': pendingLabel(p),
     'created_at': p.createdAt,
     'message_status': p.error != null ? 4 : 0,
@@ -1112,6 +1260,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                   onSend: send,
                   onAttach: () => attachMenu(permission.canTemplate),
                   onQuickReplies: quickReplies,
+                  onCamera: camera,
                   onVoiceNote: sendVoiceNote,
                   onTyping: typing,
                 ),
