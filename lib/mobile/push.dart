@@ -7,6 +7,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../core/config/app_config.dart';
 import 'api.dart';
+import 'call_push.dart';
 
 /// What a push carries, whichever way it reached the app.
 class PushMessage {
@@ -94,6 +95,12 @@ class PushService {
   /// Nothing to announce for the customer whose chat is on screen, whether
   /// it is their shared-inbox chat or one of their ticket conversations.
   void _foreground(PushMessage message) {
+    // Calls ring an open app over the websocket; a push only stops a ring.
+    final type = message.data['type'];
+    if (type == 'call' || type == 'call_cancel') {
+      if (type == 'call_cancel') unawaited(showCallFromPush(message.data));
+      return;
+    }
     final contact = message.contactKey;
     if (contact != null && session.visibleContacts.contains(contact)) return;
     _transport?.show(message);

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../core/config/app_config.dart';
+import 'call_push.dart';
 import 'calls.dart';
 import 'local_cache.dart';
 import 'push.dart';
@@ -233,6 +234,18 @@ class MobileSession extends ChangeNotifier {
     pendingOpen = data;
     notifyListeners();
   }
+
+  /// A call accepted on the system's incoming-call screen, for the home screen
+  /// to answer once signed in on its number.
+  Json? pendingCall;
+
+  void answerFromPush(Json data) {
+    pendingCall = data;
+    notifyListeners();
+  }
+
+  /// The system incoming-call screen's buttons; started with the app.
+  late final callPush = CallPushBridge(this);
 
   /// Phone of the selected WhatsApp number; names the inbox list channel.
   String? get wabaPhone {
@@ -466,6 +479,7 @@ class MobileSession extends ChangeNotifier {
     realtime.dispose();
     push.dispose();
     calls.dispose();
+    callPush.dispose();
     super.dispose();
   }
 }

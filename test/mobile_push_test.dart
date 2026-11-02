@@ -104,6 +104,24 @@ void main() {
     session.dispose();
   });
 
+  test('a call push never shows as a message notification', () async {
+    final push = FakePush();
+    final session = pushSession(push, (r, h) => answer(r, h, {}));
+    await session.push.enable();
+    push.arrivals
+      ..add(
+        const PushMessage(
+          data: {'type': 'call', 'call_id': 'wacid.1', 'contact_id': '12'},
+        ),
+      )
+      ..add(
+        const PushMessage(data: {'type': 'call_cancel', 'call_id': 'wacid.1'}),
+      );
+    await Future<void>.delayed(Duration.zero);
+    expect(push.shown, isEmpty);
+    session.dispose();
+  });
+
   test('signing out forgets the local token', () async {
     final push = FakePush();
     final session = pushSession(push, (r, h) => answer(r, h, {}));

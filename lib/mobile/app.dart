@@ -27,6 +27,7 @@ class _MobileApplicationState extends State<MobileApplication> {
   void initState() {
     super.initState();
     unawaited(session.restore());
+    session.callPush.start();
   }
 
   @override

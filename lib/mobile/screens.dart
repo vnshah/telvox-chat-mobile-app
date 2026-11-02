@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'call_push.dart';
 import 'calls.dart';
 import 'chat.dart';
 import 'models.dart';
@@ -528,11 +529,39 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
       ..addListener(showIncomingCall);
     widget.session.realtime.start();
     widget.session.push.enable();
-    widget.session.addListener(openPending);
-    WidgetsBinding.instance.addPostFrameCallback((_) => openPending());
+    widget.session
+      ..addListener(openPending)
+      ..addListener(answerPendingCall);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      openPending();
+      answerPendingCall();
+      if (widget.session.push.available) {
+        askForFullScreenCalls(context, widget.session.store);
+      }
+    });
   }
 
   bool opening = false;
+
+  /// A call accepted on the system's incoming-call screen: switch to its number
+  /// if needed (the new home screen then answers), otherwise answer it here.
+  Future<void> answerPendingCall() async {
+    final session = widget.session;
+    final data = session.pendingCall;
+    if (data == null || !mounted) return;
+    final waba = number(data['waba_user_id']);
+    if (waba != null && waba != session.api.wabaId) {
+      try {
+        await session.selectNumber(waba);
+      } catch (_) {
+        session.pendingCall = null;
+      }
+      return;
+    }
+    session.pendingCall = null;
+    unawaited(session.calls.acceptPushed(data));
+    await showCallScreen(context, session.calls);
+  }
 
   /// A customer's call rang this phone: show it over whatever is open.
   void showIncomingCall() {
@@ -626,7 +655,9 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
       ..removeListener(showIncomingCall)
       ..detach();
     refresh.dispose();
-    widget.session.removeListener(openPending);
+    widget.session
+      ..removeListener(openPending)
+      ..removeListener(answerPendingCall);
     widget.session.realtime.stop();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:telvox_chat_mobile_app/mobile/api.dart';
+import 'package:telvox_chat_mobile_app/mobile/call_push.dart';
 import 'package:telvox_chat_mobile_app/mobile/calls.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
@@ -57,7 +58,22 @@ Future<Harness> harness(WidgetTester tester) async {
       return answer(r, h, {'auth': 'app-key:signature'});
     }
     if (r.path.startsWith('inbox/calls/')) posts.add(r);
+    if (r.path == 'inbox/calls/offer' &&
+        (r.data as Map)['call_id'] == 'wacid.GONE') {
+      return answer(r, h, {
+        'success': false,
+        'message': 'This call is no longer ringing.',
+      }, 410);
+    }
     answer(r, h, switch (r.path) {
+      'inbox/calls/offer' => {
+        'success': true,
+        'data': {
+          'call_id': 'wacid.PUSH',
+          'sdp': 'v=0\r\npushed-offer\r\n',
+          'contact': {'id': 12, 'profile_name': 'Rahil Patel'},
+        },
+      },
       'inbox/calls/initiate' => {
         'success': true,
         'data': {
@@ -358,4 +374,81 @@ void main() {
       h.session.dispose();
     },
   );
+
+  test(
+    'a call id always maps to the same UUID, as the system call UI needs',
+    () {
+      final uuid = callUuid('wacid.HBgMOTE5MDk5ODAxMzgwFQIAEhggQ0Y');
+      expect(uuid, callUuid('wacid.HBgMOTE5MDk5ODAxMzgwFQIAEhggQ0Y'));
+      expect(uuid, isNot(callUuid('wacid.other')));
+      expect(
+        RegExp(
+          r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$',
+        ).hasMatch(uuid),
+        true,
+      );
+    },
+  );
+
+  testWidgets(
+    'accepting a call that woke the phone fetches the offer and answers it',
+    (tester) async {
+      final h = await harness(tester);
+      unawaited(
+        h.session.calls.acceptPushed({
+          'type': 'call',
+          'call_id': 'wacid.PUSH',
+          'waba_user_id': '7',
+          'contact_id': '12',
+          'contact_name': 'Rahil Patel',
+        }),
+      );
+      await settle(tester);
+      expect(h.session.calls.state, CallState.connecting);
+      expect(h.posts.singleWhere((r) => r.path == 'inbox/calls/offer').data, {
+        'call_id': 'wacid.PUSH',
+      });
+      expect(h.media.calls, contains('answer:v=0\r\npushed-offer\r\n'));
+      expect(
+        h.posts.singleWhere((r) => r.path == 'inbox/calls/accept').data,
+        containsPair('call_id', 'wacid.PUSH'),
+      );
+      h.media.connect();
+      await settle(tester);
+      expect(h.session.calls.state, CallState.active);
+      expect(h.session.calls.contact['profile_name'], 'Rahil Patel');
+      h.session.realtime.stop();
+      await tester.pump();
+      h.session.dispose();
+    },
+  );
+
+  testWidgets('a call answered elsewhere before the phone woke says so', (
+    tester,
+  ) async {
+    final h = await harness(tester);
+    unawaited(h.session.calls.acceptPushed({'call_id': 'wacid.GONE'}));
+    await settle(tester);
+    expect(h.session.calls.state, CallState.ended);
+    expect(h.session.calls.notice, 'This call is no longer ringing');
+    expect(h.posts.where((r) => r.path == 'inbox/calls/accept'), isEmpty);
+    await tester.pump(const Duration(seconds: 2));
+    h.session.realtime.stop();
+    await tester.pump();
+    h.session.dispose();
+  });
+
+  testWidgets('declining on the system screen gives the call back', (
+    tester,
+  ) async {
+    final h = await harness(tester);
+    unawaited(h.session.calls.declinePushed('wacid.NO'));
+    await settle(tester);
+    expect(h.posts.singleWhere((r) => r.path == 'inbox/calls/decline').data, {
+      'call_id': 'wacid.NO',
+    });
+    h.session.realtime.stop();
+    await tester.pump();
+    h.session.dispose();
+  });
 }

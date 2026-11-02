@@ -4,10 +4,12 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'call_push.dart';
 import 'message_content.dart' show readableText;
 import 'models.dart';
 import 'realtime.dart';
@@ -217,6 +219,10 @@ class PhoneCalls extends ChangeNotifier {
   /// The call screen is showing; a second ring or tap does not open another.
   bool screenOpen = false;
   String? _offer;
+
+  /// The call answered from the system's incoming-call screen, whose
+  /// ongoing-call notification ends with it.
+  String? _pushed;
   CallMedia? _call;
   Timer? _expiry, _buzz, _reset;
   final _subscriptions = <RealtimeSubscription>[];
@@ -406,6 +412,60 @@ class PhoneCalls extends ChangeNotifier {
     _buzz?.cancel();
     _expiry?.cancel();
     _set(CallState.connecting);
+    await _answer(id, offer);
+  }
+
+  /// Accept on the system's incoming-call screen, for a call that woke the
+  /// phone by push: the ringing event never reached the app, so the offer is
+  /// fetched first.
+  Future<void> acceptPushed(Json data) async {
+    final id = '${data['call_id'] ?? ''}';
+    if (id.isEmpty || (busy && callId == id)) return;
+    if (busy) {
+      // Already on another call: give this one back.
+      unawaited(_post('inbox/calls/decline', {'call_id': id}));
+      return;
+    }
+    _reset?.cancel();
+    callId = id;
+    _pushed = id;
+    notice = null;
+    muted = speaker = false;
+    contact = {
+      'id': number(data['contact_id']),
+      'profile_name': data['contact_name'],
+      'phone': data['contact_phone'],
+    };
+    _set(CallState.connecting);
+    try {
+      final offer = object(
+        object(
+          await session.api.post('inbox/calls/offer', {'call_id': id}),
+        )['data'],
+      );
+      if (state != CallState.connecting || callId != id) return;
+      contact = {...contact, ...object(offer['contact'])};
+      await _answer(id, '${offer['sdp']}');
+    } catch (e) {
+      if (state != CallState.connecting || callId != id) return;
+      await _end(
+        e is ApiFailure && e.httpStatus == 410
+            ? 'This call is no longer ringing'
+            : 'Could not answer the call.',
+      );
+    }
+  }
+
+  /// Decline on the system's incoming-call screen.
+  Future<void> declinePushed(String id) async {
+    if (id.isEmpty || (busy && callId == id && state != CallState.incoming)) {
+      return;
+    }
+    await _post('inbox/calls/decline', {'call_id': id});
+    if (callId == id && state == CallState.incoming) await _end('Declined');
+  }
+
+  Future<void> _answer(String id, String offer) async {
     final media = _call = _media();
     try {
       final answer = await media.answer(offer);
@@ -425,6 +485,11 @@ class PhoneCalls extends ChangeNotifier {
       await session.api.post('inbox/calls/connected', {'call_id': id});
       connectedAt = DateTime.now();
       _set(CallState.active);
+      if (_pushed == id) {
+        unawaited(
+          callkit(() => FlutterCallkitIncoming.setCallConnected(callUuid(id))),
+        );
+      }
     } catch (e) {
       if (state != CallState.connecting) return;
       // Give the call back to the other agents rather than hanging up on it.
@@ -497,6 +562,13 @@ class PhoneCalls extends ChangeNotifier {
   Future<void> _end(String reason) async {
     _buzz?.cancel();
     _expiry?.cancel();
+    final pushed = _pushed;
+    _pushed = null;
+    if (pushed != null) {
+      unawaited(
+        callkit(() => FlutterCallkitIncoming.endCall(callUuid(pushed))),
+      );
+    }
     final media = _call;
     _call = null;
     _offer = null;
