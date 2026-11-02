@@ -105,8 +105,9 @@ class MessageContent {
   }
 
   /// Voice call rows hold "Start calling..." until the call ends, then a JSON
-  /// status. Worded as WhatsApp shows them: a missed incoming call, an
-  /// unanswered outgoing one, or the call with its duration.
+  /// status. Worded as WhatsApp shows them: any call that connected shows its
+  /// length; a customer's unanswered call is a missed call; yours is declined
+  /// or not answered.
   void call(Object? body) {
     if (body is! Map) {
       voiceCall = VoiceCall(
@@ -121,8 +122,7 @@ class MessageContent {
           ? number(row['type']) == 2
           : body['direction'] == 'USER_INITIATED';
       final seconds = int.tryParse('${body['duration']}') ?? 0;
-      final answered = status == 'COMPLETED' && seconds > 0;
-      voiceCall = answered
+      voiceCall = seconds > 0
           ? VoiceCall(
               incoming: incoming,
               missed: false,
@@ -130,19 +130,30 @@ class MessageContent {
               subtitle: callDuration(seconds),
             )
           : incoming
-          ? VoiceCall(incoming: true, missed: true, title: 'Missed voice call')
+          ? const VoiceCall(
+              incoming: true,
+              missed: true,
+              title: 'Missed call',
+              subtitle: 'Tap to call back',
+            )
           : VoiceCall(
               incoming: false,
               missed: false,
+              unanswered: true,
               title: 'Voice call',
-              subtitle: status.isEmpty || status == 'COMPLETED'
-                  ? 'No answer'
-                  : '${status[0]}${status.substring(1).toLowerCase().replaceAll('_', ' ')}',
+              subtitle: switch (status) {
+                'REJECTED' || 'DECLINED' => 'Declined',
+                'FAILED' => 'Failed',
+                'BUSY' => 'Busy',
+                _ => 'No answer',
+              },
             );
     }
     final c = voiceCall!;
-    text =
-        '${c.title}${c.subtitle == null || c.subtitle == 'Calling…' ? '' : ' · ${c.subtitle}'}';
+    // The inbox preview reads "Missed call", not the call-back hint.
+    text = c.missed || c.subtitle == null || c.subtitle == 'Calling…'
+        ? c.title
+        : '${c.title} · ${c.subtitle}';
   }
 
   static String callDuration(Object? seconds) {
@@ -283,8 +294,12 @@ class VoiceCall {
     required this.missed,
     required this.title,
     this.subtitle,
+    this.unanswered = false,
   });
-  final bool incoming, missed;
+
+  /// [missed]: the customer's call nobody answered. [unanswered]: yours that
+  /// the customer declined or did not pick up. Both show in red.
+  final bool incoming, missed, unanswered;
   final String title;
   final String? subtitle;
 }

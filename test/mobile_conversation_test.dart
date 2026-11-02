@@ -384,7 +384,18 @@ void main() {
     );
     expect(
       call('{"status":"COMPLETED","duration":0,"direction":"USER_INITIATED"}'),
-      'Missed voice call',
+      'Missed call',
+    );
+    // A call that connected and then dropped still shows how long it ran.
+    expect(
+      call('{"status":"FAILED","duration":125,"direction":"USER_INITIATED"}'),
+      'Voice call · 2 mins 5 secs',
+    );
+    expect(
+      call(
+        '{"status":"REJECTED","duration":0,"direction":"BUSINESS_INITIATED"}',
+      ),
+      'Voice call · Declined',
     );
     expect(
       call(
@@ -444,8 +455,11 @@ void main() {
       findsNothing,
     );
     expect(find.text('18:36'), findsNWidgets(2));
-    expect(find.text('Missed voice call'), findsOneWidget);
-    expect(find.byIcon(Icons.call_missed), findsOneWidget);
+    expect(find.text('Missed call'), findsOneWidget);
+    expect(find.text('Tap to call back'), findsOneWidget);
+    // Phone with an incoming arrow, in red.
+    final arrow = tester.widget<Icon>(find.byIcon(Icons.south_west));
+    expect(arrow.color, T.danger);
     expect(tester.takeException(), isNull);
   });
 

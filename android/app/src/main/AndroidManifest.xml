@@ -3,6 +3,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Voice notes, recorded while the mic button is held. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- WhatsApp calls (WebRTC): audio routing, speaker and Bluetooth headsets. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <application
         android:label="Telvox Chat"
         android:name="${applicationName}"

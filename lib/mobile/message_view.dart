@@ -43,6 +43,7 @@ class LiveMessageView extends StatelessWidget {
     required this.first,
     this.onReply,
     this.onActions,
+    this.onCallBack,
     this.contactName,
   });
   final ApiMessage message;
@@ -51,6 +52,10 @@ class LiveMessageView extends StatelessWidget {
   final bool first;
   final VoidCallback? onReply;
   final void Function(BuildContext)? onActions;
+
+  /// "Tap to call back" on a missed call; null when the contact cannot be
+  /// called now.
+  final VoidCallback? onCallBack;
   @override
   Widget build(BuildContext context) {
     final m = message, c = m.content;
@@ -183,7 +188,12 @@ class LiveMessageView extends StatelessWidget {
                           ),
                           first: first,
                           showStamp: false,
-                          contentBefore: CallTile(call, stamp: presentation),
+                          contentBefore: CallTile(
+                            call,
+                            onTap: call.missed ? onCallBack : null,
+                            // WhatsApp shows a call's time without ticks.
+                            stamp: Message('', time: presentation.time),
+                          ),
                         )
                       : MessageBubble(
                           message: presentation,
@@ -402,42 +412,62 @@ class StickerView extends StatelessWidget {
   );
 }
 
-/// A call row as WhatsApp shows it: round icon with the call's direction,
-/// "Voice call" or "Missed voice call", and the duration or outcome.
+/// A call row as WhatsApp shows it: a round icon with the phone and the
+/// call's direction (red when nobody answered), "Voice call" or "Missed call",
+/// and beneath it the length or outcome with the time at its end.
 class CallTile extends StatelessWidget {
-  const CallTile(this.call, {super.key, this.stamp});
+  const CallTile(this.call, {super.key, this.stamp, this.onTap});
   final VoiceCall call;
+  final VoidCallback? onTap;
 
-  /// The time and ticks, on the call row's last line as WhatsApp places it.
+  /// The time, on the outcome's line as WhatsApp places it. A call has no ticks.
   final Message? stamp;
   @override
   Widget build(BuildContext context) {
-    final colour = call.missed ? T.danger : T.green;
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: 220, maxWidth: 240),
+    final colour = call.missed || call.unanswered ? T.danger : T.secondary;
+    final tile = ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 200, maxWidth: 250),
       child: Padding(
-        padding: const EdgeInsets.only(top: 3, bottom: 2),
+        padding: const EdgeInsets.fromLTRB(2, 5, 2, 3),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 40,
-              height: 40,
+              key: const ValueKey('call-icon'),
+              width: 46,
+              height: 46,
               decoration: BoxDecoration(
-                color: colour.withValues(alpha: .12),
+                color: Colors.black.withValues(alpha: .06),
                 shape: BoxShape.circle,
               ),
-              child: Icon(
-                call.missed
-                    ? Icons.call_missed
-                    : call.incoming
-                    ? Icons.call_received
-                    : Icons.call_made,
-                size: 20,
-                color: colour,
+              child: Center(
+                child: SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Positioned(
+                        left: 0,
+                        bottom: 0,
+                        child: Icon(Icons.phone, size: 21, color: colour),
+                      ),
+                      Positioned(
+                        right: -2,
+                        top: -1,
+                        child: Icon(
+                          call.incoming ? Icons.south_west : Icons.north_east,
+                          size: 13,
+                          color: colour,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
-            const SizedBox(width: 10),
-            Expanded(
+            const SizedBox(width: 12),
+            Flexible(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -445,31 +475,48 @@ class CallTile extends StatelessWidget {
                   Text(
                     call.title,
                     style: const TextStyle(
-                      fontSize: 14.5,
+                      fontSize: 15,
                       fontWeight: FontWeight.w600,
                       color: T.ink,
                     ),
                   ),
-                  if (call.subtitle != null)
-                    Text(
-                      call.subtitle!,
-                      style: const TextStyle(fontSize: 12.5, color: T.muted),
-                    ),
+                  const SizedBox(height: 2),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      if (call.subtitle != null)
+                        Flexible(
+                          child: Text(
+                            call.subtitle!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13.5,
+                              color: T.muted,
+                            ),
+                          ),
+                        ),
+                      if (stamp != null) ...[
+                        const SizedBox(width: 16),
+                        MessageStamp(stamp!),
+                      ],
+                    ],
+                  ),
                 ],
               ),
             ),
-            if (stamp != null) ...[
-              const SizedBox(width: 10),
-              // Level with the bottom of the call icon.
-              Padding(
-                padding: const EdgeInsets.only(top: 24),
-                child: MessageStamp(stamp!),
-              ),
-            ],
           ],
         ),
       ),
     );
+    return onTap == null
+        ? tile
+        : GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onTap,
+            child: tile,
+          );
   }
 }
 

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../core/config/app_config.dart';
+import 'calls.dart';
 import 'local_cache.dart';
 import 'push.dart';
 import 'realtime.dart';
@@ -174,6 +175,7 @@ class MobileSession extends ChangeNotifier {
     this.store, {
     this.realtimeConnector,
     this.pushTransport,
+    this.callMedia,
     LocalCache? cache,
   }) : cache = cache ?? MemoryLocalCache() {
     api.onUnauthorized = _expired;
@@ -209,6 +211,12 @@ class MobileSession extends ChangeNotifier {
 
   /// Push registration and taps; enabled by the signed-in home.
   late final push = PushService(this, transport: pushTransport);
+
+  /// Tests replace WebRTC; the app uses the device's microphone and network.
+  final CallMedia Function()? callMedia;
+
+  /// WhatsApp calls on this phone; joined by the signed-in home.
+  late final calls = PhoneCalls(this, media: callMedia);
 
   /// `contact:12` / `ticket:7` while that chat is on screen, so a push for it
   /// is not shown on top of the conversation itself.
@@ -411,7 +419,13 @@ class MobileSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Only an admin, reseller or business owner picks among numbers. A number's
+  /// own login, a sub-user or a manager works on the one number it belongs to.
+  bool get canSwitchNumber =>
+      user != null && number(user!['bound_waba_user_id']) == null;
+
   void switchNumber() {
+    if (!canSwitchNumber) return;
     realtime.stop();
     viewCache.clear();
     generation++;
@@ -451,6 +465,7 @@ class MobileSession extends ChangeNotifier {
     conversationActivity.dispose();
     realtime.dispose();
     push.dispose();
+    calls.dispose();
     super.dispose();
   }
 }

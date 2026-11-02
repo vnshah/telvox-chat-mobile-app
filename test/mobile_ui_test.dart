@@ -52,6 +52,8 @@ void main() {
     // The shared inbox home, recognised by its one main action.
     expect(find.byTooltip('Add contact'), findsOneWidget);
     expect(find.text('Choose business'), findsNothing);
+    // A number's own login works on that one number: nothing to switch to.
+    expect(find.byTooltip('Switch number'), findsNothing);
     api.onUnauthorized!();
     await tester.pumpAndSettle();
     expect(find.text('Sign in'), findsOneWidget);

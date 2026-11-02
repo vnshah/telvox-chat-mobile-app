@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -26,7 +27,10 @@ Map<String, dynamic> row(
   'id': id,
   'type': type,
   'message_type': kind,
-  'message_body': text,
+  // A call keeps its status in the body, as the server stores it.
+  'message_body': kind == 'voice_call'
+      ? (body is String ? body : jsonEncode(body))
+      : text,
   'message_body_json': body,
   'message_status': 3,
   'created_at': '2026-10-31T09:0$id:00Z',
@@ -75,7 +79,7 @@ void main() {
     'voice notes, audio files and calls keep the time on their last line',
     (tester) async {
       await loadUiFonts();
-      tester.view.physicalSize = const Size(400, 900);
+      tester.view.physicalSize = const Size(400, 1400);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -110,6 +114,26 @@ void main() {
           },
         }),
         row(4, 2, 'voice_call', 'Start calling...'),
+        row(6, 1, 'voice_call', {
+          'status': 'REJECTED',
+          'duration': 0,
+          'direction': 'BUSINESS_INITIATED',
+        }),
+        row(7, 1, 'voice_call', {
+          'status': 'COMPLETED',
+          'duration': 7,
+          'direction': 'BUSINESS_INITIATED',
+        }),
+        row(8, 2, 'voice_call', {
+          'status': 'COMPLETED',
+          'duration': 0,
+          'direction': 'USER_INITIATED',
+        }),
+        row(9, 2, 'voice_call', {
+          'status': 'COMPLETED',
+          'duration': 4,
+          'direction': 'USER_INITIATED',
+        }),
         row(5, 2, 'document', {
           'type': 'document',
           'media_path': 'storage/1/2/document/invoice.pdf',

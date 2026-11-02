@@ -50,6 +50,7 @@ dependencies:
   record: ^7.1.2
   # Encrypted on-device cache of lists and conversations (LocalCache).
   sqflite_sqlcipher: ^3.4.1
+  flutter_webrtc: ^1.6.3
 
 dev_dependencies:
   flutter_test:

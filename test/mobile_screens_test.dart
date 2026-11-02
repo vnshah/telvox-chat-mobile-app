@@ -187,6 +187,11 @@ void main() {
             isNull,
             reason: '${platform.name}/${page.key}',
           );
+          if (platform == TargetPlatform.android && page.key == 'home') {
+            // An account not bound to one number (admin, reseller, business)
+            // can switch numbers.
+            expect(find.byTooltip('Switch number'), findsOneWidget);
+          }
           if (platform == TargetPlatform.android &&
               [
                 'list-0',

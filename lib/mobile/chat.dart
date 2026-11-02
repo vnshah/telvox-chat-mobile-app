@@ -9,6 +9,7 @@ import '../ui/theme.dart';
 import '../ui/data.dart' show Message;
 import '../ui/chat_message.dart';
 import '../ui/conversation.dart' show ChatWallpaper;
+import 'calls.dart';
 import 'api.dart';
 import 'models.dart';
 import 'screens.dart';
@@ -145,6 +146,13 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   Timer? liveDebounce;
   late final repository = InboxRepository(widget.session.api);
   int get contactId => number(widget.contact['id'])!;
+
+  /// The contact as the call rules read it: the list row, updated by details.
+  Json get callContact => {...widget.contact, ...object(detail?['contact'])};
+  bool get callable =>
+      widget.ticketId == null &&
+      callEligibility(widget.session.config, callContact).blocked == null &&
+      callEligibility(widget.session.config, callContact).shown;
   String get phone => '${widget.contact['wa_id'] ?? ''}';
   @override
   void initState() {
@@ -907,6 +915,9 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
               ? () => setState(() => reply = m)
               : null,
           onActions: interactive ? (anchor) => actions(m, anchor) : null,
+          onCallBack: callable
+              ? () => startCall(context, widget.session, callContact)
+              : null,
           contactName:
               '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}',
         ),
@@ -956,6 +967,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         // Updates are live, so no refresh button. iOS puts contact details
         // behind an info button; Android behind the overflow menu.
         actions: [
+          if (widget.ticketId == null)
+            CallButton(session: widget.session, contact: callContact),
           if (isCupertino(context))
             AppIconButton(
               tooltip: 'Contact details',

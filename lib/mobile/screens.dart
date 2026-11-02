@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'calls.dart';
 import 'chat.dart';
 import 'models.dart';
 import 'realtime.dart';
@@ -522,6 +523,9 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
         if (event == 'device.revoked') widget.session.deviceRevoked();
       });
     }
+    widget.session.calls
+      ..attach()
+      ..addListener(showIncomingCall);
     widget.session.realtime.start();
     widget.session.push.enable();
     widget.session.addListener(openPending);
@@ -529,6 +533,12 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
   }
 
   bool opening = false;
+
+  /// A customer's call rang this phone: show it over whatever is open.
+  void showIncomingCall() {
+    if (!mounted || widget.session.calls.state != CallState.incoming) return;
+    showCallScreen(context, widget.session.calls);
+  }
 
   /// Opens the chat or ticket from a tapped notification. A push for another
   /// number switches to it first; the new home screen then finishes the job.
@@ -569,6 +579,8 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
 
   void startHeartbeat() {
     heartbeat?.cancel();
+    // Ring this phone for the number's calls from now, not a beat later.
+    widget.session.calls.ready();
     heartbeat = Timer.periodic(
       Duration(
         seconds:
@@ -576,6 +588,7 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
                 .clamp(15, 300),
       ),
       (_) async {
+        unawaited(widget.session.calls.ready());
         try {
           await widget.session.api.post('presence/heartbeat');
         } catch (_) {
@@ -594,9 +607,14 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       startHeartbeat();
       widget.session.realtime.start();
-    } else {
+    } else if (!widget.session.calls.busy) {
+      // A call in progress keeps the socket and its state; anything else
+      // stops ringing here until the app is back.
       heartbeat?.cancel();
-      if (state == AppLifecycleState.paused) widget.session.realtime.stop();
+      if (state == AppLifecycleState.paused) {
+        widget.session.realtime.stop();
+        widget.session.calls.gone();
+      }
     }
   }
 
@@ -604,6 +622,9 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
   void dispose() {
     heartbeat?.cancel();
     device?.cancel();
+    widget.session.calls
+      ..removeListener(showIncomingCall)
+      ..detach();
     refresh.dispose();
     widget.session.removeListener(openPending);
     widget.session.realtime.stop();
@@ -684,7 +705,7 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
         .map((p) => p[0].toUpperCase())
         .join();
     final body = mode == InboxMode.none
-        ? const _NoInbox()
+        ? _NoInbox(canSwitch: session.canSwitchNumber)
         : Column(
             children: [
               RealtimeNotice(session.realtime),
@@ -713,27 +734,36 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
                 height: 44,
                 child: Row(
                   children: [
-                    CupertinoButton(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      onPressed: session.switchNumber,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            session.wabaName,
-                            style: const TextStyle(
-                              fontSize: 16,
+                    if (!session.canSwitchNumber)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          session.wabaName,
+                          style: const TextStyle(fontSize: 16, color: T.ink),
+                        ),
+                      )
+                    else
+                      CupertinoButton(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        onPressed: session.switchNumber,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              session.wabaName,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                color: T.green,
+                              ),
+                            ),
+                            const Icon(
+                              CupertinoIcons.chevron_down,
+                              size: 14,
                               color: T.green,
                             ),
-                          ),
-                          const Icon(
-                            CupertinoIcons.chevron_down,
-                            size: 14,
-                            color: T.green,
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
                     const Spacer(),
                     if (mode != InboxMode.none)
                       CupertinoButton(
@@ -778,22 +808,26 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
       appBar: AppBar(
         title: const Brand(),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: ActionChip(
-              avatar: const Icon(Icons.swap_horiz, size: 18),
-              label: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 110),
-                child: Text(session.wabaName, overflow: TextOverflow.ellipsis),
-              ),
-              tooltip: 'Switch number',
-              onPressed: session.switchNumber,
-              side: const BorderSide(color: T.control),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
+          if (session.canSwitchNumber)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: ActionChip(
+                avatar: const Icon(Icons.swap_horiz, size: 18),
+                label: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 110),
+                  child: Text(
+                    session.wabaName,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                tooltip: 'Switch number',
+                onPressed: session.switchNumber,
+                side: const BorderSide(color: T.control),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
             ),
-          ),
           PopupMenuButton<String>(
             tooltip: 'Account',
             position: PopupMenuPosition.under,
@@ -858,9 +892,10 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
 
 /// Shown when the selected number allows neither inbox for this account.
 class _NoInbox extends StatelessWidget {
-  const _NoInbox();
+  const _NoInbox({required this.canSwitch});
+  final bool canSwitch;
   @override
-  Widget build(BuildContext context) => const Center(
+  Widget build(BuildContext context) => Center(
     child: Padding(
       padding: EdgeInsets.all(32),
       child: Column(
@@ -879,8 +914,11 @@ class _NoInbox extends StatelessWidget {
           ),
           SizedBox(height: 6),
           Text(
-            'Your account cannot open the shared inbox or tickets here. '
-            'Switch number, or ask an admin for access.',
+            canSwitch
+                ? 'Your account cannot open the shared inbox or tickets here. '
+                      'Switch number, or ask an admin for access.'
+                : 'Your account cannot open the shared inbox or tickets here. '
+                      'Ask an admin for access.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 14, color: T.secondary),
           ),
