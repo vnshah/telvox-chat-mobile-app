@@ -80,7 +80,7 @@ class DetailHero extends StatelessWidget {
                     right: 2,
                     bottom: 2,
                     child: Container(
-                      key: const ValueKey('active-dot'),
+                      key: const ValueKey('window-dot'),
                       width: 16,
                       height: 16,
                       decoration: BoxDecoration(
@@ -120,7 +120,7 @@ class DetailHero extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               status!,
-              key: const ValueKey('active-label'),
+              key: const ValueKey('window-label'),
               style: const TextStyle(fontSize: 13, color: T.green),
             ),
           ],

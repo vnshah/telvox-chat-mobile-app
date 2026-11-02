@@ -12,7 +12,7 @@ import 'screens.dart' show failure, mobileNotice, openPage;
 import 'shared_media.dart';
 import 'call_history.dart';
 import 'calls.dart' show callEligibility;
-import 'activity.dart';
+import 'conversation_window.dart';
 
 class ContactActionsPage extends StatefulWidget {
   const ContactActionsPage(
@@ -20,13 +20,14 @@ class ContactActionsPage extends StatefulWidget {
     this.id, {
     super.key,
     this.initial,
-    this.activeAt,
+    this.windowExpires,
   });
   final MobileSession session;
   final int id;
 
   /// When the customer was last seen active, from the open conversation.
-  final DateTime? activeAt;
+  /// When the chat's conversation window closes, as the open chat knows it.
+  final DateTime? windowExpires;
 
   /// Details the caller already holds, shown while a fresh copy loads.
   final Json? initial;
@@ -93,6 +94,12 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
 
   Json get contact => object(data?['contact']);
   bool get closed => number(contact['conversation_status']) == 0;
+
+  /// The later of what the details say and what the open chat saw.
+  DateTime? get windowExpires {
+    final dates = [?windowExpiresAt(contact), ?widget.windowExpires]..sort();
+    return dates.lastOrNull;
+  }
 
   /// The name is edited where it is shown.
   bool editingName = false;
@@ -303,9 +310,9 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
         ),
       ],
       children: [
-        RecentActivity(
-          at: widget.activeAt,
-          builder: (context, ago) => DetailHero(
+        ConversationWindow(
+          expiresAt: windowExpires,
+          builder: (context, open) => DetailHero(
             avatar: initials.isEmpty ? '?' : initials,
             title: name.isEmpty ? formatPhone(c['wa_id']) : name,
             subtitle: formatPhone(c['display_wa_id'] ?? c['wa_id']),
@@ -339,8 +346,13 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
                     ),
                   )
                 : null,
-            online: activeNow(ago),
-            status: activityLabel(ago),
+            online: open,
+            status: open
+                ? switch (windowLabel(windowExpires)) {
+                    'Open' => 'Window open',
+                    final left => 'Window open · $left',
+                  }
+                : null,
             chips: [
               StatusChip(
                 closed ? 'Closed' : 'Open',

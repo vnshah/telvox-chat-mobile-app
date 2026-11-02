@@ -504,6 +504,7 @@ class Avatar extends StatelessWidget {
         ),
         if (online)
           Positioned(
+            key: const ValueKey('online-dot'),
             right: 1,
             bottom: 1,
             child: Container(

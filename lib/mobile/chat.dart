@@ -13,7 +13,7 @@ import '../ui/conversation.dart' show ChatWallpaper;
 import 'call_history.dart';
 import 'camera.dart';
 import 'calls.dart';
-import 'activity.dart';
+import 'conversation_window.dart';
 import 'api.dart';
 import 'models.dart';
 import 'screens.dart';
@@ -169,9 +169,9 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   late final repository = InboxRepository(widget.session.api);
   int get contactId => number(widget.contact['id'])!;
 
-  /// When the customer was last verifiably active in this conversation.
-  DateTime? get activeAt =>
-      customerActiveAt([for (final m in messages) m.json]);
+  /// When the conversation window closes, from the contact and its messages.
+  DateTime? get windowExpires =>
+      windowExpiresAt(callContact, [for (final m in messages) m.json]);
 
   /// The contact as the call rules read it: the list row, updated by details.
   Json get callContact => {...widget.contact, ...object(detail?['contact'])};
@@ -877,7 +877,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         widget.session,
         contactId,
         initial: detail,
-        activeAt: activeAt,
+        windowExpires: windowExpires,
       ),
     );
     if (mounted) details();
@@ -1099,13 +1099,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
             child: Row(
               children: [
                 Expanded(
-                  // As WhatsApp shows "online": recent activity in place of
-                  // the number, from what the customer verifiably did.
-                  child: RecentActivity(
-                    at: activeAt,
-                    builder: (context, ago) => Row(
+                  // The green dot: WhatsApp's conversation window is open.
+                  child: ConversationWindow(
+                    expiresAt: windowExpires,
+                    builder: (context, open) => Row(
                       children: [
-                        Avatar(name, size: 36, online: activeNow(ago)),
+                        Avatar(name, size: 36, online: open),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Column(
@@ -1121,11 +1120,10 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                                 known: detail != null,
                                 prefix: widget.ticketId != null
                                     ? 'Ticket conversation'
-                                    : activityLabel(ago) ??
-                                          formatPhone(
-                                            widget.contact['display_wa_id'] ??
-                                                phone,
-                                          ),
+                                    : formatPhone(
+                                        widget.contact['display_wa_id'] ??
+                                            phone,
+                                      ),
                               ),
                             ],
                           ),
@@ -1537,20 +1535,8 @@ class _WindowStatusState extends State<WindowStatus> {
 
   @override
   Widget build(BuildContext context) {
-    final expires = widget.expiresAt;
-    final left = expires?.difference(DateTime.now());
-    final open = left != null && !left.isNegative;
-    // WhatsApp's windows are 24 hours (service) or 72 (ad referral); a later
-    // expiry is bad data, so it shows as simply open rather than "632635h".
-    final label = !widget.known
-        ? ''
-        : !open
-        ? 'Window closed'
-        : left.inHours >= 72
-        ? 'Open'
-        : left.inHours > 0
-        ? '${left.inHours}h ${left.inMinutes % 60}m left'
-        : '${left.inMinutes.clamp(1, 59)}m left';
+    final open = windowOpen(widget.expiresAt);
+    final label = widget.known ? windowLabel(widget.expiresAt) : '';
     return Text.rich(
       TextSpan(
         children: [

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:telvox_chat_mobile_app/mobile/api.dart';
+import 'package:telvox_chat_mobile_app/mobile/conversation_window.dart';
 import 'package:telvox_chat_mobile_app/mobile/screens.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
@@ -125,4 +126,88 @@ void main() {
     await tester.pumpAndSettle();
     session.dispose();
   });
+
+  group('conversation window', () {
+    final now = DateTime.utc(2026, 11, 2, 12);
+    String at(Duration d) => now.add(d).toIso8601String();
+
+    test(
+      'opens from WhatsApp\'s expiry, or 24 hours after the customer wrote',
+      () {
+        expect(
+          windowOpen(
+            windowExpiresAt({
+              'service_expiration_timestamp': at(const Duration(hours: 3)),
+            }),
+            now,
+          ),
+          isTrue,
+        );
+        // Expired on the contact, but a newer message from the customer reopened it.
+        final reopened = windowExpiresAt(
+          {'service_expiration_timestamp': at(const Duration(hours: -1))},
+          [
+            {'type': 2, 'created_at': at(const Duration(hours: -2))},
+          ],
+        );
+        expect(reopened, now.add(const Duration(hours: 22)));
+        // Our own message never opens it.
+        expect(
+          windowExpiresAt({}, [
+            {'type': 1, 'created_at': at(Duration.zero)},
+          ]),
+          isNull,
+        );
+        expect(windowOpen(null, now), isFalse);
+        expect(
+          windowLabel(now.add(const Duration(minutes: 90)), now),
+          '1h 30m left',
+        );
+        expect(
+          windowLabel(now.subtract(const Duration(minutes: 1)), now),
+          'Window closed',
+        );
+      },
+    );
+  });
+
+  testWidgets(
+    'the green dot marks chats whose window is open, not recent ones',
+    (tester) async {
+      final soon = DateTime.now().toUtc().add(const Duration(hours: 5));
+      final gone = DateTime.now().toUtc().subtract(const Duration(hours: 1));
+      final session = await inbox(
+        tester,
+        () => [
+          {
+            'id': 1,
+            'profile_name': 'Open window',
+            'service_expiration_timestamp': soon.toIso8601String(),
+          },
+          {
+            'id': 2,
+            'profile_name': 'Closed window',
+            'service_expiration_timestamp': gone.toIso8601String(),
+            // Read a minute ago: recent, but the window is shut.
+            'last_message': {
+              'type': 1,
+              'read_at': DateTime.now().toUtc().toIso8601String(),
+            },
+          },
+        ],
+        [],
+      );
+      Finder dotIn(String name) => find.descendant(
+        of: find
+            .ancestor(of: find.text(name), matching: find.byType(InkWell))
+            .first,
+        matching: find.byKey(const ValueKey('online-dot')),
+      );
+      expect(dotIn('Open window'), findsOneWidget);
+      expect(dotIn('Closed window'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      session.dispose();
+    },
+  );
 }

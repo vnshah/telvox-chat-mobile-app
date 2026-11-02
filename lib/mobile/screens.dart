@@ -5,9 +5,9 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
-import 'activity.dart';
 import 'api.dart';
 import 'contact_actions.dart';
+import 'conversation_window.dart';
 import 'editors.dart';
 import 'call_push.dart';
 import 'calls.dart';
@@ -1773,10 +1773,11 @@ class LiveConversationRow extends StatelessWidget {
               // Recently active customers get WhatsApp's green dot.
               ticket
                   ? Avatar(name, size: 46)
-                  : RecentActivity(
-                      at: customerActiveAt([last]),
-                      builder: (_, ago) =>
-                          Avatar(name, size: 46, online: activeNow(ago)),
+                  // Green while WhatsApp's conversation window is open.
+                  : ConversationWindow(
+                      expiresAt: windowExpiresAt(contact, [last]),
+                      builder: (_, open) =>
+                          Avatar(name, size: 46, online: open),
                     ),
               const SizedBox(width: 12),
               Expanded(
