@@ -194,6 +194,7 @@ void main() {
           }
           if (platform == TargetPlatform.android &&
               [
+                'home',
                 'list-0',
                 'contact',
                 'ticket',

@@ -133,7 +133,7 @@ class _MediaGalleryPageState extends State<MediaGalleryPage> {
             ),
           );
     return Scaffold(
-      backgroundColor: ios ? T.iosGrouped : T.wash,
+      backgroundColor: ios ? T.iosGrouped : Colors.white,
       appBar: platformAppBar(context, title: Text(kind.label)),
       body: Column(
         children: [

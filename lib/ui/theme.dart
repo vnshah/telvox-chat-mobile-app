@@ -23,9 +23,10 @@ abstract final class T {
   static const edge = Color(0xFFE3DED4);
   static const control = Color(0xFFCFC6B8);
 
-  /// Taupe wash: avatars, tags, selected chips and the active tab.
-  static const selected = Color(0xFFECE4D8);
-  static const onSelected = Color(0xFF3D3022);
+  /// Green wash: avatars, tags, selected chips and the active tab, as the
+  /// white design has them (it replaced the taupe of the warm paper look).
+  static const selected = Color(0xFFDCEBDD);
+  static const onSelected = Color(0xFF14432C);
   static const greenWash = Color(0xFFDCEBDD);
 
   /// Screens are white; the warm tones stay in controls, tags and bubbles.
@@ -143,11 +144,13 @@ abstract final class T {
         surface: surface,
         onSurface: ink,
         onSurfaceVariant: secondary,
+        // Sheets, dialogs and menus are white like the screens; fills that
+        // need to stand apart use the light warm grey of customer messages.
         surfaceContainerLowest: Colors.white,
-        surfaceContainerLow: wash,
-        surfaceContainer: const Color(0xFFF3EFE8),
-        surfaceContainerHigh: surfaceHigh,
-        surfaceContainerHighest: const Color(0xFFE9E3DA),
+        surfaceContainerLow: Colors.white,
+        surfaceContainer: incoming,
+        surfaceContainerHigh: Colors.white,
+        surfaceContainerHighest: hairline,
         outline: control,
         outlineVariant: edge,
         inverseSurface: ink,
@@ -284,9 +287,19 @@ abstract final class T {
           borderSide: const BorderSide(color: danger),
         ),
       ),
+      // White with a thin outline, as the white design draws search.
       searchBarTheme: SearchBarThemeData(
         elevation: const WidgetStatePropertyAll(0),
-        backgroundColor: const WidgetStatePropertyAll(surfaceHigh),
+        backgroundColor: const WidgetStatePropertyAll(Colors.white),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        side: WidgetStateProperty.resolveWith(
+          (states) => BorderSide(
+            color: states.contains(WidgetState.focused) ? green : control,
+          ),
+        ),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
         constraints: const BoxConstraints(minHeight: 46),
         hintStyle: const WidgetStatePropertyAll(
           TextStyle(color: muted, fontSize: 14),
@@ -463,11 +476,7 @@ class Avatar extends StatelessWidget {
           width: size,
           height: size,
           alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-            border: Border.all(color: T.edge),
-          ),
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           child: Text(
             name
                 .trim()
@@ -480,7 +489,7 @@ class Avatar extends StatelessWidget {
             style: TextStyle(
               fontSize: size * .28,
               fontWeight: FontWeight.w600,
-              color: T.secondary,
+              color: T.onSelected,
             ),
           ),
         ),
@@ -730,10 +739,8 @@ class _SearchBoxState extends State<SearchBox> {
       controller: controller,
       onChanged: widget.onChanged,
       hintText: widget.hint,
-      leading: const AppIcon(Icons.search_rounded, size: 22, color: T.muted),
+      leading: const AppIcon(Icons.search_rounded, size: 22, color: T.green),
       constraints: BoxConstraints(minHeight: widget.dense ? 44 : 48),
-      elevation: const WidgetStatePropertyAll(0),
-      backgroundColor: const WidgetStatePropertyAll(T.paper),
       padding: const WidgetStatePropertyAll(
         EdgeInsets.symmetric(horizontal: 16),
       ),
