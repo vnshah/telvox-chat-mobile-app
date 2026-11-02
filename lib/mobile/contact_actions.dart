@@ -10,6 +10,8 @@ import 'message_content.dart' show readableText;
 import 'models.dart' show MobileClock, formatPhone;
 import 'screens.dart' show failure, mobileNotice, openPage;
 import 'shared_media.dart';
+import 'call_history.dart';
+import 'calls.dart' show callEligibility;
 
 class ContactActionsPage extends StatefulWidget {
   const ContactActionsPage(this.session, this.id, {super.key, this.initial});
@@ -374,6 +376,18 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
                     contactId: widget.id,
                     initial: kind,
                   ),
+                ),
+              ),
+            if (callEligibility(widget.session.config, contact).shown)
+              DetailRow(
+                icon: Icons.history,
+                label: 'Call history',
+                onTap: () => openPage(
+                  context,
+                  CallHistoryPage(widget.session, {
+                    ...contact,
+                    'id': widget.id,
+                  }),
                 ),
               ),
           ],

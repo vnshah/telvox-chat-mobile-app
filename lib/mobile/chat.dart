@@ -10,6 +10,7 @@ import '../ui/theme.dart';
 import '../ui/data.dart' show Message;
 import '../ui/chat_message.dart';
 import '../ui/conversation.dart' show ChatWallpaper;
+import 'call_history.dart';
 import 'calls.dart';
 import 'api.dart';
 import 'models.dart';
@@ -20,6 +21,7 @@ import 'local_cache.dart';
 import 'contact_actions.dart';
 import 'message_content.dart' show readableText;
 import 'templates.dart';
+import 'message_info.dart';
 import 'message_view.dart';
 import 'location.dart';
 import 'send_policy.dart';
@@ -779,6 +781,9 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         if (policy.canSend && m.wamid.isNotEmpty)
           ('reply', 'Reply', Icons.reply),
         ('copy', 'Copy', Icons.copy),
+        // WhatsApp's message info: when your message was sent, delivered, read.
+        if (m.outgoing && m.wamid.isNotEmpty)
+          ('info', 'Info', Icons.info_outline),
       ],
     );
     if (!mounted || choice == null) return;
@@ -821,6 +826,10 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     if (choice == 'reply') setState(() => reply = m);
     if (choice == 'copy') {
       await Clipboard.setData(ClipboardData(text: m.text));
+    }
+    if (choice == 'info' && mounted) {
+      await showMessageInfo(context, m);
+      return;
     }
     if (!mounted) return;
     if (choice.startsWith('emoji:') && m.wamid.isNotEmpty) {
@@ -1129,6 +1138,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
               onSelected: (v) {
                 if (v == 'contact') openContact();
                 if (v == 'templates') templates();
+                if (v == 'calls') {
+                  openPage(
+                    context,
+                    CallHistoryPage(widget.session, callContact),
+                  );
+                }
               },
               itemBuilder: (_) => [
                 const PopupMenuItem(
@@ -1139,6 +1154,15 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                     title: Text('Contact details'),
                   ),
                 ),
+                if (callEligibility(widget.session.config, callContact).shown)
+                  const PopupMenuItem(
+                    value: 'calls',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.history),
+                      title: Text('Call history'),
+                    ),
+                  ),
                 if (permission.canTemplate)
                   const PopupMenuItem(
                     value: 'templates',
