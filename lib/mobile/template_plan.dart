@@ -50,7 +50,7 @@ class TemplatePlan {
         bodyCount = variableCount(c['text']);
         if (!auth) {
           for (var i = 0; i < bodyCount; i++) {
-            add('body.$i', 'Body value ${i + 1}');
+            add('body.$i', 'Value for {{${i + 1}}}');
           }
           if (bodyCount > 0) require('body_text');
         }
@@ -59,7 +59,7 @@ class TemplatePlan {
         if (format == 'TEXT') {
           previews.insert(0, '${c['text'] ?? ''}');
           if (variableCount(c['text']) > 0) {
-            add('header.text', 'Header value');
+            add('header.text', 'Value for {{1}} in the header');
             require('header_text');
           }
         } else if (['IMAGE', 'VIDEO', 'DOCUMENT'].contains(format)) {
@@ -91,7 +91,7 @@ class TemplatePlan {
           if (button['type'] == 'URL' &&
               variableCount(button['url']) > 0 &&
               !auth) {
-            add('button.url', 'Dynamic button URL value');
+            add('button.url', 'Button link ending');
             require('button_url_text');
           }
           if (button['type'] == 'COPY_CODE' && !auth) {
@@ -117,7 +117,7 @@ class TemplatePlan {
             if (part['type'] == 'BODY') {
               previews.add('Card ${i + 1}: ${part['text'] ?? ''}');
               for (var n = 0; n < variableCount(part['text']); n++) {
-                add('card.$i.body.$n', 'Card ${i + 1}, value ${n + 1}');
+                add('card.$i.body.$n', 'Card ${i + 1}: value for {{${n + 1}}}');
                 require('card_body_text');
               }
             }
@@ -125,7 +125,7 @@ class TemplatePlan {
               for (final button in rows(part['buttons'])) {
                 if (button['type'] == 'URL' &&
                     variableCount(button['url']) > 0) {
-                  add('card.button', 'Carousel button URL value');
+                  add('card.button', 'Card button link ending');
                 }
               }
             }

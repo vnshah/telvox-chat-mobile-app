@@ -1309,6 +1309,10 @@ class TemplatePicker extends StatefulWidget {
 class _TemplatePickerState extends State<TemplatePicker> {
   List<Json>? templates;
   String? error;
+  String query = '';
+
+  /// A category to narrow to, or null for all of them.
+  String? category;
   String get cacheKey =>
       'templates:${widget.session.api.wabaId}:${widget.contact['id']}';
   @override
@@ -1338,39 +1342,145 @@ class _TemplatePickerState extends State<TemplatePicker> {
     }
   }
 
+  Future<void> open(Json t) async {
+    final sent = await openPage<bool>(
+      context,
+      TemplateSend(
+        widget.session,
+        widget.contact,
+        t,
+        ticketId: widget.ticketId,
+      ),
+    );
+    // Close the picker too, landing back in the conversation.
+    if (sent == true && mounted) Navigator.pop(context, true);
+  }
+
+  bool matches(Json t) {
+    if (category != null && '${t['category']}'.toUpperCase() != category) {
+      return false;
+    }
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return true;
+    final body = templateComponents(t)
+        .where((c) => '${c['type']}'.toUpperCase() == 'BODY')
+        .map((c) => '${c['text'] ?? ''}')
+        .join(' ');
+    return '${t['name']} ${templateTitle(t['name'])} $body'
+        .toLowerCase()
+        .contains(q);
+  }
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Templates')),
-    body: templates == null
-        ? error == null
-              ? const Center(child: CircularProgressIndicator())
-              : failure(error!, load)
-        : ListView(
-            children: [
-              if (templates!.isEmpty)
-                const ListTile(title: Text('No sendable templates')),
-              for (final t in templates!)
-                AppListTile(
-                  title: Text('${t['name']}'),
-                  subtitle: Text('${t['category']} · ${t['language']}'),
-                  onTap: () async {
-                    final sent = await openPage<bool>(
-                      context,
-                      TemplateSend(
-                        widget.session,
-                        widget.contact,
-                        t,
-                        ticketId: widget.ticketId,
-                      ),
-                    );
-                    // Close the picker too, landing back in the conversation.
-                    if (sent == true && context.mounted) {
-                      Navigator.pop(context, true);
-                    }
-                  },
+  Widget build(BuildContext context) {
+    final all = templates;
+    final name = readableText(widget.contact['profile_name']);
+    final categories = <String>{
+      for (final t in all ?? const <Json>[]) '${t['category']}'.toUpperCase(),
+    }.where((c) => c.isNotEmpty).toList()..sort();
+    final shown = all?.where(matches).toList();
+    return Scaffold(
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Send a template'),
+            if (name.isNotEmpty)
+              Text(
+                'To $name',
+                style: const TextStyle(fontSize: 13, color: T.muted),
+              ),
+          ],
+        ),
+      ),
+      body: all == null
+          ? error == null
+                ? const Center(child: CircularProgressIndicator())
+                : failure(error!, load)
+          : all.isEmpty
+          ? const _PickerEmpty(
+              'No templates you can send to this contact yet. Approved templates appear here.',
+            )
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+                  child: SearchBox(
+                    hint: 'Search templates',
+                    dense: true,
+                    onChanged: (v) => setState(() => query = v),
+                  ),
                 ),
-            ],
+                if (categories.length > 1)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    child: PlatformFilters(
+                      options: [
+                        'All',
+                        for (final c in categories) templateCategory(c),
+                      ],
+                      selected: category == null
+                          ? 'All'
+                          : templateCategory(category),
+                      scrollable: true,
+                      onSelected: (label) => setState(
+                        () => category = label == 'All'
+                            ? null
+                            : categories.firstWhere(
+                                (c) => templateCategory(c) == label,
+                              ),
+                      ),
+                    ),
+                  ),
+                Expanded(
+                  child: shown!.isEmpty
+                      ? const _PickerEmpty('No templates match your search.')
+                      : ListView(
+                          padding: const EdgeInsets.only(top: 4, bottom: 16),
+                          children: [
+                            for (final t in shown)
+                              TemplateCard(t, onTap: () => open(t)),
+                          ],
+                        ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _PickerEmpty extends StatelessWidget {
+  const _PickerEmpty(this.text);
+  final String text;
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: const BoxDecoration(
+              color: T.selected,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.article_outlined,
+              color: T.bronze,
+              size: 30,
+            ),
           ),
+          const SizedBox(height: 14),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 14.5, color: T.secondary),
+          ),
+        ],
+      ),
+    ),
   );
 }
 

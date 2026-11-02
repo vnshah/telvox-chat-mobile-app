@@ -62,12 +62,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Send template'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('order_update'));
+    // Listed by its readable name.
+    await tester.tap(find.text('Order update'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Send template'));
     await tester.pumpAndSettle();
     expect(sent, 1);
-    expect(find.text('Templates'), findsNothing);
+    expect(find.text('Send a template'), findsNothing);
     expect(find.byType(LiveChat), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();

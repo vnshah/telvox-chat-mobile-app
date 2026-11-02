@@ -198,6 +198,7 @@ void main() {
                 'list-0',
                 'contact',
                 'ticket',
+                'templates',
                 'template-send',
               ].contains(page.key)) {
             await saveReviewImage(

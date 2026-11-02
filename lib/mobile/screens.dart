@@ -1229,7 +1229,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
                 hintText: widget.kind == 2
                     ? 'Search tickets'
                     : 'Search name or number',
-                leading: const Icon(Icons.search, color: T.green),
+                leading: const Icon(Icons.search, color: T.brass),
               ),
       ),
       Padding(

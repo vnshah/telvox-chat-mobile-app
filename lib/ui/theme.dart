@@ -7,9 +7,15 @@ import 'package:go_router/go_router.dart';
 import 'platform.dart';
 export 'platform.dart';
 
-/// The telvox family palette, as TheMessenger web uses it: warm paper
-/// neutrals carry the surface, taupe brass marks structure (icons, labels,
-/// tags, the selected tab), and green is reserved for what can be acted on.
+/// The telvox family palette, as TheMessenger web uses it, on white screens:
+///
+///  - White and warm neutrals carry the surface: screens are white, fills a
+///    light warm grey ([incoming]), lines [hairline], [edge] and [control].
+///  - Bronze marks structure and selection, and keeps the brand: section
+///    labels, list icons, avatars, tags, the selected chip and tab ([brass],
+///    [bronze], [selected], [onSelected]).
+///  - Green is reserved for what can be acted on, or went well: send, the
+///    primary button, links, unread counts, "Open", your own messages.
 abstract final class T {
   static const paper = Color(0xFFF0ECE5);
   static const wash = Color(0xFFF7F4EE);
@@ -23,10 +29,13 @@ abstract final class T {
   static const edge = Color(0xFFE3DED4);
   static const control = Color(0xFFCFC6B8);
 
-  /// Green wash: avatars, tags, selected chips and the active tab, as the
-  /// white design has them (it replaced the taupe of the warm paper look).
-  static const selected = Color(0xFFDCEBDD);
-  static const onSelected = Color(0xFF14432C);
+  /// Deep bronze: text and icons on [selected], and bronze emphasis on white.
+  static const bronze = Color(0xFF6B5640);
+
+  /// Bronze wash: avatars, tags, selected chips and the active tab. Lighter
+  /// than the warm paper look's taupe, so it reads as an accent on white.
+  static const selected = Color(0xFFF1EADF);
+  static const onSelected = bronze;
   static const greenWash = Color(0xFFDCEBDD);
 
   /// Screens are white; the warm tones stay in controls, tags and bubbles.
@@ -294,7 +303,7 @@ abstract final class T {
         surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
         side: WidgetStateProperty.resolveWith(
           (states) => BorderSide(
-            color: states.contains(WidgetState.focused) ? green : control,
+            color: states.contains(WidgetState.focused) ? brass : control,
           ),
         ),
         shape: WidgetStatePropertyAll(
@@ -739,7 +748,7 @@ class _SearchBoxState extends State<SearchBox> {
       controller: controller,
       onChanged: widget.onChanged,
       hintText: widget.hint,
-      leading: const AppIcon(Icons.search_rounded, size: 22, color: T.green),
+      leading: const AppIcon(Icons.search_rounded, size: 22, color: T.brass),
       constraints: BoxConstraints(minHeight: widget.dense ? 44 : 48),
       padding: const WidgetStatePropertyAll(
         EdgeInsets.symmetric(horizontal: 16),
