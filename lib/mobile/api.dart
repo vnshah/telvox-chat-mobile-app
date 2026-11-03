@@ -299,6 +299,14 @@ class MobileSession extends ChangeNotifier {
         : InboxMode.none;
   }
 
+  /// Whether the composer may send a kind of message from this number
+  /// (capabilities.message_types); null when the server did not say.
+  bool? canSendType(String type) {
+    final types = object(object(config?['capabilities'])['message_types']);
+    final allowed = types[type];
+    return allowed == null ? null : allowed == true;
+  }
+
   bool allows(String path) {
     final actions = rows(object(config?['capabilities'])['actions']);
     final matches = actions.where((a) => '${a['path']}'.endsWith(path));

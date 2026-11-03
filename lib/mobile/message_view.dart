@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
 import '../ui/theme.dart';
@@ -12,6 +11,7 @@ import '../ui/data.dart' show Message;
 import '../ui/chat_message.dart';
 import '../ui/conversation.dart' show SwipeReply;
 import 'api.dart';
+import 'maps.dart';
 import 'media.dart';
 import 'models.dart';
 import 'message_content.dart';
@@ -35,6 +35,13 @@ Message messagePresentation(ApiMessage m, {String? contactName}) => Message(
   deliveryStatus: m.status,
 );
 
+/// The icon WhatsApp puts beside a request's own button.
+IconData? buttonIcon(String label) => switch (label) {
+  'Send location' => Icons.location_on_outlined,
+  'Provide address' => Icons.home_outlined,
+  _ => null,
+};
+
 class LiveMessageView extends StatelessWidget {
   const LiveMessageView({
     super.key,
@@ -45,10 +52,14 @@ class LiveMessageView extends StatelessWidget {
     this.onActions,
     this.onCallBack,
     this.contactName,
+    this.businessName = '',
   });
   final ApiMessage message;
   final String apiBase;
   final String? contactName;
+
+  /// This WhatsApp number's name, as a call permission request names it.
+  final String businessName;
   final bool first;
   final VoidCallback? onReply;
   final void Function(BuildContext)? onActions;
@@ -92,13 +103,20 @@ class LiveMessageView extends StatelessWidget {
             media['media_path'] ?? media['link'] ?? media['url'],
             apiBase,
           );
-    final file = media == null || mediaUrl == null
-        ? null
-        : MessageMedia(
-            '${media['type']}',
-            mediaUrl,
-            '${media['filename'] ?? media['media_name'] ?? media['type']}',
-          );
+    // A file this phone sent draws from its own copy, before and after the
+    // server confirms it, so the picture never reloads.
+    final local = m.outgoing ? sentMedia(m.tempId, m.type) : null;
+    final file =
+        local ??
+        (media == null || mediaUrl == null
+            ? null
+            : MessageMedia(
+                '${media['type']}',
+                mediaUrl,
+                '${media['filename'] ?? media['media_name'] ?? media['type']}',
+              ));
+    // Only a send still on its way carries this (see the chat's pending row).
+    final progress = (m.json['upload_progress'] as num?)?.toDouble();
     final width = MediaQuery.sizeOf(context).width * .82;
     Message bare(String text) => Message(
       text,
@@ -124,6 +142,7 @@ class LiveMessageView extends StatelessWidget {
         contentBefore: MediaFrame(
           file,
           stamp: c.text.isEmpty ? presentation : null,
+          progress: progress,
         ),
       ),
       'document' when file != null => MessageBubble(
@@ -133,7 +152,11 @@ class LiveMessageView extends StatelessWidget {
         contentBefore: DocumentCard(
           file,
           outgoing: m.outgoing,
-          size: '${media?['media_size'] ?? ''}',
+          size: switch (sentFiles[m.tempId]) {
+            final Attachment sent when local != null => fileSize(sent.size),
+            _ => '${media?['media_size'] ?? ''}',
+          },
+          progress: progress,
         ),
       ),
       'audio' when file != null => MessageBubble(
@@ -153,12 +176,19 @@ class LiveMessageView extends StatelessWidget {
           stamp: presentation,
         ),
       ),
-      'location' when location['latitude'] != null => MessageBubble(
+      'location' when locationOf(location) != null => MessageBubble(
         message: bare(''),
         first: first,
-        maxWidth: width,
+        // The bubble hugs the card, as for a document.
+        maxWidth: 254 + 17,
         tight: true,
         contentBefore: LocationCard(location),
+      ),
+      _ when c.request == 'call' => MessageBubble(
+        message: presentation,
+        first: first,
+        maxWidth: width,
+        contentAfter: CallPermissionCard(businessName),
       ),
       _ => null,
     };
@@ -261,13 +291,34 @@ class LiveMessageView extends StatelessWidget {
                                               top: BorderSide(color: T.edge),
                                             ),
                                           ),
-                                          child: Text(
-                                            b,
-                                            textAlign: TextAlign.center,
-                                            style: const TextStyle(
-                                              color: T.green,
-                                              fontSize: 13,
-                                            ),
+                                          child: Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              if (buttonIcon(b)
+                                                  case final IconData icon)
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        right: 6,
+                                                      ),
+                                                  child: Icon(
+                                                    icon,
+                                                    size: 17,
+                                                    color: T.green,
+                                                  ),
+                                                ),
+                                              Flexible(
+                                                child: Text(
+                                                  b,
+                                                  textAlign: TextAlign.center,
+                                                  style: const TextStyle(
+                                                    color: T.green,
+                                                    fontSize: 13,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ),
                                     ],
@@ -276,7 +327,7 @@ class LiveMessageView extends StatelessWidget {
                         )),
       ),
     );
-    if (onReply != null) bubble = SwipeReply(onReply: onReply!, child: bubble);
+    bubble = SwipeReply(onReply: onReply, child: bubble);
     return Padding(
       padding: EdgeInsets.only(
         top: first ? 7 : 1,
@@ -556,21 +607,27 @@ class OverlayStamp extends StatelessWidget {
   );
 }
 
-/// A photo or video filling its bubble; tap to open full screen.
+/// A photo or video filling its bubble; tap to open full screen. While it
+/// uploads, WhatsApp's ring shows how much has gone over it.
 class MediaFrame extends StatelessWidget {
-  const MediaFrame(this.media, {super.key, this.stamp});
+  const MediaFrame(this.media, {super.key, this.stamp, this.progress});
   final MessageMedia media;
 
   /// Drawn over the bottom of the media when there is no caption.
   final Message? stamp;
+
+  /// Upload progress, 0–1, while sending; null once sent.
+  final double? progress;
   @override
   Widget build(BuildContext context) {
     final video = media.type == 'video';
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => MediaViewer(media)),
-      ),
+      onTap: progress != null
+          ? null
+          : () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => MediaViewer(media)),
+            ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(6.5),
         child: SizedBox(
@@ -580,13 +637,16 @@ class MediaFrame extends StatelessWidget {
             fit: StackFit.expand,
             children: [
               if (video)
-                const ColoredBox(color: Color(0xFF1F2C34))
+                media.url.scheme == 'file'
+                    ? VideoFirstFrame(media.url)
+                    : const ColoredBox(color: Color(0xFF1F2C34))
               else
-                Image.network(
-                  media.url.toString(),
+                Image(
+                  image: mediaImage(media.url),
                   fit: BoxFit.cover,
+                  gaplessPlayback: true,
                   semanticLabel: 'Photo',
-                  loadingBuilder: (context, child, progress) => progress == null
+                  loadingBuilder: (context, child, loading) => loading == null
                       ? child
                       : const ColoredBox(
                           color: T.wash,
@@ -603,7 +663,9 @@ class MediaFrame extends StatelessWidget {
                     child: Icon(Icons.broken_image_outlined, color: T.muted),
                   ),
                 ),
-              if (video)
+              if (progress != null)
+                Center(child: UploadRing(progress!))
+              else if (video)
                 Center(
                   child: Container(
                     width: 52,
@@ -646,6 +708,98 @@ class MediaFrame extends StatelessWidget {
   }
 }
 
+/// WhatsApp's upload ring: the share sent so far around an arrow.
+class UploadRing extends StatelessWidget {
+  const UploadRing(this.progress, {super.key, this.size = 52});
+  final double progress;
+  final double size;
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Sending, ${(progress * 100).round()} percent',
+    child: Container(
+      width: size,
+      height: size,
+      padding: EdgeInsets.all(size * .08),
+      decoration: const BoxDecoration(
+        color: Colors.black45,
+        shape: BoxShape.circle,
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CircularProgressIndicator(
+            // Indeterminate until the first bytes go, then the real share.
+            value: progress > 0 ? progress : null,
+            strokeWidth: 2.5,
+            color: Colors.white,
+          ),
+          Icon(
+            Icons.arrow_upward_rounded,
+            color: Colors.white,
+            size: size * .42,
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// A video this phone is sending, drawn by its first frame.
+class VideoFirstFrame extends StatefulWidget {
+  const VideoFirstFrame(this.url, {super.key});
+  final Uri url;
+  @override
+  State<VideoFirstFrame> createState() => _VideoFirstFrameState();
+}
+
+class _VideoFirstFrameState extends State<VideoFirstFrame> {
+  VideoPlayerController? player;
+
+  @override
+  void initState() {
+    super.initState();
+    final controller = mediaPlayer(widget.url);
+    controller.initialize().then(
+      (_) {
+        if (mounted) {
+          setState(() => player = controller);
+        } else {
+          controller.dispose();
+        }
+      },
+      onError: (_) {
+        // No preview: the dark frame and play button stay.
+        controller.dispose();
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    player?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = player;
+    return ColoredBox(
+      color: const Color(0xFF1F2C34),
+      child: p == null
+          ? null
+          : FittedBox(
+              fit: BoxFit.cover,
+              clipBehavior: Clip.hardEdge,
+              child: SizedBox(
+                width: p.value.size.width,
+                height: p.value.size.height,
+                child: VideoPlayer(p),
+              ),
+            ),
+    );
+  }
+}
+
 /// WhatsApp's document card: a coloured file badge, the name, type and size.
 class DocumentCard extends StatelessWidget {
   const DocumentCard(
@@ -653,10 +807,14 @@ class DocumentCard extends StatelessWidget {
     super.key,
     required this.outgoing,
     this.size = '',
+    this.progress,
   });
   final MessageMedia media;
   final bool outgoing;
   final String size;
+
+  /// Upload progress, 0–1, while sending; null once sent.
+  final double? progress;
   @override
   Widget build(BuildContext context) {
     final extension = media.name.contains('.')
@@ -670,10 +828,12 @@ class DocumentCard extends StatelessWidget {
       _ => const Color(0xFF8696A0),
     };
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => MediaViewer(media)),
-      ),
+      onTap: progress != null
+          ? null
+          : () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => MediaViewer(media)),
+            ),
       child: Container(
         width: 250,
         margin: const EdgeInsets.only(bottom: 3),
@@ -727,6 +887,19 @@ class DocumentCard extends StatelessWidget {
                 ],
               ),
             ),
+            if (progress != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: SizedBox.square(
+                  dimension: 26,
+                  child: CircularProgressIndicator(
+                    value: progress! > 0 ? progress : null,
+                    strokeWidth: 2.5,
+                    color: T.green,
+                    semanticsLabel: 'Sending',
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -760,6 +933,11 @@ class VoiceNoteFile {
       });
 
   static Future<VoiceNoteFile> _load(Uri url) async {
+    if (url.scheme == 'file') {
+      // One this phone recorded: already here.
+      final file = File(url.toFilePath());
+      return VoiceNoteFile(file, VoiceWaveform.read(await file.readAsBytes()));
+    }
     final bytes = await fetch(url);
     final file = File(
       '${Directory.systemTemp.path}/voice-${url.toString().hashCode.toUnsigned(32)}.ogg',
@@ -830,7 +1008,7 @@ class _AudioNoteState extends State<AudioNote> {
     }
     final controller = local != null
         ? VideoPlayerController.file(local.file)
-        : VideoPlayerController.networkUrl(widget.media.url);
+        : mediaPlayer(widget.media.url);
     try {
       await controller.initialize();
       if (!mounted) {
@@ -1068,60 +1246,179 @@ class _TrackPainter extends CustomPainter {
 }
 
 /// A shared location: a map-styled tile with the place, opening Maps on tap.
+/// A shared location as WhatsApp frames one: the map, then the place's name
+/// and address (or its coordinates), and a link to open it in Google Maps.
 class LocationCard extends StatelessWidget {
   const LocationCard(this.location, {super.key});
   final Json location;
   @override
   Widget build(BuildContext context) {
-    final name = readableText(location['name']);
-    final address = readableText(location['address']);
-    final query = '${location['latitude']},${location['longitude']}';
-    return GestureDetector(
-      onTap: () => launchUrl(
-        Uri.https('maps.google.com', '/', {'q': query}),
-        mode: LaunchMode.externalApplication,
-      ),
-      child: SizedBox(
-        width: 254,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6.5),
-              child: Container(
-                height: 130,
-                color: const Color(0xFFE3EDE4),
-                child: const Center(
-                  child: Icon(Icons.location_on, size: 42, color: T.danger),
-                ),
+    final place = locationOf(location);
+    if (place == null) return const SizedBox.shrink();
+    final title = place.name.isNotEmpty
+        ? place.name
+        : place.address.isNotEmpty
+        ? place.address
+        : 'Shared location';
+    final detail = place.name.isNotEmpty && place.address.isNotEmpty
+        ? place.address
+        : coordinates(place.latitude, place.longitude);
+    return Semantics(
+      button: true,
+      label: 'Open $title in Google Maps',
+      child: GestureDetector(
+        onTap: () => openInMaps(place.latitude, place.longitude),
+        child: SizedBox(
+          width: 254,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6.5),
+                child: LocationPreview(place.latitude, place.longitude),
               ),
-            ),
-            if (name.isNotEmpty || address.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.fromLTRB(6, 6, 6, 0),
+                padding: const EdgeInsets.fromLTRB(6, 8, 6, 0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (name.isNotEmpty)
-                      Text(
-                        name,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: T.ink,
-                        ),
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: T.ink,
                       ),
-                    if (address.isNotEmpty)
-                      Text(
-                        address,
-                        style: const TextStyle(fontSize: 12, color: T.muted),
-                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      detail,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12.5, color: T.muted),
+                    ),
                   ],
                 ),
               ),
-          ],
+              Container(
+                margin: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.symmetric(vertical: 9),
+                decoration: const BoxDecoration(
+                  border: Border(top: BorderSide(color: T.edge)),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.map_outlined, size: 17, color: T.green),
+                    SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        'Open in Google Maps',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: T.green,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+/// A request for permission to call, as the customer sees it: "Can {the
+/// business} call you?" with WhatsApp's preference button.
+class CallPermissionCard extends StatelessWidget {
+  const CallPermissionCard(this.business, {super.key});
+  final String business;
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: 250,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 6),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: .55),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: const BoxDecoration(
+                  color: T.surfaceHigh,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.call_outlined, size: 19, color: T.ink),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      business.isEmpty
+                          ? 'Can we call you?'
+                          : 'Can $business call you?',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: T.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    const Text(
+                      'You can update your preference anytime in the '
+                      'business profile.',
+                      style: TextStyle(fontSize: 12, color: T.muted),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        Container(
+          margin: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          decoration: const BoxDecoration(
+            border: Border(top: BorderSide(color: T.edge)),
+          ),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Flexible(
+                child: Text(
+                  'Choose preference',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: T.green,
+                  ),
+                ),
+              ),
+              Icon(Icons.expand_more, size: 18, color: T.green),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
 }

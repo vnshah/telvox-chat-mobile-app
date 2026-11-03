@@ -887,7 +887,10 @@ class _DayLabel extends StatelessWidget {
 class SwipeReply extends StatefulWidget {
   const SwipeReply({super.key, required this.child, required this.onReply});
   final Widget child;
-  final VoidCallback onReply;
+
+  /// Null while a message cannot be replied to yet (still sending): the row
+  /// keeps its shape, so it is not rebuilt when it becomes repliable.
+  final VoidCallback? onReply;
   @override
   State<SwipeReply> createState() => _SwipeReplyState();
 }
@@ -897,20 +900,29 @@ class _SwipeReplyState extends State<SwipeReply> {
   bool dragging = false;
   @override
   Widget build(BuildContext context) => GestureDetector(
-    onHorizontalDragStart: (_) => setState(() => dragging = true),
-    onHorizontalDragUpdate: (d) =>
-        setState(() => distance = (distance + d.delta.dx * .8).clamp(0, 60)),
-    onHorizontalDragEnd: (_) {
-      if (distance >= 38) widget.onReply();
-      setState(() {
-        dragging = false;
-        distance = 0;
-      });
-    },
-    onHorizontalDragCancel: () => setState(() {
-      dragging = false;
-      distance = 0;
-    }),
+    onHorizontalDragStart: widget.onReply == null
+        ? null
+        : (_) => setState(() => dragging = true),
+    onHorizontalDragUpdate: widget.onReply == null
+        ? null
+        : (d) => setState(
+            () => distance = (distance + d.delta.dx * .8).clamp(0, 60),
+          ),
+    onHorizontalDragEnd: widget.onReply == null
+        ? null
+        : (_) {
+            if (distance >= 38) widget.onReply!();
+            setState(() {
+              dragging = false;
+              distance = 0;
+            });
+          },
+    onHorizontalDragCancel: widget.onReply == null
+        ? null
+        : () => setState(() {
+            dragging = false;
+            distance = 0;
+          }),
     child: Stack(
       alignment: Alignment.centerLeft,
       children: [

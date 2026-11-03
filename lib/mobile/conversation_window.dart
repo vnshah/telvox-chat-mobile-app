@@ -21,6 +21,28 @@ DateTime? windowExpiresAt(Json contact, [Iterable<Json> messages = const []]) {
   return dates.lastOrNull;
 }
 
+/// Windows learned from opened chats, which load the contact in full, by
+/// contact id. The inbox list may lack the expiry (an older server sends
+/// none); with this its dot still agrees with the chat header.
+final knownWindows = ValueNotifier<Map<String, DateTime>>({});
+
+/// Notes a chat's window; only a later expiry changes anything.
+void rememberWindow(Object? contactId, DateTime? expires) {
+  if (contactId == null || expires == null) return;
+  final known = knownWindows.value['$contactId'];
+  if (known != null && !expires.isAfter(known)) return;
+  knownWindows.value = {...knownWindows.value, '$contactId': expires};
+}
+
+/// The later of the row's own expiry and what an opened chat learned.
+DateTime? rowWindowExpires(Json contact, [Iterable<Json> messages = const []]) {
+  final own = windowExpiresAt(contact, messages);
+  final known = knownWindows.value['${contact['id']}'];
+  if (own == null) return known;
+  if (known == null) return own;
+  return known.isAfter(own) ? known : own;
+}
+
 bool windowOpen(DateTime? expires, [DateTime? now]) =>
     expires != null && expires.isAfter(now ?? DateTime.now());
 

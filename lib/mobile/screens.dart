@@ -1786,10 +1786,13 @@ class LiveConversationRow extends StatelessWidget {
               ticket
                   ? Avatar(name, size: 46)
                   // Green while WhatsApp's conversation window is open.
-                  : ConversationWindow(
-                      expiresAt: windowExpiresAt(contact, [last]),
-                      builder: (_, open) =>
-                          Avatar(name, size: 46, online: open),
+                  : ValueListenableBuilder(
+                      valueListenable: knownWindows,
+                      builder: (_, _, _) => ConversationWindow(
+                        expiresAt: rowWindowExpires(contact, [last]),
+                        builder: (_, open) =>
+                            Avatar(name, size: 46, online: open),
+                      ),
                     ),
               const SizedBox(width: 12),
               Expanded(

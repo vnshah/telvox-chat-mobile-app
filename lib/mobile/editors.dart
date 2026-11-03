@@ -102,172 +102,13 @@ class _ActionEditorState extends State<ActionEditor> {
     ),
   );
 
-  Widget _input(EditField f) {
-    if (f.kind.startsWith('file:')) {
-      final picked = values[f.key];
-      return FieldBox(
-        text: picked is Attachment ? picked.name : null,
-        hint: 'Choose a file',
-        icon: Icons.attach_file,
-        onTap: busy
-            ? null
-            : () async {
-                try {
-                  final file = await chooseAttachment(
-                    kind: f.kind.substring(5),
-                  );
-                  if (mounted && file != null) {
-                    setState(() => values[f.key] = file);
-                  }
-                } catch (e) {
-                  if (mounted) setState(() => error = '$e');
-                }
-              },
-      );
-    }
-    if (f.kind == 'switch') {
-      final on = '${values[f.key]}' == '1' || values[f.key] == true;
-      return Row(
-        children: [
-          Expanded(child: Text(on ? 'On' : 'Off')),
-          Switch.adaptive(
-            value: on,
-            onChanged: busy
-                ? null
-                : (v) => setState(() => values[f.key] = v ? '1' : '0'),
-          ),
-        ],
-      );
-    }
-    if (f.kind == 'date' || f.kind == 'datetime') {
-      return FormField<Object?>(
-        initialValue: values[f.key],
-        validator: (_) => f.required && '${values[f.key] ?? ''}'.isEmpty
-            ? 'Choose ${f.label.toLowerCase()}'
-            : null,
-        builder: (field) => Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            FieldBox(
-              text: '${values[f.key] ?? ''}'.isEmpty
-                  ? null
-                  : shownDate('${values[f.key]}', time: f.kind == 'datetime'),
-              hint: f.hint ?? 'Choose a date',
-              icon: Icons.calendar_today_outlined,
-              error: field.hasError,
-              onClear: f.required || '${values[f.key] ?? ''}'.isEmpty || busy
-                  ? null
-                  : () => setState(() => values[f.key] = null),
-              onTap: busy
-                  ? null
-                  : () async {
-                      final picked = await pickDate(
-                        context,
-                        '${values[f.key] ?? ''}',
-                        time: f.kind == 'datetime',
-                      );
-                      if (mounted && picked != null) {
-                        setState(() => values[f.key] = picked);
-                        field.didChange(picked);
-                      }
-                    },
-            ),
-            if (field.hasError)
-              Padding(
-                padding: const EdgeInsets.only(top: 6, left: 3),
-                child: Text(
-                  field.errorText!,
-                  style: const TextStyle(fontSize: 12, color: T.danger),
-                ),
-              ),
-          ],
-        ),
-      );
-    }
-    if (f.options != null && f.multiple) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final option in f.options!)
-            CheckboxListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              controlAffinity: ListTileControlAffinity.leading,
-              title: Text('${option['name']}'),
-              value: (values[f.key] is List ? values[f.key] as List : [])
-                  .contains(option['id']),
-              onChanged: busy
-                  ? null
-                  : (checked) {
-                      final selected = List<dynamic>.from(
-                        values[f.key] is List ? values[f.key] as List : [],
-                      );
-                      checked == true
-                          ? selected.add(option['id'])
-                          : selected.remove(option['id']);
-                      setState(() => values[f.key] = selected);
-                    },
-            ),
-        ],
-      );
-    }
-    if (f.options != null) {
-      return DropdownButtonFormField<Object>(
-        initialValue: f.options!.any((o) => o['id'] == values[f.key])
-            ? values[f.key]
-            : null,
-        isExpanded: true,
-        hint: Text(f.hint ?? 'Choose…'),
-        items: [
-          for (final option in f.options!)
-            DropdownMenuItem(
-              value: option['id'],
-              child: Text('${option['name']}', overflow: TextOverflow.ellipsis),
-            ),
-        ],
-        onChanged: busy ? null : (v) => values[f.key] = v,
-        validator: (v) =>
-            f.required && v == null ? 'Choose ${f.label.toLowerCase()}' : null,
-      );
-    }
-    final multiline = f.lines > 1;
-    return AppTextFormField(
-      initialValue: '${f.value ?? ''}',
-      minLines: multiline ? f.lines : null,
-      maxLines: multiline ? f.lines + 6 : 1,
-      textAlignVertical: multiline ? TextAlignVertical.top : null,
-      bordered: true,
-      obscureText: f.kind == 'password',
-      keyboardType: switch (f.kind) {
-        'email' => TextInputType.emailAddress,
-        'number' => const TextInputType.numberWithOptions(
-          decimal: true,
-          signed: true,
-        ),
-        _ => multiline ? TextInputType.multiline : null,
-      },
-      decoration: InputDecoration(
-        hintText: f.hint,
-        contentPadding: multiline ? const EdgeInsets.all(14) : null,
-      ),
-      onChanged: (v) => values[f.key] = v,
-      validator: (v) {
-        final text = v?.trim() ?? '';
-        if (f.required && text.isEmpty) {
-          return 'Enter ${f.label.toLowerCase()}';
-        }
-        if (text.isEmpty) return null;
-        if (f.kind == 'email' &&
-            !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(text)) {
-          return 'Enter a valid email address';
-        }
-        if (f.kind == 'number' && num.tryParse(text) == null) {
-          return 'Enter a valid number';
-        }
-        return null;
-      },
-    );
-  }
+  Widget _input(EditField f) => FieldInput(
+    f,
+    value: values[f.key],
+    enabled: !busy,
+    onChanged: (v) => setState(() => values[f.key] = v),
+    onError: (e) => setState(() => error = e),
+  );
 
   Widget _form({bool shrink = false}) => Form(
     key: form,
@@ -323,6 +164,197 @@ class _ActionEditorState extends State<ActionEditor> {
       ],
     ),
   );
+}
+
+/// One field's input, by its kind: a text box, switch, date picker, choice
+/// list, dropdown, or file chooser. The caller keeps the value.
+class FieldInput extends StatelessWidget {
+  const FieldInput(
+    this.field, {
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.enabled = true,
+    this.onError,
+  });
+  final EditField field;
+  final Object? value;
+  final ValueChanged<Object?> onChanged;
+  final bool enabled;
+  final ValueChanged<String>? onError;
+
+  @override
+  Widget build(BuildContext context) {
+    final f = field;
+    final busy = !enabled;
+    if (f.kind.startsWith('file:')) {
+      final picked = value;
+      return FieldBox(
+        text: picked is Attachment
+            ? picked.name
+            : (picked is String && picked.isNotEmpty ? picked : null),
+        hint: f.hint ?? 'Choose a file',
+        icon: Icons.attach_file,
+        onTap: busy
+            ? null
+            : () async {
+                try {
+                  final file = await chooseAttachment(
+                    kind: f.kind.substring(5),
+                  );
+                  if (file != null) onChanged(file);
+                } catch (e) {
+                  onError?.call('$e');
+                }
+              },
+      );
+    }
+    if (f.kind == 'switch') {
+      final on = '$value' == '1' || value == true;
+      return Row(
+        children: [
+          Expanded(child: Text(on ? 'On' : 'Off')),
+          Switch.adaptive(
+            value: on,
+            onChanged: busy ? null : (v) => onChanged(v ? '1' : '0'),
+          ),
+        ],
+      );
+    }
+    if (f.kind == 'date' || f.kind == 'datetime') {
+      return FormField<Object?>(
+        initialValue: value,
+        validator: (_) => f.required && '${value ?? ''}'.isEmpty
+            ? 'Choose ${f.label.toLowerCase()}'
+            : null,
+        builder: (field) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            FieldBox(
+              text: '${value ?? ''}'.isEmpty
+                  ? null
+                  : shownDate('$value', time: f.kind == 'datetime'),
+              hint: f.hint ?? 'Choose a date',
+              icon: Icons.calendar_today_outlined,
+              error: field.hasError,
+              onClear: f.required || '${value ?? ''}'.isEmpty || busy
+                  ? null
+                  : () {
+                      onChanged(null);
+                      field.didChange(null);
+                    },
+              onTap: busy
+                  ? null
+                  : () async {
+                      final picked = await pickDate(
+                        context,
+                        '${value ?? ''}',
+                        time: f.kind == 'datetime',
+                      );
+                      if (picked != null) {
+                        onChanged(picked);
+                        field.didChange(picked);
+                      }
+                    },
+            ),
+            if (field.hasError)
+              Padding(
+                padding: const EdgeInsets.only(top: 6, left: 3),
+                child: Text(
+                  field.errorText!,
+                  style: const TextStyle(fontSize: 12, color: T.danger),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+    if (f.options != null && f.multiple) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final option in f.options!)
+            CheckboxListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: Text('${option['name']}'),
+              value: (value is List ? value as List : []).contains(
+                option['id'],
+              ),
+              onChanged: busy
+                  ? null
+                  : (checked) {
+                      final selected = List<dynamic>.from(
+                        value is List ? value as List : [],
+                      );
+                      checked == true
+                          ? selected.add(option['id'])
+                          : selected.remove(option['id']);
+                      onChanged(selected);
+                    },
+            ),
+        ],
+      );
+    }
+    if (f.options != null) {
+      return DropdownButtonFormField<Object>(
+        initialValue: f.options!.any((o) => o['id'] == value) ? value : null,
+        isExpanded: true,
+        // The same face and size as the text boxes beside it.
+        style: Theme.of(context).textTheme.bodyLarge,
+        hint: Text(f.hint ?? 'Choose…'),
+        items: [
+          for (final option in f.options!)
+            DropdownMenuItem(
+              value: option['id'],
+              child: Text('${option['name']}', overflow: TextOverflow.ellipsis),
+            ),
+        ],
+        onChanged: busy ? null : onChanged,
+        validator: (v) =>
+            f.required && v == null ? 'Choose ${f.label.toLowerCase()}' : null,
+      );
+    }
+    final multiline = f.lines > 1;
+    return AppTextFormField(
+      initialValue: '${f.value ?? ''}',
+      minLines: multiline ? f.lines : null,
+      maxLines: multiline ? f.lines + 6 : 1,
+      textAlignVertical: multiline ? TextAlignVertical.top : null,
+      bordered: true,
+      obscureText: f.kind == 'password',
+      keyboardType: switch (f.kind) {
+        'email' => TextInputType.emailAddress,
+        'number' => const TextInputType.numberWithOptions(
+          decimal: true,
+          signed: true,
+        ),
+        _ => multiline ? TextInputType.multiline : null,
+      },
+      decoration: InputDecoration(
+        hintText: f.hint,
+        contentPadding: multiline ? const EdgeInsets.all(14) : null,
+      ),
+      enabled: enabled,
+      onChanged: onChanged,
+      validator: (v) {
+        final text = v?.trim() ?? '';
+        if (f.required && text.isEmpty) {
+          return 'Enter ${f.label.toLowerCase()}';
+        }
+        if (text.isEmpty) return null;
+        if (f.kind == 'email' &&
+            !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(text)) {
+          return 'Enter a valid email address';
+        }
+        if (f.kind == 'number' && num.tryParse(text) == null) {
+          return 'Enter a valid number';
+        }
+        return null;
+      },
+    );
+  }
 }
 
 /// A read-only input that opens a picker: same height, outline and

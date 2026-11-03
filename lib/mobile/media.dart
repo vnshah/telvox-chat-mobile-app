@@ -162,6 +162,34 @@ Uri? mediaUri(Object? value, String apiBase) {
   return resolved;
 }
 
+/// Files this phone sent, by the send's temporary id. A sent photo, video or
+/// voice note keeps drawing from the phone's own copy, so the server
+/// confirming it changes its ticks, not its picture.
+final sentFiles = <String, Attachment>{};
+
+/// A message's media, from the phone's own copy when it sent it.
+MessageMedia? sentMedia(String tempId, String type) {
+  final file = sentFiles[tempId];
+  if (file == null || file.kind != type || file.file.path.isEmpty) return null;
+  return MessageMedia(file.kind, Uri.file(file.file.path), file.name);
+}
+
+/// The picture behind a media link: the phone's file, or the server's copy.
+ImageProvider mediaImage(Uri url) => url.scheme == 'file'
+    ? FileImage(File(url.toFilePath()))
+    : NetworkImage(url.toString());
+
+VideoPlayerController mediaPlayer(Uri url) => url.scheme == 'file'
+    ? VideoPlayerController.file(File(url.toFilePath()))
+    : VideoPlayerController.networkUrl(url);
+
+/// "245 KB", "3.1 MB", as WhatsApp sizes a document.
+String fileSize(int bytes) => bytes < 1024
+    ? '$bytes B'
+    : bytes < 1024 * 1024
+    ? '${(bytes / 1024).round()} KB'
+    : '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+
 class MessageMedia {
   const MessageMedia(this.type, this.url, this.name);
   final String type, name;
@@ -260,7 +288,7 @@ class _MediaViewerState extends State<MediaViewer> with WidgetsBindingObserver {
 
   Future<void> initialize() async {
     if (!['audio', 'video'].contains(widget.media.type)) return;
-    final controller = VideoPlayerController.networkUrl(widget.media.url);
+    final controller = mediaPlayer(widget.media.url);
     player = controller;
     try {
       await controller.initialize();
@@ -288,8 +316,8 @@ class _MediaViewerState extends State<MediaViewer> with WidgetsBindingObserver {
     body: Center(
       child: ['image', 'sticker'].contains(widget.media.type)
           ? InteractiveViewer(
-              child: Image.network(
-                widget.media.url.toString(),
+              child: Image(
+                image: mediaImage(widget.media.url),
                 errorBuilder: (_, _, _) =>
                     const Text('Image could not be loaded.'),
               ),

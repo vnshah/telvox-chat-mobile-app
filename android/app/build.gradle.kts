@@ -15,6 +15,14 @@ val releaseKey = Properties().apply {
     if (file.exists()) file.inputStream().use { load(it) }
 }
 
+// android/maps.properties (not committed) holds MAPS_API_KEY, a Google Maps
+// SDK key restricted to this app and its release certificate. Without it the
+// app still builds; locations then show without a live map.
+val mapsKey = Properties().apply {
+    val file = rootProject.file("maps.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}.getProperty("MAPS_API_KEY") ?: ""
+
 android {
     namespace = "com.telvox.telvox_chat_mobile_app"
     compileSdk = flutter.compileSdkVersion
@@ -40,6 +48,7 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["mapsApiKey"] = mapsKey
     }
 
     signingConfigs {

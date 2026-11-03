@@ -210,4 +210,42 @@ void main() {
       session.dispose();
     },
   );
+
+  testWidgets(
+    'a list without window fields shows the dot an opened chat learned',
+    (tester) async {
+      knownWindows.value = {};
+      addTearDown(() => knownWindows.value = {});
+      final soon = DateTime.now().toUtc().add(const Duration(hours: 6));
+      // As an older server lists it: no expiry, our message last.
+      final session = await inbox(
+        tester,
+        () => [
+          {
+            'id': 3,
+            'profile_name': 'Nikunj',
+            'last_message': {
+              'type': 1,
+              'created_at': DateTime.now().toUtc().toIso8601String(),
+            },
+          },
+        ],
+        [],
+      );
+      Finder dot() => find.byKey(const ValueKey('online-dot'));
+      expect(dot(), findsNothing);
+
+      // Opening the chat loads the contact in full; the row follows at once.
+      rememberWindow(3, soon);
+      await tester.pump();
+      expect(dot(), findsOneWidget);
+
+      // An older expiry never takes the dot away.
+      rememberWindow(3, soon.subtract(const Duration(hours: 10)));
+      expect(knownWindows.value['3'], soon);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      session.dispose();
+    },
+  );
 }

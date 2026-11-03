@@ -646,6 +646,8 @@ class AppTextFormField extends StatefulWidget {
     this.maxLength,
     this.textAlignVertical,
     this.bordered = false,
+    this.enabled = true,
+    this.onSubmitted,
   });
   final TextEditingController? controller;
   final String? initialValue;
@@ -664,6 +666,10 @@ class AppTextFormField extends StatefulWidget {
   /// An outline on iOS too, for fields on a white sheet where the grouped
   /// background that normally frames them is missing.
   final bool bordered;
+  final bool enabled;
+
+  /// The keyboard's action key; given, it reads Search.
+  final ValueChanged<String>? onSubmitted;
   @override
   State<AppTextFormField> createState() => _AppTextFormFieldState();
 }
@@ -694,6 +700,11 @@ class _AppTextFormFieldState extends State<AppTextFormField> {
         maxLines: widget.maxLines,
         maxLength: widget.maxLength,
         textAlignVertical: widget.textAlignVertical,
+        enabled: widget.enabled,
+        onFieldSubmitted: widget.onSubmitted,
+        textInputAction: widget.onSubmitted == null
+            ? null
+            : TextInputAction.search,
       );
     }
     final controller = widget.controller ?? owned!;
@@ -712,6 +723,11 @@ class _AppTextFormFieldState extends State<AppTextFormField> {
           ],
           CupertinoTextField(
             controller: controller,
+            enabled: widget.enabled,
+            onSubmitted: widget.onSubmitted,
+            textInputAction: widget.onSubmitted == null
+                ? null
+                : TextInputAction.search,
             obscureText: widget.obscureText,
             keyboardType: widget.keyboardType,
             style: widget.style ?? Theme.of(context).textTheme.bodyLarge,

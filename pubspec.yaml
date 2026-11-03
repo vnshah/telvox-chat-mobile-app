@@ -56,6 +56,8 @@ dependencies:
   geolocator: ^14.0.1
   emoji_picker_flutter: ^4.5.4
   camera: ^0.12.2
+  google_maps_flutter: ^2.19.0
+  geocoding: ^5.0.1
 
 dev_dependencies:
   flutter_test:

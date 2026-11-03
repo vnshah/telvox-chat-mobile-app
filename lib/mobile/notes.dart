@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
@@ -208,8 +209,8 @@ class _NotesPageState extends State<NotesPage> {
 }
 
 /// A note on its own screen, as the phone's Notes app keeps one: the
-/// keyboard is up at once, Undo and Redo sit at the top, and what was written
-/// is saved on the way out, when the app goes to the background, or with Done.
+/// keyboard is up at once, Undo and Redo sit at the top, and Done saves.
+/// Going back with unsaved changes asks whether to save or discard them.
 class NoteEditorPage extends StatefulWidget {
   const NoteEditorPage(
     this.notes, {
@@ -249,18 +250,15 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
 
   /// Saves run one after another, so a new note is created only once.
   Future<bool> queue = Future.value(true);
-  late final lifecycle = AppLifecycleListener(onHide: save);
 
   @override
   void initState() {
     super.initState();
-    lifecycle;
     text.addListener(changed);
   }
 
   @override
   void dispose() {
-    lifecycle.dispose();
     text.dispose();
     undo.dispose();
     focus.dispose();
@@ -287,9 +285,12 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
 
   Future<bool> write() async {
     final draft = text.text.trim();
-    // An empty page is not a note: nothing is created, and a cleared note
-    // keeps what it had until it is deleted.
-    if (draft.isEmpty || draft == stored) return true;
+    if (draft == stored) return true;
+    // A cleared note is not saved over the old one: Delete removes a note.
+    if (draft.isEmpty) {
+      if (mounted) mobileNotice(context, 'A note cannot be empty.');
+      return false;
+    }
     if (mounted) setState(() => state = _Saved.saving);
     try {
       final saved = await widget.notes.save(draft, existing: note);
@@ -321,19 +322,23 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     await save();
   }
 
+  /// Back with unsaved changes asks first; nothing is saved unless chosen.
   Future<void> leave() async {
     if (leaving) return;
     leaving = true;
-    final kept =
-        await save() ||
-        (mounted &&
-            await confirmAction(
-              context,
-              'Note not saved',
-              'Leave and lose the changes?',
-            ));
-    leaving = false;
-    if (kept && mounted) Navigator.pop(context);
+    try {
+      await queue;
+      if (!mounted) return;
+      if (dirty) {
+        focus.unfocus();
+        final choice = await askToSave(context, isNew: note == null);
+        if (!mounted || choice == null) return;
+        if (choice == LeaveChoice.save && !await save()) return;
+      }
+      if (mounted) Navigator.pop(context);
+    } finally {
+      leaving = false;
+    }
   }
 
   Future<void> delete() async {
@@ -450,6 +455,105 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
               ),
             ],
           ),
+        ),
+      ),
+    ),
+  );
+}
+
+enum LeaveChoice { save, discard }
+
+/// Asked when leaving unsaved changes: Save, Discard, or null to keep
+/// editing. [body] says what changed; by default, a note.
+Future<LeaveChoice?> askToSave(
+  BuildContext context, {
+  bool isNew = false,
+  String? body,
+}) {
+  const title = 'Save changes?';
+  body ??= isNew
+      ? 'This note has not been saved yet.'
+      : 'You changed this note. Save the changes before leaving?';
+  if (isCupertino(context)) {
+    return showCupertinoDialog<LeaveChoice>(
+      context: context,
+      builder: (dialog) => CupertinoAlertDialog(
+        title: const Text(title),
+        content: Text(body!),
+        actions: [
+          CupertinoDialogAction(
+            key: const ValueKey('leave-save'),
+            isDefaultAction: true,
+            onPressed: () => Navigator.pop(dialog, LeaveChoice.save),
+            child: const Text('Save'),
+          ),
+          CupertinoDialogAction(
+            key: const ValueKey('leave-discard'),
+            isDestructiveAction: true,
+            onPressed: () => Navigator.pop(dialog, LeaveChoice.discard),
+            child: const Text('Discard'),
+          ),
+          CupertinoDialogAction(
+            key: const ValueKey('leave-keep'),
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Keep editing'),
+          ),
+        ],
+      ),
+    );
+  }
+  return showDialog<LeaveChoice>(
+    context: context,
+    builder: (dialog) => Dialog(
+      backgroundColor: T.surface,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Icon(Icons.edit_note_rounded, color: T.brass, size: 32),
+            const SizedBox(height: 12),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: Theme.of(dialog).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              body!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14.5,
+                height: 1.4,
+                color: T.muted,
+              ),
+            ),
+            const SizedBox(height: 22),
+            AppButton.filled(
+              key: const ValueKey('leave-save'),
+              onPressed: () => Navigator.pop(dialog, LeaveChoice.save),
+              child: const Text('Save'),
+            ),
+            const SizedBox(height: 8),
+            AppButton.outlined(
+              key: const ValueKey('leave-discard'),
+              onPressed: () => Navigator.pop(dialog, LeaveChoice.discard),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: T.danger,
+                side: const BorderSide(color: T.danger),
+              ),
+              child: const Text('Discard'),
+            ),
+            const SizedBox(height: 4),
+            AppButton.text(
+              key: const ValueKey('leave-keep'),
+              onPressed: () => Navigator.pop(dialog),
+              child: const Text('Keep editing'),
+            ),
+          ],
         ),
       ),
     ),

@@ -9,8 +9,8 @@ import 'package:telvox_chat_mobile_app/ui/theme.dart';
 import 'mobile_api_test.dart' show fakeApi, answer, MemoryStore;
 import 'support/ui.dart';
 
-/// Review images of the three note screens: the list, a note as read, and a
-/// note being edited. Written to build/review/notes-*.png with each build.
+/// Review images of the note screens: the list, a note as read, a note being
+/// edited, and the question asked when leaving unsaved changes. Written to build/review/notes-*.png with each build.
 void main() {
   testWidgets('note screens render for review', (tester) async {
     await loadUiFonts();
@@ -100,6 +100,11 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       await tester.pumpAndSettle();
       await saveReviewImage(tester, boundary, 'build/review/notes-edit.png');
+
+      // Back with unsaved changes asks before anything is saved.
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await saveReviewImage(tester, boundary, 'build/review/notes-leave.png');
     });
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());

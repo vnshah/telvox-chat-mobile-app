@@ -213,8 +213,27 @@ void main() {
     await tester.pump();
     expect(find.text('Gate code changed to 5520'), findsOneWidget);
 
-    // Leaving saves the edit, and the list shows it at once.
+    int notePosts() => requests
+        .where((r) => r.method == 'POST' && r.path == 'inbox/notes')
+        .length;
+    final keep = find.byKey(const ValueKey('leave-keep'));
+    final save = find.byKey(const ValueKey('leave-save'));
+    final discard = find.byKey(const ValueKey('leave-discard'));
+
+    // Going back with changes asks first, and saves nothing on its own.
     await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('Save changes?'), findsOneWidget);
+    expect(notePosts(), 0);
+    await tester.tap(keep);
+    await tester.pumpAndSettle();
+    expect(find.text('Gate code changed to 5520'), findsOneWidget);
+    expect(notePosts(), 0);
+
+    // Save: the edit is stored and the list shows it at once.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(save);
     await tester.pumpAndSettle();
     final edit = requests.lastWhere(
       (r) => r.path == 'inbox/notes' && r.method == 'POST',
@@ -235,9 +254,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Saved'), findsOneWidget);
     expect(doneEnabled(), isFalse);
-    // More typing after Done edits that note, not a second one.
+    // Saving after Done edits that note, not a second one.
     await tester.enterText(editor, 'Sent the quote on Monday');
     await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(save);
     await tester.pumpAndSettle();
     final posts = requests
         .where((r) => r.method == 'POST' && r.path == 'inbox/notes')
@@ -246,15 +267,26 @@ void main() {
     expect(posts.last.data, containsPair('note_id', 2));
     expect(find.text('Sent the quote on Monday'), findsOneWidget);
 
-    // An untouched note is not saved again.
+    // Discard: the change is dropped and nothing is sent.
+    await tester.tap(find.text('Sent the quote on Monday'));
+    await tester.pumpAndSettle();
+    await tester.enterText(editor, 'Not this');
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(discard);
+    await tester.pumpAndSettle();
+    expect(notePosts(), 3);
+    expect(find.text('Sent the quote on Monday'), findsOneWidget);
+    expect(find.text('Not this'), findsNothing);
+
+    // An untouched note closes without asking.
     await tester.tap(find.text('Sent the quote on Monday'));
     await tester.pumpAndSettle();
     await tester.pageBack();
     await tester.pumpAndSettle();
-    expect(
-      requests.where((r) => r.method == 'POST' && r.path == 'inbox/notes'),
-      hasLength(3),
-    );
+    expect(find.text('Save changes?'), findsNothing);
+    expect(find.byTooltip('Add note'), findsOneWidget);
+    expect(notePosts(), 3);
 
     // Back on the contact, the notes row already counts it.
     await tester.pageBack();
@@ -267,50 +299,171 @@ void main() {
     await close(tester, session);
   });
 
-  testWidgets('custom fields read as a form and save one field in place', (
+  Json fieldsReply() => {
+    'success': true,
+    'data': {
+      'customFields': [
+        {'id': 1, 'name': 'City', 'type': '1', 'required': 1},
+        {'id': 2, 'name': 'Newsletter', 'type': '13'},
+        {'id': 3, 'name': 'Birthday', 'type': '6'},
+        {'id': 4, 'name': 'Email', 'type': '9'},
+      ],
+      'customFieldValues': {
+        '2': {'value': '1'},
+        '3': {'start_date': '1990-05-04'},
+        '4': {'value': 'priya@example.com'},
+      },
+    },
+  };
+
+  Finder fieldText(int id) => find.descendant(
+    of: find.byKey(ValueKey('field-$id')),
+    matching: find.byType(TextField),
+  );
+
+  testWidgets('custom fields save every change together', (tester) async {
+    final session = await open(
+      tester,
+      (s) => ContactFieldsPage(s, 12),
+      (r) => r.path == 'inbox/custom-fields' ? fieldsReply() : null,
+    );
+    expect(find.text('City *'), findsOneWidget);
+    expect(find.text('4 May 1990'), findsOneWidget);
+    // Nothing changed: no Save or Cancel.
+    expect(find.byKey(const ValueKey('fields-save')), findsNothing);
+
+    // Two fields changed, nothing sent yet.
+    await tester.enterText(fieldText(1), 'Ahmedabad');
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(find.text('Edited'), findsNWidgets(2));
+    expect(find.text('Save 2 changes'), findsOneWidget);
+    expect(
+      requests.where((r) => r.path == 'inbox/custom-fields/update'),
+      isEmpty,
+    );
+
+    // One Save sends both.
+    await tester.tap(find.byKey(const ValueKey('fields-save')));
+    await tester.pumpAndSettle();
+    final saved = requests
+        .where((r) => r.path == 'inbox/custom-fields/update')
+        .map((r) => r.data as Map)
+        .toList();
+    expect(saved, hasLength(2));
+    expect(
+      saved.firstWhere((b) => b['custom_field_id'] == 1),
+      allOf(
+        containsPair('field_type', 'text'),
+        containsPair('value', 'Ahmedabad'),
+      ),
+    );
+    expect(
+      saved.firstWhere((b) => b['custom_field_id'] == 2),
+      allOf(containsPair('field_type', 'select'), containsPair('value', '0')),
+    );
+    expect(find.text('Saved 2 fields'), findsOneWidget);
+    expect(find.byKey(const ValueKey('fields-save')), findsNothing);
+    expect(find.text('Edited'), findsNothing);
+    expect(find.text('Ahmedabad'), findsOneWidget);
+    // The list was not fetched again.
+    expect(
+      requests.where((r) => r.path == 'inbox/custom-fields'),
+      hasLength(1),
+    );
+    await close(tester, session);
+  });
+
+  testWidgets('cancel puts the saved values back without sending', (
     tester,
   ) async {
     final session = await open(
       tester,
       (s) => ContactFieldsPage(s, 12),
-      (r) => r.path == 'inbox/custom-fields'
-          ? {
-              'success': true,
-              'data': {
-                'customFields': [
-                  {'id': 1, 'name': 'City', 'type': '1', 'required': 1},
-                  {'id': 2, 'name': 'Newsletter', 'type': '13'},
-                  {'id': 3, 'name': 'Birthday', 'type': '6'},
-                ],
-                'customFieldValues': {
-                  '2': {'value': '1'},
-                  '3': {'start_date': '1990-05-04'},
-                },
-              },
-            }
-          : null,
+      (r) => r.path == 'inbox/custom-fields' ? fieldsReply() : null,
     );
-    expect(find.text('City *'), findsOneWidget);
-    expect(find.text('Not set'), findsOneWidget);
-    // A switch reads On, not "1"; a date reads as a date.
-    expect(find.text('On'), findsOneWidget);
-    expect(find.text('4 May 1990'), findsOneWidget);
+    await tester.enterText(fieldText(4), 'someone@else.com');
+    await tester.pumpAndSettle();
+    expect(find.text('Save'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('fields-cancel')));
+    await tester.pumpAndSettle();
+    expect(find.text('priya@example.com'), findsOneWidget);
+    expect(find.text('someone@else.com'), findsNothing);
+    expect(find.byKey(const ValueKey('fields-save')), findsNothing);
 
-    await tester.tap(find.text('Not set'));
+    // Typing the saved value back is not a change.
+    await tester.enterText(fieldText(4), 'x');
+    await tester.enterText(fieldText(4), 'priya@example.com');
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextFormField), 'Ahmedabad');
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-    expect(find.text('Ahmedabad'), findsOneWidget);
-    final saved = requests.singleWhere(
-      (r) => r.path == 'inbox/custom-fields/update',
-    );
-    expect(saved.data, containsPair('field_type', 'text'));
-    expect(saved.data, containsPair('value', 'Ahmedabad'));
-    // One field changed; the list was not fetched again.
+    expect(find.byKey(const ValueKey('fields-save')), findsNothing);
     expect(
-      requests.where((r) => r.path == 'inbox/custom-fields'),
-      hasLength(1),
+      requests.where((r) => r.path == 'inbox/custom-fields/update'),
+      isEmpty,
+    );
+    await close(tester, session);
+  });
+
+  testWidgets('a refused field stays changed and marked', (tester) async {
+    final session = await open(
+      tester,
+      (s) => ContactFieldsPage(s, 12),
+      (r) => switch (r.path) {
+        'inbox/custom-fields' => fieldsReply(),
+        'inbox/custom-fields/update' when r.data['custom_field_id'] == 4 => 422,
+        _ => null,
+      },
+    );
+    await tester.enterText(fieldText(1), 'Surat');
+    await tester.enterText(fieldText(4), 'new@example.com');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('fields-save')));
+    await tester.pumpAndSettle();
+    expect(find.text('1 of 2 saved. Check the marked fields.'), findsOneWidget);
+    // City saved; Email is still edited, with the server's reason under it.
+    expect(find.text('Edited'), findsOneWidget);
+    expect(find.text('Save'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('field-4')),
+        matching: find.textContaining('Not saved'),
+      ),
+      findsOneWidget,
+    );
+    await close(tester, session);
+  });
+
+  testWidgets('leaving with unsaved fields asks first', (tester) async {
+    final session = await open(
+      tester,
+      (s) => Builder(
+        builder: (context) => Scaffold(
+          body: TextButton(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => ContactFieldsPage(s, 12)),
+            ),
+            child: const Text('Open'),
+          ),
+        ),
+      ),
+      (r) => r.path == 'inbox/custom-fields' ? fieldsReply() : null,
+    );
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    await tester.enterText(fieldText(1), 'Pune');
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(
+      find.text('You changed a custom field. Save it before leaving?'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('leave-discard')));
+    await tester.pumpAndSettle();
+    expect(find.text('Open'), findsOneWidget);
+    expect(
+      requests.where((r) => r.path == 'inbox/custom-fields/update'),
+      isEmpty,
     );
     await close(tester, session);
   });

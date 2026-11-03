@@ -147,7 +147,20 @@ class ApiMessage {
   final Json json;
   String get id => '${json['id']}';
   String get wamid => '${json['message_id'] ?? ''}';
-  String get tempId => '${json['temp_message_id'] ?? ''}';
+
+  /// The id this phone gave a send before the server saved it. The send's
+  /// own reply carries it as a field; the history and catch-up rows carry it
+  /// only inside the stored request (message_body_json), so it is read from
+  /// there too. Either way the server's row is the same message as the
+  /// bubble shown while sending, never a second one.
+  late final String tempId = () {
+    final own = '${json['temp_message_id'] ?? ''}';
+    if (own.isNotEmpty || number(json['type']) != 1) return own;
+    final stored = object(
+      decoded(json['message_body_json']),
+    )['temp_message_id'];
+    return stored == null ? '' : '$stored';
+  }();
   bool get outgoing => number(json['type']) == 1;
   bool get log => number(json['type']) == 3;
   late final content = MessageContent(json);
@@ -164,8 +177,12 @@ List<ApiMessage> mergeMessages(
 ) {
   final merged = {for (final m in current) m.id: m};
   for (final m in incoming) {
+    // A row the phone made stands in for the server's until it arrives. Saved
+    // rows are never dropped this way: a resend may copy another's request.
     if (m.tempId.isNotEmpty) {
-      merged.removeWhere((_, old) => old.tempId == m.tempId);
+      merged.removeWhere(
+        (id, old) => old.tempId == m.tempId && number(id) == null,
+      );
     }
     merged[m.id] = m;
   }
@@ -174,23 +191,32 @@ List<ApiMessage> mergeMessages(
     final date = '${a.json['created_at']}'.compareTo('${b.json['created_at']}');
     return date != 0 ? date : (number(a.id) ?? 0).compareTo(number(b.id) ?? 0);
   });
-  // A replayed call webhook can store the same call twice (same call id);
-  // show it once, keeping the newest row.
-  final calls = <String>{};
+  // One WhatsApp message is one bubble. A replayed webhook (a call, or a
+  // message Meta delivers twice) can store it twice under the same WhatsApp
+  // id; show it once, keeping the newest row.
+  final seen = <String>{};
   for (var i = result.length - 1; i >= 0; i--) {
     final m = result[i];
-    if (m.type != 'voice_call' || m.wamid.isEmpty) continue;
-    if (!calls.add(m.wamid)) result.removeAt(i);
+    if (m.log || m.wamid.isEmpty) continue;
+    if (!seen.add(m.wamid)) result.removeAt(i);
   }
   return result;
 }
 
 class PendingSend {
-  PendingSend(this.body, {String? key, this.attachment, this.quote})
-    : key = key ?? newRequestId(),
-      createdAt = DateTime.now().toUtc().toIso8601String();
+  PendingSend(
+    this.body, {
+    String? key,
+    this.attachment,
+    this.quote,
+    this.voice = false,
+  }) : key = key ?? newRequestId(),
+       createdAt = DateTime.now().toUtc().toIso8601String();
   final Json body;
   final Attachment? attachment;
+
+  /// A recorded voice note, drawn with its waveform while it sends.
+  final bool voice;
 
   /// Reply-quote fields, in the server's message shape.
   final Json? quote;

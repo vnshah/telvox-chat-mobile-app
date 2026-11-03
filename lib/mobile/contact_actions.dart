@@ -587,6 +587,8 @@ class FieldSpec {
   };
 }
 
+/// A contact's custom fields as one form: change any number of them, then
+/// Save sends every change together, or Cancel puts the saved values back.
 class ContactFieldsPage extends StatefulWidget {
   const ContactFieldsPage(this.session, this.id, {super.key});
   final MobileSession session;
@@ -598,6 +600,17 @@ class ContactFieldsPage extends StatefulWidget {
 class _ContactFieldsPageState extends State<ContactFieldsPage> {
   Json? data;
   String? error;
+
+  /// Unsaved edits: field id → input key → value.
+  final draft = <String, Map<String, Object?>>{};
+
+  /// Why a field's last save was refused, by field id.
+  final refused = <String, String>{};
+
+  /// Replaced on Cancel, so text boxes start again from the saved values.
+  var form = GlobalKey<FormState>();
+  var saving = false;
+
   @override
   void initState() {
     super.initState();
@@ -621,6 +634,8 @@ class _ContactFieldsPageState extends State<ContactFieldsPage> {
     }
   }
 
+  List<Json> get fields => data == null ? [] : rows(data!['customFields']);
+
   Json valueOf(Json field) =>
       object(object(data!['customFieldValues'])['${field['id']}']);
 
@@ -629,218 +644,381 @@ class _ContactFieldsPageState extends State<ContactFieldsPage> {
       if (v.trim().isNotEmpty) {'id': v.trim(), 'name': v.trim()},
   ];
 
-  /// The saved value as it reads in the list, or null when there is none.
-  String? shown(Json field) {
-    final spec = FieldSpec.of(field);
-    final v = valueOf(field);
-    final text = readableText(v['value']);
-    return switch (spec.input) {
-      'switch' => text == '1' ? 'On' : (v.isEmpty ? null : 'Off'),
-      'password' => text.isEmpty ? null : '••••••••',
-      'multi' || 'list' =>
-        text.isEmpty ? null : text.split(',').map((s) => s.trim()).join(', '),
-      'date' || 'datetime' =>
-        '${v['start_date'] ?? ''}'.isEmpty
-            ? null
-            : shownDate('${v['start_date']}', time: spec.input == 'datetime'),
-      'range' =>
-        '${v['start_date'] ?? ''}'.isEmpty
-            ? null
-            : [
-                shownDate('${v['start_date']}'),
-                if ('${v['end_date'] ?? ''}'.isNotEmpty)
-                  shownDate('${v['end_date']}'),
-              ].join(' – '),
-      _ when spec.input.startsWith('file:') =>
-        readableText(v['name']).isNotEmpty
-            ? readableText(v['name'])
-            : ('${v['url'] ?? ''}'.isEmpty ? null : 'File attached'),
-      _ => text.isEmpty ? null : text,
-    };
-  }
-
-  Future<void> edit(Json field) async {
+  /// The inputs a field is edited with, holding its saved values.
+  List<EditField> inputsOf(Json field) {
     final spec = FieldSpec.of(field);
     final value = valueOf(field);
     final required = number(field['required']) == 1;
     final name = '${field['name']}';
     final options = optionsOf(field);
-    final fields = <EditField>[
-      if (spec.input.startsWith('file:'))
-        EditField('file', name, kind: spec.input, required: true)
-      else if (spec.input == 'range') ...[
+    if (spec.input.startsWith('file:')) {
+      final saved = readableText(value['name']).isNotEmpty
+          ? readableText(value['name'])
+          : ('${value['url'] ?? ''}'.isEmpty ? null : 'File attached');
+      return [EditField('file', name, value: saved, kind: spec.input)];
+    }
+    if (spec.input == 'range') {
+      return [
         EditField(
           'start_date',
           'From',
           value: value['start_date'],
           kind: 'date',
           required: required,
+          hint: 'From',
         ),
-        EditField('end_date', 'To', value: value['end_date'], kind: 'date'),
-      ] else if (spec.input == 'date' || spec.input == 'datetime')
+        EditField(
+          'end_date',
+          'To',
+          value: value['end_date'],
+          kind: 'date',
+          hint: 'To',
+        ),
+      ];
+    }
+    if (spec.input == 'date' || spec.input == 'datetime') {
+      return [
         EditField(
           'start_date',
           name,
           value: value['start_date'],
           kind: spec.input,
           required: required,
-        )
-      else
-        EditField(
-          'value',
-          name,
-          value: switch (spec.input) {
-            'multi' =>
-              '${value['value'] ?? ''}'
-                  .split(',')
-                  .map((s) => s.trim())
-                  .where((s) => s.isNotEmpty)
-                  .toList(),
-            'switch' => '${value['value'] ?? '0'}',
-            _ => value['value'],
-          },
-          required: required,
-          options: spec.choice && options.isNotEmpty ? options : null,
-          multiple: spec.input == 'multi',
-          lines: spec.input == 'textarea' ? 4 : 1,
-          kind: switch (spec.input) {
-            'switch' || 'email' || 'number' || 'password' => spec.input,
-            _ => 'text',
-          },
-          hint: switch (spec.input) {
-            'list' => 'Separate values with commas',
-            'email' => 'name@example.com',
-            'textarea' => 'Write $name',
-            _ => null,
-          },
         ),
-    ];
-    Json? saved;
-    await showEditorSheet(
-      context,
-      title: name,
-      fields: fields,
-      save: (values) async {
-        final body = <String, dynamic>{
-          'contact_id': widget.id,
-          'custom_field_id': field['id'],
-          'field_type': spec.saveAs,
-          ...values,
-        };
-        if (body['value'] is List) {
-          body['value'] = (body['value'] as List).join(',');
-        }
-        if (body['file'] is Attachment) {
-          body['file'] = (body['file'] as Attachment).multipart();
-          await widget.session.api.request(
-            'inbox/custom-fields/update',
-            method: 'POST',
-            data: FormData.fromMap(body),
-          );
-        } else {
-          await widget.session.api.post('inbox/custom-fields/update', body);
-        }
-        saved = {
-          ...value,
-          for (final k in ['value', 'start_date', 'end_date'])
-            if (body.containsKey(k)) k: body[k],
-        };
-      },
-    );
-    if (saved == null || !mounted) return;
-    if (spec.input.startsWith('file:')) {
-      // The stored name and link are the server's; fetch them.
-      await load();
-      return;
+      ];
     }
-    // Only this field's value changes; the rest of the form stays put.
-    setState(() {
-      data = {
-        ...data!,
-        'customFieldValues': {
-          ...object(data!['customFieldValues']),
-          '${field['id']}': saved,
+    return [
+      EditField(
+        'value',
+        name,
+        value: switch (spec.input) {
+          'multi' =>
+            '${value['value'] ?? ''}'
+                .split(',')
+                .map((s) => s.trim())
+                .where((s) => s.isNotEmpty)
+                .toList(),
+          'switch' => '${value['value'] ?? '0'}',
+          _ => value['value'],
         },
-      };
-    });
+        required: required,
+        options: spec.choice && options.isNotEmpty ? options : null,
+        multiple: spec.input == 'multi',
+        lines: spec.input == 'textarea' ? 3 : 1,
+        kind: switch (spec.input) {
+          'switch' || 'email' || 'number' || 'password' => spec.input,
+          _ => 'text',
+        },
+        hint: switch (spec.input) {
+          'list' => 'Separate values with commas',
+          'email' => 'name@example.com',
+          'number' => '0',
+          _ => 'Not set',
+        },
+      ),
+    ];
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final fields = data == null ? <Json>[] : rows(data!['customFields']);
-    return Scaffold(
-      appBar: platformAppBar(context, title: const Text('Custom fields')),
-      body: data == null
-          ? error == null
-                ? const Center(child: CircularProgressIndicator.adaptive())
-                : failure(error!, load)
-          : RefreshIndicator(
-              onRefresh: load,
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+  Object? current(Json field, EditField input) {
+    final edits = draft['${field['id']}'];
+    return edits != null && edits.containsKey(input.key)
+        ? edits[input.key]
+        : input.value;
+  }
+
+  /// Values as compared: list order, spacing and null against empty do not
+  /// count as changes; a newly chosen file always does.
+  static Object same(Object? v) => switch (v) {
+    Attachment() => v,
+    List() => (v.map((e) => '$e'.trim()).toList()..sort()).join(','),
+    _ => '${v ?? ''}'.trim(),
+  };
+
+  bool isChanged(Json field) {
+    final edits = draft['${field['id']}'];
+    if (edits == null) return false;
+    return inputsOf(field).any(
+      (i) => edits.containsKey(i.key) && same(edits[i.key]) != same(i.value),
+    );
+  }
+
+  List<Json> get changed => [
+    for (final f in fields)
+      if (isChanged(f)) f,
+  ];
+
+  void edit(Json field, String key, Object? value) => setState(() {
+    (draft['${field['id']}'] ??= {})[key] = value;
+    refused.remove('${field['id']}');
+  });
+
+  void cancel() => setState(() {
+    draft.clear();
+    refused.clear();
+    form = GlobalKey<FormState>();
+  });
+
+  /// Sends one field's change; the saved value, or throws.
+  Future<Json> send(Json field) async {
+    final spec = FieldSpec.of(field);
+    final body = <String, dynamic>{
+      'contact_id': widget.id,
+      'custom_field_id': field['id'],
+      'field_type': spec.saveAs,
+      for (final i in inputsOf(field)) i.key: current(field, i),
+    };
+    if (body['value'] is List) {
+      body['value'] = (body['value'] as List).join(',');
+    }
+    if (body['file'] is Attachment) {
+      body['file'] = (body['file'] as Attachment).multipart();
+      await widget.session.api.request(
+        'inbox/custom-fields/update',
+        method: 'POST',
+        data: FormData.fromMap(body),
+      );
+    } else {
+      await widget.session.api.post('inbox/custom-fields/update', body);
+    }
+    return {
+      ...valueOf(field),
+      for (final k in ['value', 'start_date', 'end_date'])
+        if (body.containsKey(k)) k: body[k],
+    };
+  }
+
+  /// Saves every changed field at once. Fields the server refuses stay
+  /// changed and marked, so they can be fixed and saved again.
+  Future<bool> save() async {
+    final pending = changed;
+    if (pending.isEmpty) return true;
+    var valid = form.currentState?.validate() ?? true;
+    for (final f in pending) {
+      final input = inputsOf(f).first;
+      final v = current(f, input);
+      if (input.required && input.multiple && (v is! List || v.isEmpty)) {
+        refused['${f['id']}'] = 'Choose at least one';
+        valid = false;
+      }
+    }
+    if (!valid) {
+      setState(() {});
+      return false;
+    }
+    setState(() => saving = true);
+    final results = await Future.wait([
+      for (final f in pending)
+        send(f).then<Object>((v) => v, onError: (Object e) => '$e'),
+    ]);
+    if (!mounted) return false;
+    var files = false;
+    setState(() {
+      saving = false;
+      final values = {...object(data!['customFieldValues'])};
+      for (var i = 0; i < pending.length; i++) {
+        final id = '${pending[i]['id']}';
+        final result = results[i];
+        if (result is Json) {
+          values[id] = result;
+          draft.remove(id);
+          files |= FieldSpec.of(pending[i]).input.startsWith('file:');
+        } else {
+          refused[id] = '$result';
+        }
+      }
+      data = {...data!, 'customFieldValues': values};
+    });
+    // A stored file's name and link are the server's; fetch them once.
+    if (files) await load();
+    if (!mounted) return false;
+    final failures = results.whereType<String>().length;
+    mobileNotice(
+      context,
+      failures == 0
+          ? (pending.length == 1 ? 'Saved' : 'Saved ${pending.length} fields')
+          : '${pending.length - failures} of ${pending.length} saved. '
+                'Check the marked fields.',
+    );
+    return failures == 0;
+  }
+
+  Future<void> leave() async {
+    if (saving) return;
+    final n = changed.length;
+    final choice = await askToSave(
+      context,
+      body: n == 1
+          ? 'You changed a custom field. Save it before leaving?'
+          : 'You changed $n custom fields. Save them before leaving?',
+    );
+    if (!mounted || choice == null) return;
+    if (choice == LeaveChoice.save && !await save()) return;
+    if (mounted) Navigator.pop(context);
+  }
+
+  Widget label(Json field, {required bool edited}) => Padding(
+    padding: const EdgeInsets.only(bottom: 7),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text.rich(
+            TextSpan(
+              text: '${field['name']}',
+              children: [
+                if (number(field['required']) == 1)
+                  const TextSpan(
+                    text: ' *',
+                    style: TextStyle(color: T.danger),
+                  ),
+              ],
+            ),
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: T.secondary,
+            ),
+          ),
+        ),
+        if (edited)
+          const Text(
+            'Edited',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: T.brass,
+            ),
+          ),
+      ],
+    ),
+  );
+
+  Widget input(Json field, EditField i) => FieldInput(
+    i,
+    value: current(field, i),
+    enabled: !saving,
+    onChanged: (v) => edit(field, i.key, v),
+    onError: (e) => mobileNotice(context, e),
+  );
+
+  Widget fieldRow(Json f) {
+    final inputs = inputsOf(f);
+    final problem = refused['${f['id']}'];
+    return Padding(
+      key: ValueKey('field-${f['id']}'),
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          label(f, edited: isChanged(f)),
+          for (final (n, i) in inputs.indexed) ...[
+            if (n > 0) const SizedBox(height: 8),
+            input(f, i),
+          ],
+          if (problem != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6, left: 3),
+              child: Text(
+                problem,
+                style: const TextStyle(fontSize: 12, color: T.danger),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget? actions(int n) => n == 0 && !saving
+      ? null
+      : DecoratedBox(
+          decoration: const BoxDecoration(
+            color: T.surface,
+            border: Border(top: BorderSide(color: T.hairline)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+              child: Row(
                 children: [
-                  if (fields.isEmpty)
-                    const EmptyView(
-                      title: 'No custom fields',
-                      description: 'Custom fields are set up on the web, under Settings.',
-                      icon: Icons.tune_outlined,
-                    )
-                  else
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            for (final f in fields)
-                              Padding(
-                                key: ValueKey('field-${f['id']}'),
-                                padding: const EdgeInsets.only(bottom: 16),
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    Padding(
-                                      padding: const EdgeInsets.only(bottom: 7),
-                                      child: Text.rich(
-                                        TextSpan(
-                                          text: '${f['name']}',
-                                          children: [
-                                            if (number(f['required']) == 1)
-                                              const TextSpan(
-                                                text: ' *',
-                                                style: TextStyle(
-                                                  color: T.danger,
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                        style: const TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          color: T.secondary,
-                                        ),
-                                      ),
-                                    ),
-                                    FieldBox(
-                                      text: shown(f),
-                                      hint: 'Not set',
-                                      icon: FieldSpec.of(f).icon,
-                                      lines: FieldSpec.of(f).input == 'textarea'
-                                          ? 3
-                                          : 1,
-                                      onTap: () => edit(f),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
+                  Expanded(
+                    child: AppButton.outlined(
+                      key: const ValueKey('fields-cancel'),
+                      onPressed: saving ? null : cancel,
+                      child: const Text('Cancel'),
                     ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: AppButton.filled(
+                      key: const ValueKey('fields-save'),
+                      onPressed: saving ? null : save,
+                      child: saving
+                          ? const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox.square(
+                                  dimension: 16,
+                                  child: CircularProgressIndicator.adaptive(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                                SizedBox(width: 10),
+                                Text('Saving…'),
+                              ],
+                            )
+                          : Text(n > 1 ? 'Save $n changes' : 'Save'),
+                    ),
+                  ),
                 ],
               ),
             ),
+          ),
+        );
+
+  @override
+  Widget build(BuildContext context) {
+    final n = changed.length;
+    return PopScope(
+      canPop: n == 0 && !saving,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) leave();
+      },
+      child: Scaffold(
+        appBar: platformAppBar(context, title: const Text('Custom fields')),
+        bottomNavigationBar: actions(n),
+        body: data == null
+            ? error == null
+                  ? const Center(child: CircularProgressIndicator.adaptive())
+                  : failure(error!, load)
+            : RefreshIndicator(
+                // A refresh would lose unsaved edits.
+                onRefresh: n == 0 ? load : () async {},
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+                  children: [
+                    if (fields.isEmpty)
+                      const EmptyView(
+                        title: 'No custom fields',
+                        description: 'Custom fields are set up on the web, under Settings.',
+                        icon: Icons.tune_outlined,
+                      )
+                    else
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                          child: Form(
+                            key: form,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [for (final f in fields) fieldRow(f)],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+      ),
     );
   }
 }

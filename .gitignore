@@ -57,6 +57,7 @@ app.*.map.json
 config/*.json
 !config/*.example.json
 android/key.properties
+android/maps.properties
 *.jks
 *.keystore
 

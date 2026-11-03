@@ -25,7 +25,9 @@ import 'message_content.dart' show readableText;
 import 'templates.dart';
 import 'message_info.dart';
 import 'message_view.dart';
+import 'editors.dart' show EditField, showEditorSheet;
 import 'location.dart';
+import 'maps.dart';
 import 'send_policy.dart';
 import 'realtime.dart';
 
@@ -172,6 +174,16 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   /// When the conversation window closes, from the contact and its messages.
   DateTime? get windowExpires =>
       windowExpiresAt(callContact, [for (final m in messages) m.json]);
+
+  /// The header's window, shared with the inbox row once drawn, so the
+  /// list shows the same green dot.
+  DateTime? get rememberedWindow {
+    final expires = windowExpires;
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => rememberWindow(contactId, expires),
+    );
+    return expires;
+  }
 
   /// The contact as the call rules read it: the list row, updated by details.
   Json get callContact => {...widget.contact, ...object(detail?['contact'])};
@@ -513,14 +525,18 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       mobileNotice(context, policy.reason!);
       return;
     }
-    final item = PendingSend({
-      'waba_user_id': widget.session.api.wabaId,
-      'contact_id': contactId,
-      'wa_id': phone,
-      'message_type': 'audio',
-      'body': '',
-      if (widget.ticketId != null) 'ticket_id': widget.ticketId,
-    }, attachment: note);
+    final item = PendingSend(
+      {
+        'waba_user_id': widget.session.api.wabaId,
+        'contact_id': contactId,
+        'wa_id': phone,
+        'message_type': 'audio',
+        'body': '',
+        if (widget.ticketId != null) 'ticket_id': widget.ticketId,
+      },
+      attachment: note,
+      voice: true,
+    );
     setState(() => pending.add(item));
     scrollToEnd(animate: true);
     deliver(item);
@@ -565,14 +581,20 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
-  /// Send this phone's location as a map pin, or ask the customer for theirs
-  /// (WhatsApp shows them a "Send location" button).
+  /// Whether this number may ask the customer for permission to call.
+  bool get canAskToCall =>
+      widget.session.canSendType('call_permission_request') ??
+      callEligibility(widget.session.config, widget.contact).shown;
+
+  /// Share a place picked on the map, ask the customer for their location
+  /// (WhatsApp gives them a "Send location" button), or ask permission to
+  /// call them.
   Future<void> shareLocation() async {
     if (!policy.canSend) {
       mobileNotice(context, policy.reason!);
       return;
     }
-    final mine = await showModalBottomSheet<bool>(
+    final choice = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
       builder: (context) => SafeArea(
@@ -580,46 +602,80 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.my_location),
-              title: const Text('Send your current location'),
-              onTap: () => Navigator.pop(context, true),
+              leading: const Icon(Icons.location_on_outlined),
+              title: const Text('Share a location'),
+              subtitle: const Text('Your position or a place you search for'),
+              onTap: () => Navigator.pop(context, 'send'),
             ),
             ListTile(
               leading: const Icon(Icons.share_location_outlined),
               title: const Text('Ask for their location'),
               subtitle: const Text('They get a button to share it'),
-              onTap: () => Navigator.pop(context, false),
+              onTap: () => Navigator.pop(context, 'ask'),
             ),
+            if (canAskToCall)
+              ListTile(
+                leading: const Icon(Icons.add_call),
+                title: const Text('Ask permission to call'),
+                subtitle: const Text('They choose whether you can call them'),
+                onTap: () => Navigator.pop(context, 'call'),
+              ),
           ],
         ),
       ),
     );
-    if (!mounted || mine == null) return;
-    if (!mine) {
-      queue({
-        'message_type': 'location',
-        'body': 'Please share your location.',
-      });
-      return;
+    if (!mounted || choice == null) return;
+    switch (choice) {
+      case 'ask':
+        final body = await askText(
+          'Ask for their location',
+          'Please share your location.',
+        );
+        if (body != null) queue({'message_type': 'location', 'body': body});
+      case 'call':
+        final body = await askText(
+          'Ask permission to call',
+          'Can we call you on WhatsApp about your request?',
+        );
+        if (body != null) {
+          queue({'message_type': 'call_permission_request', 'body': body});
+        }
+      default:
+        final location = await openPage<Json>(
+          context,
+          LocationPickerPage(source: locationSource, lookup: placeLookup),
+        );
+        if (location != null && mounted) {
+          queue({
+            'message_type': 'send_location',
+            'body': '',
+            'location': location,
+          });
+        }
     }
-    setState(() => picking = true);
-    try {
-      final here = await locationSource.current();
-      if (!mounted) return;
-      queue({
-        'message_type': 'send_location',
-        'body': '',
-        'location': {
-          'latitude': '${here.latitude}',
-          'longitude': '${here.longitude}',
-          'name': 'Location',
-        },
-      });
-    } catch (e) {
-      if (mounted) mobileNotice(context, e);
-    } finally {
-      if (mounted) setState(() => picking = false);
-    }
+  }
+
+  /// The message a request goes with, written by the agent; WhatsApp needs
+  /// one. Null when closed.
+  Future<String?> askText(String title, String suggested) async {
+    String? text;
+    await showEditorSheet(
+      context,
+      title: title,
+      submit: 'Send',
+      fields: [
+        EditField(
+          'body',
+          'Message',
+          value: suggested,
+          required: true,
+          lines: 3,
+          hint: 'Message',
+        ),
+      ],
+      save: (v) async => text = '${v['body']}'.trim(),
+    );
+    return text == null || text!.isEmpty ? null : text;
   }
 
   /// Sends a message that is not typed text, through the same pending row.
@@ -721,6 +777,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
 
   Future<void> deliver(PendingSend item) async {
     if (item.sending || item.accepted) return;
+    // The bubble keeps drawing this file once the server's row replaces it.
+    if (item.attachment case final Attachment file) sentFiles[item.key] = file;
     if (!policy.canSend) {
       mobileNotice(context, policy.reason!);
       return;
@@ -945,19 +1003,6 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
-  String pendingLabel(PendingSend p) {
-    final a = p.attachment;
-    final body = '${p.body['body'] ?? ''}';
-    if (a == null) return body;
-    final label = switch (a.kind) {
-      'audio' => 'Voice message',
-      'image' => 'Photo · ${a.name}',
-      'video' => 'Video · ${a.name}',
-      _ => a.name,
-    };
-    return body.isEmpty ? label : '$label\n$body';
-  }
-
   Widget historyItem(int index) {
     if (index == 0) {
       return more
@@ -978,49 +1023,127 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           : messages.lastOrNull;
       // Drawn by the same row as a delivered message, so the server's copy
       // replaces it in place: no slide-in, no extra status line.
-      return Column(
+      // The same shape as a saved row's, under the same key, so the server's
+      // row takes this one's place without rebuilding the bubble.
+      return KeyedSubtree(
         key: ValueKey('send:${p.key}'),
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          messageRow(pendingMessage(p), previous, interactive: false),
-          if (p.sending && p.attachment != null)
-            SizedBox(
-              width: 150,
-              child: LinearProgressIndicator(value: p.progress),
-            ),
-          if (p.error != null)
-            AppButton.text(
-              onPressed: policy.canSend ? () => deliver(p) : null,
-              child: const Text('Retry send'),
-            ),
-        ],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            messageRow(pendingMessage(p), previous, interactive: false),
+            // Photos, videos and documents show their own upload ring.
+            if (p.sending && p.attachment?.kind == 'audio')
+              SizedBox(
+                width: 150,
+                child: LinearProgressIndicator(value: p.progress),
+              ),
+            if (p.error != null)
+              AppButton.text(
+                onPressed: policy.canSend ? () => deliver(p) : null,
+                child: const Text('Retry send'),
+              ),
+          ],
+        ),
       );
     }
     final m = messages[position];
     return KeyedSubtree(
-      key: ValueKey(m.tempId.isNotEmpty ? 'send:${m.tempId}' : m.id),
-      child: messageRow(m, position == 0 ? null : messages[position - 1]),
+      key: ValueKey(rowKey(m)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          messageRow(m, position == 0 ? null : messages[position - 1]),
+        ],
+      ),
     );
   }
 
-  /// A message waiting to be sent, shaped like the row the server returns.
-  ApiMessage pendingMessage(PendingSend p) => ApiMessage({
-    'id': 'pending:${p.key}',
-    'temp_message_id': p.key,
-    'type': 1,
-    // A location pin waits as the card it becomes.
-    if (p.body['message_type'] == 'send_location') ...{
-      'message_type': 'location',
-      'message_body_json': jsonEncode({'location': p.body['location']}),
-    } else
-      'message_type': 'text',
-    'message_body': pendingLabel(p),
-    'created_at': p.createdAt,
-    'message_status': p.error != null ? 4 : 0,
-    'failed_reason': ?p.error,
-    'sender_name': ?widget.session.user?['name'],
-    ...?p.quote,
-  });
+  /// One key per message across its life: the bubble shown while sending and
+  /// the server's row share the send's temporary id, so the row is updated in
+  /// place, never drawn twice or rebuilt from scratch.
+  String rowKey(ApiMessage m) =>
+      m.tempId.isNotEmpty && sharedTempIds[m.tempId] == 1
+      ? 'send:${m.tempId}'
+      : m.id;
+
+  /// How many saved rows carry each temporary id; a copied request (a
+  /// resend) can repeat one, and those rows then keep their own ids.
+  Map<String, int> get sharedTempIds {
+    if (!identical(_countedFor, messages)) {
+      _countedFor = messages;
+      _tempIds = {};
+      for (final m in messages) {
+        if (m.tempId.isNotEmpty) {
+          _tempIds[m.tempId] = (_tempIds[m.tempId] ?? 0) + 1;
+        }
+      }
+    }
+    return _tempIds;
+  }
+
+  var _tempIds = <String, int>{};
+  List<ApiMessage>? _countedFor;
+
+  /// Where a row with this key is now, so a new message moves the others
+  /// down instead of rebuilding every bubble below it.
+  int? indexOfKey(Key key) {
+    if (key is! ValueKey<String>) return null;
+    final total = messages.length + pending.length;
+    if (!identical(_indexedFor, messages) ||
+        _indexedPending != pending.length) {
+      _indexedFor = messages;
+      _indexedPending = pending.length;
+      _index = {
+        for (final (at, m) in messages.indexed) rowKey(m): total - at - 1,
+      };
+    }
+    final at = pending.indexWhere((p) => key.value == 'send:${p.key}');
+    if (at >= 0) return pending.length - at - 1;
+    return _index[key.value];
+  }
+
+  var _index = <String, int>{};
+  List<ApiMessage>? _indexedFor;
+  int _indexedPending = -1;
+
+  /// A message waiting to be sent, shaped like the row the server returns,
+  /// so the same bubble draws it before and after: a photo as the photo, a
+  /// video by its first frame, a document as its card, a pin as its map.
+  ApiMessage pendingMessage(PendingSend p) {
+    final a = p.attachment;
+    final caption = '${p.body['body'] ?? ''}';
+    return ApiMessage({
+      'id': 'pending:${p.key}',
+      'temp_message_id': p.key,
+      'type': 1,
+      if (a != null) ...{
+        'message_type': a.kind,
+        'message_body': caption,
+        'message_body_json': jsonEncode({
+          a.kind: {
+            'caption': caption,
+            'filename': a.name,
+            'media_mime_type': a.mime,
+            if (p.voice) 'voice': true,
+          },
+        }),
+      } else if (p.body['message_type'] == 'send_location') ...{
+        'message_type': 'location',
+        'message_body_json': jsonEncode({'location': p.body['location']}),
+      } else ...{
+        'message_type': 'text',
+        'message_body': caption,
+      },
+      'created_at': p.createdAt,
+      'message_status': p.error != null ? 4 : 0,
+      'failed_reason': ?p.error,
+      // Read by the media bubble's upload ring; gone once it is sent.
+      if (a != null && p.error == null && !p.accepted)
+        'upload_progress': p.progress,
+      'sender_name': ?widget.session.user?['name'],
+      ...?p.quote,
+    });
+  }
 
   Widget messageRow(
     ApiMessage m,
@@ -1077,6 +1200,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
               : null,
           contactName:
               '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}',
+          businessName: widget.session.wabaName,
         ),
       ],
     );
@@ -1101,7 +1225,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                 Expanded(
                   // The green dot: WhatsApp's conversation window is open.
                   child: ConversationWindow(
-                    expiresAt: windowExpires,
+                    expiresAt: rememberedWindow,
                     builder: (context, open) => Row(
                       children: [
                         Avatar(name, size: 36, online: open),
@@ -1226,6 +1350,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                           itemBuilder: (_, index) => historyItem(
                             messages.length + pending.length - index,
                           ),
+                          findChildIndexCallback: indexOfKey,
                         ),
                         Positioned(
                           right: 12,

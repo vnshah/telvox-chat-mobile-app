@@ -22,6 +22,10 @@ class MessageContent {
   final media = <Json>[];
   final fields = <String, String>{};
   VoiceCall? voiceCall;
+
+  /// What an interactive request asks the customer for: `location`,
+  /// `address`, or `call` permission; null for other messages.
+  String? request;
   bool get structured =>
       buttons.isNotEmpty || media.isNotEmpty || fields.isNotEmpty;
   String get summary => text.isNotEmpty
@@ -165,12 +169,12 @@ class MessageContent {
     return secs > 0 ? '$minsLabel $secsLabel' : minsLabel;
   }
 
+  /// The words a location reads as in a preview or a reply quote; the map
+  /// and coordinates are drawn by the location card itself.
   void location(Json l) {
     line(l['name']);
-    line(l['address']);
-    if (l['latitude'] != null && l['longitude'] != null) {
-      line('${l['latitude']}, ${l['longitude']}');
-    }
+    if (text.isEmpty) line(l['address']);
+    if (text.isEmpty && l['latitude'] != null) text = 'Location';
   }
 
   void _parse() {
@@ -212,6 +216,20 @@ class MessageContent {
         attachment(kind, object(c['header'])[kind]);
       }
       final action = object(c['action']);
+      // WhatsApp gives the customer one button to answer these requests.
+      if (c['type'] == 'location_request_message' ||
+          action['name'] == 'send_location') {
+        request = 'location';
+        buttons.add('Send location');
+      } else if (c['type'] == 'address_message' ||
+          action['name'] == 'address_message') {
+        request = 'address';
+        buttons.add('Provide address');
+      } else if (c['type'] == 'call_permission_request' ||
+          type == 'interactiveCallPermissionRequest') {
+        request = 'call';
+        if (text.isEmpty) text = 'Call permission request';
+      }
       for (final b in rows(action['buttons'])) {
         final label = readableText(object(b['reply'])['title'] ?? b['title']);
         if (label.isNotEmpty) buttons.add(label);
