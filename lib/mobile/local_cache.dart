@@ -36,7 +36,22 @@ abstract class LocalCache {
     Json cursor, {
     bool replace = false,
   });
+
+  /// A saved chat's cursor (when it was synced), without reading its
+  /// messages; null when the phone has no copy of it.
+  Future<Json?> cursor(String key);
 }
+
+/// The saved data's format. Raising it makes every phone drop what an older
+/// build saved, once, the first time the new build runs: 2 dropped chat
+/// copies that had lost a conversation's bot and automation messages, which
+/// a catch-up of changes alone could never bring back.
+const cacheFormat = 2;
+
+/// Whose saved data this is, and in which format: a different server, user
+/// or [cacheFormat] starts from empty (see [LocalCache.open]).
+String cacheOwner(String server, Object? userId) =>
+    '$server#$userId#format$cacheFormat';
 
 /// Retention: the most recently opened conversations, each to its newest
 /// messages, and nothing left unopened for a month.
@@ -70,6 +85,8 @@ class MemoryLocalCache implements LocalCache {
       lists[key] = [...rows];
   @override
   Future<CachedConversation?> conversation(String key) async => chats[key];
+  @override
+  Future<Json?> cursor(String key) async => chats[key]?.cursor;
   @override
   Future<void> putMessages(
     String key,
@@ -227,6 +244,18 @@ class SqlLocalCache implements LocalCache {
         }
         await batch.commit(noResult: true);
       });
+
+  @override
+  Future<Json?> cursor(String key) async {
+    final db = await _database;
+    final rows = await db.query(
+      'conversations',
+      columns: ['cursor'],
+      where: 'convo = ?',
+      whereArgs: [key],
+    );
+    return rows.isEmpty ? null : object(jsonDecode('${rows.first['cursor']}'));
+  }
 
   @override
   Future<CachedConversation?> conversation(String key) async {

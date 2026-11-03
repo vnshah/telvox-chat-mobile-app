@@ -101,6 +101,9 @@ class PushService {
       if (type == 'call_cancel') unawaited(showCallFromPush(message.data));
       return;
     }
+    // Whatever it says, the chat it is about is fetched onto the phone now,
+    // so opening it from the notification shows the message at once.
+    unawaited(session.conversations.arrived(message.data));
     final contact = message.contactKey;
     if (contact != null && session.visibleContacts.contains(contact)) return;
     _transport?.show(message);

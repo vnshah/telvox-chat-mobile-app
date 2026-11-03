@@ -260,4 +260,73 @@ void main() {
     await tester.pump();
     session.dispose();
   });
+
+  testWidgets('a chat left a moment ago is reopened with no new sign-in', (
+    tester,
+  ) async {
+    final sockets = <FakeSocket>[];
+    final auths = <String>[];
+    final api =
+        fakeApi((r, h) {
+            if (r.path.endsWith('broadcasting/auth')) {
+              auths.add('${object(r.data)['channel_name']}');
+              return answer(r, h, {'auth': 'app-key:signature'});
+            }
+            answer(r, h, {'success': true});
+          })
+          ..token = 'token'
+          ..wabaId = 7;
+    final session = MobileSession(
+      api,
+      MemoryStore(),
+      realtimeConnector: (uri) async => sockets.last,
+    )..config = realtimeConfig;
+    sockets.add(FakeSocket());
+    session.realtime.start();
+    await tester.pump();
+    sockets.last.established();
+    await tester.pumpAndSettle();
+
+    void joined(String channel) => sockets.last.server(
+      'pusher_internal:subscription_succeeded',
+      {},
+      channel: 'private-$channel',
+    );
+
+    // Open a chat: one sign-in for its channel, kept warm.
+    const channel = 'receive.message.7.919999999999';
+    session.realtime.keep(channel);
+    var sub = session.realtime.listen(channel, (_, _) {});
+    await tester.pumpAndSettle();
+    expect(auths, ['private-$channel']);
+    joined(channel);
+    await tester.pumpAndSettle();
+
+    // Leave and come back: still joined, no second sign-in.
+    sub.cancel();
+    expect(
+      sockets.last.sent.where((m) => m['event'] == 'pusher:unsubscribe'),
+      isEmpty,
+    );
+    session.realtime.keep(channel);
+    sub = session.realtime.listen(channel, (_, _) {});
+    await tester.pumpAndSettle();
+    expect(auths, hasLength(1));
+
+    // After a reconnect, only channels in use are joined again.
+    sub.cancel();
+    sockets.add(FakeSocket());
+    session.realtime
+      ..stop()
+      ..start();
+    await tester.pump();
+    sockets.last.established();
+    await tester.pumpAndSettle();
+    expect(auths, hasLength(1), reason: 'a warm channel waits until used');
+    session.realtime.listen(channel, (_, _) {});
+    await tester.pumpAndSettle();
+    expect(auths, hasLength(2));
+    session.realtime.stop();
+    session.dispose();
+  });
 }

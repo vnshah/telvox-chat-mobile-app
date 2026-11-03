@@ -257,7 +257,9 @@ class InboxRepository {
     int? after,
   }) => api.post('inbox/messages', {
     'contact_id': contactId,
-    'limit': 50,
+    // Catching up takes the server's largest page (100), so a day away is one
+    // round trip, not several; a history page stays 50, enough to fill a screen.
+    'limit': since != null ? 100 : 50,
     'before_id': ?before,
     'updated_since': ?since,
     'updated_after_id': ?after,

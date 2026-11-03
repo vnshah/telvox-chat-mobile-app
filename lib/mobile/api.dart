@@ -8,7 +8,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../core/config/app_config.dart';
 import 'call_push.dart';
 import 'calls.dart';
+import 'conversation_sync.dart';
 import 'local_cache.dart';
+import 'perf_log.dart';
 import 'push.dart';
 import 'realtime.dart';
 
@@ -99,6 +101,7 @@ class MobileApi {
     ProgressCallback? onSendProgress,
   }) async {
     final requestToken = token;
+    final clock = Stopwatch()..start();
     try {
       final response = await dio.request<dynamic>(
         path,
@@ -117,6 +120,13 @@ class MobileApi {
       );
       final body = object(response.data);
       final status = response.statusCode ?? 0;
+      PerfLog.request(
+        path,
+        clock.elapsedMilliseconds,
+        status,
+        int.tryParse(response.headers.value('content-length') ?? '') ??
+            utf8.encode(jsonEncode(response.data)).length,
+      );
       if (status == 401 && authenticated && requestToken == token) {
         onUnauthorized?.call();
       }
@@ -152,6 +162,7 @@ class MobileApi {
       }
       return response.data;
     } on DioException catch (_) {
+      PerfLog.request(path, clock.elapsedMilliseconds, 0, 0);
       throw const ApiFailure(
         'Could not reach the server. Check your connection and try again.',
         uncertain: true,
@@ -192,10 +203,13 @@ class MobileSession extends ChangeNotifier {
   /// unread_message_count}`.
   final conversationActivity = ValueNotifier<Json?>(null);
 
+  /// Brings the busiest chats' copies up to date in the background.
+  late final conversations = ConversationSync(this);
+
   /// Opens the cache for this server and account. A failure only costs speed.
   Future<void> _openCache() async {
     try {
-      await cache.open('${api.dio.options.baseUrl}#${user?['id']}');
+      await cache.open(cacheOwner(api.dio.options.baseUrl, user?['id']));
     } catch (_) {}
   }
 

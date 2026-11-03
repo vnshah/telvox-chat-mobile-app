@@ -43,12 +43,17 @@ class RealtimeSubscription {
     this._owner,
     this.channel,
     this.onEvent,
-    this.onResync,
-  );
+    this.onResync, {
+    this.passive = false,
+  });
   final Realtime _owner;
   final String channel;
   final RealtimeHandler onEvent;
   final VoidCallback? onResync;
+
+  /// Only keeps a joined channel joined (see [Realtime.keep]); never asks for
+  /// a channel to be joined again after a reconnect.
+  final bool passive;
   bool _active = true;
   void cancel() {
     if (!_active) return;
@@ -116,8 +121,39 @@ class Realtime extends ChangeNotifier {
     final sub = RealtimeSubscription._(this, name, onEvent, onResync);
     final list = _listeners.putIfAbsent(name, () => []);
     list.add(sub);
-    if (list.length == 1 && state == RealtimeState.connected) _subscribe(name);
+    // Already joined (kept warm from a recent visit): no sign-in needed.
+    if (state == RealtimeState.connected && !_joined.contains(name)) {
+      _subscribe(name);
+    }
     return sub;
+  }
+
+  /// Recently left chats' channels, kept joined so going back to one needs
+  /// no sign-in request: switching between chats costs nothing. Only while
+  /// connected; a reconnect rejoins just the channels a screen is using.
+  final _kept = <String, RealtimeSubscription>{};
+  static const keepChannels = 12;
+
+  void keep(String channel) {
+    final name = channel.startsWith('private-') ? channel : 'private-$channel';
+    final existing = _kept.remove(name);
+    if (existing != null) {
+      _kept[name] = existing;
+      return;
+    }
+    final sub = RealtimeSubscription._(
+      this,
+      name,
+      (_, _) {},
+      null,
+      passive: true,
+    );
+    _listeners.putIfAbsent(name, () => []).add(sub);
+    _kept[name] = sub;
+    while (_kept.length > keepChannels) {
+      final oldest = _kept.keys.first;
+      _kept.remove(oldest)!.cancel();
+    }
   }
 
   void _remove(RealtimeSubscription sub) {
@@ -225,8 +261,9 @@ class Realtime extends ChangeNotifier {
         _attempt = 0;
         _setState(RealtimeState.connected);
         _touch();
-        for (final channel in _listeners.keys.toList()) {
-          _subscribe(channel);
+        // Rejoin what a screen is using; warm-kept channels wait until one is.
+        for (final entry in _listeners.entries.toList()) {
+          if (entry.value.any((sub) => !sub.passive)) _subscribe(entry.key);
         }
       case 'pusher:ping':
         _write('pusher:pong', {});

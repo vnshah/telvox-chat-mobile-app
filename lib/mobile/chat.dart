@@ -31,6 +31,7 @@ import 'editors.dart' show EditField, showEditorSheet;
 import 'location.dart';
 import 'maps.dart';
 import 'send_policy.dart';
+import 'perf_log.dart';
 import 'realtime.dart';
 
 /// Photos, videos and the phone's position; tests replace them.
@@ -99,6 +100,26 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   /// starts over from the newest page instead, so history never has a gap.
   bool replaceNext = false;
 
+  /// Opened from the phone's copy: the first read is the newest page in full,
+  /// not only what changed since the copy's cursor. A change-only catch-up
+  /// can never bring back a message the copy is missing (an older build left
+  /// out a chat's bot and automation messages that way, and they stayed out),
+  /// so the copy is checked against the server each time the chat opens.
+  bool verifyNext = false;
+
+  /// From opening the chat: how long until the phone's copy shows, and until
+  /// the server's answer is in (see the Performance log).
+  final openedFor = Stopwatch()..start();
+  bool _reportedCurrent = false;
+  String get perfLabel => 'contact ${widget.contact['id']}';
+
+  /// Marks the chat up to date once, the first time the server has answered.
+  void reportCurrent([String note = '']) {
+    if (_reportedCurrent) return;
+    _reportedCurrent = true;
+    PerfLog.chat('current', perfLabel, openedFor, note);
+  }
+
   /// True while the list shows a page around a found or quoted message and
   /// newer messages lie beyond it, not yet loaded. Scrolling down pages them
   /// in until the list meets the live chat again.
@@ -126,6 +147,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   /// Renders from this run's memory or the phone's copy at once, then asks
   /// the server only for what changed since the saved cursor.
   Future<void> openConversation() async {
+    PerfLog.chat('open', perfLabel, openedFor);
     final memory = widget.session.viewCache[cacheKey] as List<ApiMessage>?;
     var saved = memory == null
         ? null
@@ -144,22 +166,36 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         setState(() => messages = saved!.messages.map(ApiMessage.new).toList());
       }
     }
+    if (messages.isNotEmpty) {
+      PerfLog.chat(
+        'shown',
+        perfLabel,
+        openedFor,
+        '${messages.length} from ${memory != null ? 'memory' : 'phone'}',
+      );
+    }
     final c = saved?.cursor ?? const <String, dynamic>{};
     final syncedAt = DateTime.tryParse('${c['synced_at'] ?? ''}');
     if (messages.isNotEmpty && saved != null) {
-      if (syncedAt == null ||
-          DateTime.now().toUtc().difference(syncedAt) > catchUpLimit) {
-        replaceNext = true;
-      } else {
-        sync = c['sync'] as String?;
-        // Older history continues from the oldest message actually kept.
-        oldest = number(messages.first.id);
-        // The phone keeps only the newest messages; older ones page in.
-        more =
-            c['more'] == true ||
-            messages.length >= cacheMessagesPerConversation;
-        loadedOnce = true;
-      }
+      // However old the copy, it stays on screen and is checked against the
+      // newest page (see [heal]); it is never swapped out wholesale.
+      final stale =
+          syncedAt == null ||
+          DateTime.now().toUtc().difference(syncedAt) > catchUpLimit;
+      sync = stale ? null : c['sync'] as String?;
+      // Older history continues from the oldest message actually kept.
+      oldest = number(messages.first.id);
+      // The phone keeps only the newest messages; older ones page in.
+      more =
+          c['more'] == true || messages.length >= cacheMessagesPerConversation;
+      loadedOnce = true;
+      // Synced in the background a moment ago (see ConversationSync): the
+      // copy is current, so only changes since then are asked for.
+      final fresh =
+          syncedAt != null &&
+          DateTime.now().toUtc().difference(syncedAt) <
+              const Duration(minutes: 1);
+      verifyNext = widget.ticketId == null && !fresh;
     }
     load(quiet: messages.isNotEmpty);
   }
@@ -216,6 +252,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     scroll.addListener(() {
       scrolledUp.value = newerMore || scroll.offset > 400;
+      if (scroll.offset < 40 && !newerMore) unseen.value = 0;
       // Not while scrolling to a jumped-to message: only the reader's own
       // scroll down pages newer messages in.
       if (newerMore && !reaching && scroll.offset < 300) loadNewer();
@@ -257,6 +294,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
             'change.log.$waba.$phone',
           ];
     for (final channel in channels) {
+      // Kept joined after leaving, so coming straight back signs in nothing.
+      realtime.keep(channel);
       live.add(
         realtime.listen(
           channel,
@@ -267,12 +306,18 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
+  bool _detailsWanted = false;
+
   void liveRefresh({bool details = false}) {
-    if (details) this.details();
-    // A send fires sending/sent/status in quick succession: one request.
+    _detailsWanted |= details;
+    // A send fires sending/sent/status in quick succession, and coming back
+    // to the app fires a resume and a channel resync: one request for each.
     liveDebounce?.cancel();
     liveDebounce = Timer(const Duration(milliseconds: 150), () {
-      if (mounted) load(quiet: true);
+      if (!mounted) return;
+      if (_detailsWanted) this.details();
+      _detailsWanted = false;
+      load(quiet: true);
     });
   }
 
@@ -281,8 +326,9 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     // Covers devices where live updates are unavailable; otherwise the
     // channel resync on reconnect does the same.
     if (state == AppLifecycleState.resumed) {
-      load(quiet: true);
-      details();
+      // The same debounced refresh the channels' resync asks for, so coming
+      // back fetches once, not once for the app and again for the socket.
+      liveRefresh(details: true);
       focus(true);
     } else if (state == AppLifecycleState.paused) {
       focus(false);
@@ -335,6 +381,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     composer.dispose();
     scroll.dispose();
     scrolledUp.dispose();
+    unseen.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -551,6 +598,78 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     if (found != null && mounted) jumpTo(id: number(found['id']));
   }
 
+  /// New messages at the bottom: at the bottom already, ease down to them; read
+  /// further up, keep the messages on screen where they are (the list grows
+  /// below them) and count the new ones on the jump-to-latest button.
+  void follow(int count, bool atBottom) {
+    final above = scroll.hasClients ? scroll.position.extentAfter : 0.0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !scroll.hasClients) return;
+      final position = scroll.position;
+      if (atBottom) {
+        if (MediaQuery.disableAnimationsOf(context)) {
+          scroll.jumpTo(0);
+        } else {
+          scroll.animateTo(
+            0,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+          );
+        }
+        return;
+      }
+      // What lies above the screen did not change; hold it there.
+      final target = position.maxScrollExtent - above;
+      if (target > position.pixels) scroll.jumpTo(target);
+      unseen.value += count;
+    });
+  }
+
+  /// New messages that arrived below while reading further up.
+  final unseen = ValueNotifier(0);
+
+  /// The newest page in full, against the phone's copy: the page is what
+  /// the server holds for its stretch of time, so what the copy lacked there
+  /// appears and what the server no longer has goes. Older kept messages stay
+  /// shown, and paging back fetches from the page's own oldest message, so
+  /// gaps further back fill in as they are reached. The healed copy is saved.
+  void heal(List<ApiMessage> page, Json meta) {
+    reportCurrent('checked ${page.length}');
+    if (page.isEmpty) {
+      remember();
+      return;
+    }
+    final start = page
+        .map((m) => '${m.json['created_at']}')
+        .reduce((a, b) => a.compareTo(b) <= 0 ? a : b);
+    final ids = {for (final m in page) m.id};
+    final older = [
+      for (final m in messages)
+        if ('${m.json['created_at']}'.compareTo(start) < 0 &&
+            !ids.contains(m.id))
+          m,
+    ];
+    final had = {for (final m in messages) m.id};
+    final arrived = page.where((m) => !had.contains(m.id) && !m.outgoing);
+    final added = page.where((m) => !had.contains(m.id)).length;
+    final atBottom = !scroll.hasClients || scroll.offset < 100;
+    setState(() {
+      messages = mergeMessages(older, page);
+      final temps = page.map((m) => m.tempId).where((t) => t.isNotEmpty);
+      pending.removeWhere((p) => temps.contains(p.key));
+      oldest = number(meta['oldest_id']) ?? oldest;
+      more = meta['has_more'] == true || older.isNotEmpty;
+      loadedOnce = true;
+      error = null;
+    });
+    remember(messages, true);
+    if (added > 0) follow(added, atBottom);
+    if (arrived.isNotEmpty) {
+      markRead();
+      details();
+    }
+  }
+
   Future<void> load({bool older = false, bool quiet = false}) async {
     if (busy) {
       // Never drop a live update: fetch again once this request finishes.
@@ -565,6 +684,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       });
     }
     final nearEnd = !scroll.hasClients || scroll.offset < 100;
+    final verify = verifyNext && !older;
+    verifyNext = verifyNext && older;
     try {
       Json result;
       if (widget.ticketId != null) {
@@ -577,7 +698,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         result = await repository.messages(
           contactId,
           before: older ? oldest : null,
-          since: !older ? sync : null,
+          since: !older && !verify ? sync : null,
         );
       }
       if (!mounted) return;
@@ -585,7 +706,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       var meta = object(result['meta']);
       // Drain catch-up pages using the pair of cursor fields; never skip changes
       // sharing the same timestamp. Normal history keeps its own older cursor.
-      if (widget.ticketId == null && !older && sync != null) {
+      if (widget.ticketId == null && !older && !verify && sync != null) {
         while (meta['has_more'] == true && meta['sync_after_id'] != null) {
           result = await repository.messages(
             contactId,
@@ -616,6 +737,11 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       // Many refreshes change nothing (tickets re-send the latest page);
       // rebuilding and re-sorting every bubble then is pure jank.
       final replace = replaceNext && !older;
+      if (!older && !verify) reportCurrent('${incoming.length} rows');
+      if (verify) {
+        heal(incoming, meta);
+        return;
+      }
       if (!changed && loadedOnce && error == null && !replace) {
         remember();
         return;
@@ -646,10 +772,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         // assignment/close changes. Either can change who may send.
         if (!older && wasLoaded) details();
       }
-      if (!older && fresh.isNotEmpty && nearEnd) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && scroll.hasClients) scroll.jumpTo(0);
-        });
+      // Back to the latest on purpose: the bottom. Otherwise new messages
+      // either ease into view or wait below without moving the screen.
+      if (!older && replace) {
+        scrollToEnd();
+      } else if (!older && fresh.isNotEmpty) {
+        follow(fresh.length, nearEnd);
       }
     } catch (e) {
       if (mounted) setState(() => error = '$e');
@@ -1566,10 +1694,20 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                             builder: (context, up, _) => AnimatedScale(
                               scale: up ? 1 : 0,
                               duration: const Duration(milliseconds: 150),
-                              child: AppIconButton.filledTonal(
-                                tooltip: 'Scroll to latest',
-                                onPressed: up ? jumpToLatest : null,
-                                icon: const Icon(Icons.keyboard_arrow_down),
+                              child: ValueListenableBuilder(
+                                valueListenable: unseen,
+                                builder: (context, count, button) => Badge(
+                                  key: const ValueKey('unseen'),
+                                  isLabelVisible: count > 0,
+                                  label: Text('$count'),
+                                  backgroundColor: T.green,
+                                  child: button,
+                                ),
+                                child: AppIconButton.filledTonal(
+                                  tooltip: 'Scroll to latest',
+                                  onPressed: up ? jumpToLatest : null,
+                                  icon: const Icon(Icons.keyboard_arrow_down),
+                                ),
                               ),
                             ),
                           ),

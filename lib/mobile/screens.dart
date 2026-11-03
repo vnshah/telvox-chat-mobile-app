@@ -13,6 +13,7 @@ import 'call_push.dart';
 import 'calls.dart';
 import 'chat.dart';
 import 'models.dart';
+import 'perf_log.dart';
 import 'realtime.dart';
 import 'list_sync.dart';
 import 'message_content.dart';
@@ -867,6 +868,7 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
             position: PopupMenuPosition.under,
             onSelected: (v) {
               if (v == 'signout') signOut();
+              if (v == 'perf') openPage(context, const PerfLogPage());
             },
             itemBuilder: (_) => [
               PopupMenuItem(
@@ -877,6 +879,14 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
                     color: T.ink,
                     fontWeight: FontWeight.w600,
                   ),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'perf',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.speed_outlined),
+                  title: Text('Performance log'),
                 ),
               ),
               const PopupMenuItem(
@@ -1410,6 +1420,11 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
         );
       }
       if (!mounted || request != serial) return;
+      // The chats near the top are synced onto the phone before they are
+      // opened, so opening one shows what is new straight away.
+      if (widget.kind != 2 && !append && search.text.isEmpty) {
+        unawaited(widget.session.conversations.prefetch(next));
+      }
       final merged = append
           ? sync.append(items, next)
           : firstPage

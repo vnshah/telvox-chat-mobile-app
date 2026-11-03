@@ -6,14 +6,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app.dart';
 import 'core/config/app_config.dart';
-import 'mobile/call_push.dart';
+import 'mobile/conversation_sync.dart';
 import 'mobile/app.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // A customer's call wakes a closed app by push; see backgroundCallPush.
+  // A call rings and a carried message is saved while the app is closed.
   if (AppConfig.firebaseConfigured && !AppConfig.preview) {
-    FirebaseMessaging.onBackgroundMessage(backgroundCallPush);
+    FirebaseMessaging.onBackgroundMessage(backgroundPush);
   }
   LicenseRegistry.addLicense(() async* {
     yield LicenseEntryWithLineBreaks([
