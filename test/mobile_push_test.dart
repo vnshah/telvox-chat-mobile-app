@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:telvox_chat_mobile_app/mobile/api.dart';
 import 'package:telvox_chat_mobile_app/mobile/app.dart';
 import 'package:telvox_chat_mobile_app/mobile/chat.dart';
+import 'package:telvox_chat_mobile_app/mobile/notification_sound.dart';
 import 'package:telvox_chat_mobile_app/mobile/push.dart';
 import 'package:telvox_chat_mobile_app/mobile/screens.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
@@ -36,7 +37,15 @@ class FakePush implements PushTransport {
   @override
   Future<PushMessage?> launchMessage() async => launch;
   @override
-  Future<void> show(PushMessage message) async => shown.add(message);
+  Future<void> show(PushMessage message, NotificationSound sound) async {
+    shown.add(message);
+    sounds.add(sound);
+  }
+
+  final sounds = <NotificationSound>[];
+  final used = <NotificationSound>[];
+  @override
+  Future<void> useSound(NotificationSound sound) async => used.add(sound);
   @override
   Future<void> forget() async => forgotten = true;
 }
@@ -64,11 +73,30 @@ void main() {
     await session.push.enable();
     await session.push.enable();
     expect(bodies, [
-      {'token': 'token-1', 'provider': 'fcm'},
+      {'token': 'token-1', 'provider': 'fcm', 'sound': 'tap'},
     ]);
     push.refresh.add('token-2');
     await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(bodies.last, {'token': 'token-2', 'provider': 'fcm'});
+    expect(bodies.last, {
+      'token': 'token-2',
+      'provider': 'fcm',
+      'sound': 'tap',
+    });
+
+    // A new sound: its channel is made first, then the server is told, so a
+    // push for it never names a channel the phone lacks.
+    await session.setNotificationSound(NotificationSound.chime);
+    expect(push.used.last, NotificationSound.chime);
+    expect(bodies.last, {
+      'token': 'token-2',
+      'provider': 'fcm',
+      'sound': 'chime',
+    });
+    expect(bodies, hasLength(3));
+
+    // The phone's default sound: the server keeps it on its own channel.
+    await session.setNotificationSound(NotificationSound.system);
+    expect(bodies.last, {'token': 'token-2', 'provider': 'fcm', 'sound': null});
     session.dispose();
   });
 

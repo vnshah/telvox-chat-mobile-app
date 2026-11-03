@@ -1,5 +1,6 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +12,11 @@ import 'mobile/app.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // A touch screen that samples faster than the display refreshes (a 120 Hz
+  // Galaxy's does) hands each frame one, two or three touches, so a dragged
+  // list moves in uneven steps. Resampling moves it by where the finger was
+  // at each frame instead, and scrolling follows the finger smoothly.
+  GestureBinding.instance.resamplingEnabled = true;
   // A call rings and a carried message is saved while the app is closed.
   if (AppConfig.firebaseConfigured && !AppConfig.preview) {
     FirebaseMessaging.onBackgroundMessage(backgroundPush);

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The notification sounds are named by the app at run time, never in code
+     the shrinker can see, so release builds must keep them. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/telvox_tap,@raw/telvox_pebble,@raw/telvox_chime" />

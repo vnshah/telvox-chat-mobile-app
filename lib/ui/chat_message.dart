@@ -581,6 +581,7 @@ class MessageBubble extends StatelessWidget {
             bottomLeft: const Radius.circular(9),
             bottomRight: const Radius.circular(9),
           ),
+          boxShadow: T.bubbleShadow,
         ),
         child: _withFooter(
           inset,

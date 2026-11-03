@@ -278,7 +278,7 @@ TextSpan marked(String text, String words) {
         text: text.substring(found, found + needle.length),
         style: const TextStyle(
           fontWeight: FontWeight.w600,
-          backgroundColor: Color(0xFFD5E8D6),
+          backgroundColor: T.outgoing,
         ),
       ),
     );

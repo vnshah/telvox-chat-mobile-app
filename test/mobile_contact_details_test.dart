@@ -93,7 +93,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('choice-4')));
     await tester.pumpAndSettle();
-    expect(find.text('Assigned to Asha'), findsOneWidget);
+    // The row shows who it is now, under "Assigned to".
+    expect(find.text('Asha'), findsOneWidget);
 
     await tester.tap(find.text('Close'));
     await tester.pumpAndSettle();
@@ -136,6 +137,8 @@ void main() {
     );
     expect(find.text('Tag 6'), findsOneWidget);
     expect(find.text('Tag 7'), findsNothing);
+    await tester.ensureVisible(find.text('+3 more'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('+3 more'));
     await tester.pumpAndSettle();
     expect(find.text('Tag 9'), findsOneWidget);
@@ -186,6 +189,10 @@ void main() {
         _ => null,
       },
     );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('notes-row')),
+      200,
+    );
     await tester.ensureVisible(find.byKey(const ValueKey('notes-row')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('notes-row')));
@@ -202,6 +209,9 @@ void main() {
     expect(find.byTooltip('Redo'), findsOneWidget);
     // Nothing changed yet, so there is nothing for Done to save.
     expect(doneEnabled(), isFalse);
+    // Flutter's undo history keeps the starting text half a second after
+    // the field appears; the page slides in faster than that.
+    await tester.pump(const Duration(milliseconds: 600));
 
     // Undo puts back what was there; Redo brings the edit back.
     await tester.enterText(editor, 'Gate code changed to 5520');

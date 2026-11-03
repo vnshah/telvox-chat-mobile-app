@@ -133,6 +133,10 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   /// Builds every row for a frame, so the jumped-to row can be scrolled to.
   bool reaching = false;
 
+  /// Rows that arrived while the chat was on screen, by row key; each pops
+  /// in once, the first time it is built.
+  final popIn = <String>{};
+
   /// Beyond this, catching up change by change costs more than starting over.
   static const catchUpLimit = Duration(days: 3);
 
@@ -344,11 +348,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   void focus(bool open) {
     if (widget.ticketId != null || open == focused) return;
     focused = open;
-    widget.session.api
-        .post('inbox/conversation/focus', {
-          open ? 'contact_id' : 'previous_contact_id': contactId,
-        })
-        .catchError((_) => <String, dynamic>{});
+    unawaited(widget.session.focusChat(contactId, open: open));
   }
 
   /// WhatsApp shows the customer "typing…" for up to 25 seconds per
@@ -747,8 +747,23 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         return;
       }
       final wasLoaded = loadedOnce;
+      // What is on screen now, so only rows the reader has not seen pop in.
+      final shown = {
+        for (final m in messages) rowKey(m),
+        for (final p in pending) 'send:${p.key}',
+      };
+      final animate =
+          !older && !replace && !newerMore && nearEnd && messages.isNotEmpty;
       setState(() {
         messages = mergeMessages(replace ? [] : messages, incoming);
+        if (animate) {
+          final added = [
+            for (final m in fresh)
+              if (!shown.contains(rowKey(m))) rowKey(m),
+          ];
+          // A long catch-up lands at once; a few new rows arrive one by one.
+          if (added.length <= 6) popIn.addAll(added);
+        }
         replaceNext = false;
         final ids = incoming
             .map((m) => m.tempId)
@@ -1329,49 +1344,66 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       // row takes this one's place without rebuilding the bubble.
       return KeyedSubtree(
         key: ValueKey('send:${p.key}'),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            // Shaped as a saved row is (see below), so it is updated in place.
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 400),
-              color: Colors.transparent,
-              child: messageRow(
-                pendingMessage(p),
-                previous,
-                interactive: false,
+        // Never pops in: your own message appears at once, as you sent it.
+        child: _PopIn(
+          animate: false,
+          from: Alignment.bottomRight,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // Shaped as a saved row is (see below), so it is updated in place.
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 400),
+                color: Colors.transparent,
+                child: messageRow(
+                  pendingMessage(p),
+                  previous,
+                  interactive: false,
+                ),
               ),
-            ),
-            // Photos, videos and documents show their own upload ring.
-            if (p.sending && p.attachment?.kind == 'audio')
-              SizedBox(
-                width: 150,
-                child: LinearProgressIndicator(value: p.progress),
-              ),
-            if (p.error != null)
-              AppButton.text(
-                onPressed: policy.canSend ? () => deliver(p) : null,
-                child: const Text('Retry send'),
-              ),
-          ],
+              // Photos, videos and documents show their own upload ring.
+              if (p.sending && p.attachment?.kind == 'audio')
+                SizedBox(
+                  width: 150,
+                  child: LinearProgressIndicator(value: p.progress),
+                ),
+              if (p.error != null)
+                AppButton.text(
+                  onPressed: policy.canSend ? () => deliver(p) : null,
+                  child: const Text('Retry send'),
+                ),
+            ],
+          ),
         ),
       );
     }
     final m = messages[position];
     final lit = highlightId != null && number(m.id) == highlightId;
+    final key = rowKey(m);
     return KeyedSubtree(
-      key: ValueKey(rowKey(m)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          // A jumped-to message glows for a moment, as on WhatsApp.
-          AnimatedContainer(
-            key: lit ? highlightKey : null,
-            duration: const Duration(milliseconds: 400),
-            color: lit ? T.brass.withValues(alpha: .18) : Colors.transparent,
-            child: messageRow(m, position == 0 ? null : messages[position - 1]),
-          ),
-        ],
+      key: ValueKey(key),
+      child: _PopIn(
+        animate: popIn.remove(key),
+        from: m.log
+            ? Alignment.center
+            : m.outgoing
+            ? Alignment.bottomRight
+            : Alignment.bottomLeft,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // A jumped-to message glows for a moment, as on WhatsApp.
+            AnimatedContainer(
+              key: lit ? highlightKey : null,
+              duration: const Duration(milliseconds: 400),
+              color: lit ? T.brass.withValues(alpha: .18) : Colors.transparent,
+              child: messageRow(
+                m,
+                position == 0 ? null : messages[position - 1],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1488,6 +1520,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
               decoration: BoxDecoration(
                 color: T.incoming,
                 borderRadius: BorderRadius.circular(8),
+                boxShadow: T.bubbleShadow,
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
@@ -1533,6 +1566,9 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final name = '${widget.contact['profile_name'] ?? phone}';
     final permission = policy;
+    final swap = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 220);
     return Scaffold(
       appBar: AppBar(
         shape: const Border(bottom: BorderSide(color: T.hairline)),
@@ -1551,7 +1587,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                     expiresAt: rememberedWindow,
                     builder: (context, open) => Row(
                       children: [
-                        Avatar(name, size: 36, online: open),
+                        Avatar(
+                          name,
+                          size: 36,
+                          seed: widget.contact['id'],
+                          online: open,
+                        ),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Column(
@@ -1601,45 +1642,19 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
               icon: const Icon(CupertinoIcons.info_circle),
             )
           else
-            PopupMenuButton<String>(
-              tooltip: 'More options',
-              onSelected: (v) {
-                if (v == 'contact') openContact();
-                if (v == 'templates') templates();
-                if (v == 'calls') {
-                  openPage(
-                    context,
-                    CallHistoryPage(widget.session, callContact),
-                  );
-                }
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(
-                  value: 'contact',
-                  child: ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.person_outline),
-                    title: Text('Contact details'),
-                  ),
-                ),
+            OverflowMenu(
+              items: [
+                (label: 'Contact details', onPressed: openContact),
                 if (callEligibility(widget.session.config, callContact).shown)
-                  const PopupMenuItem(
-                    value: 'calls',
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.history),
-                      title: Text('Call history'),
+                  (
+                    label: 'Call history',
+                    onPressed: () => openPage(
+                      context,
+                      CallHistoryPage(widget.session, callContact),
                     ),
                   ),
                 if (permission.canTemplate)
-                  const PopupMenuItem(
-                    value: 'templates',
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.article_outlined),
-                      title: Text('Send template'),
-                    ),
-                  ),
+                  (label: 'Send template', onPressed: templates),
               ],
             ),
         ],
@@ -1717,62 +1732,154 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
             ),
             // While permissions load, keep the composer's shape but disabled,
             // so the bottom of the screen does not swap layouts a moment later.
-            if (!permission.canSend && detail != null)
-              SafeArea(
-                top: false,
-                child: _ComposerCard(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        permission.reason!,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: T.secondary,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      if (closed)
-                        AppButton.outlined(
-                          onPressed: reopening ? null : reopen,
-                          child: Text(
-                            reopening ? 'Reopening…' : 'Reopen conversation',
+            // When it does change (the chat turns out closed, or the window
+            // shuts), the composer and the card cross-fade and the bar eases
+            // to its new height instead of jumping in one frame.
+            AnimatedSize(
+              duration: swap,
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.bottomCenter,
+              child: AnimatedSwitcher(
+                duration: swap,
+                child: !permission.canSend && detail != null
+                    ? SafeArea(
+                        key: const ValueKey('composer-card'),
+                        top: false,
+                        child: _ComposerCard(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                permission.reason!,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: T.secondary,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              if (closed)
+                                AppButton.outlined(
+                                  onPressed: reopening ? null : reopen,
+                                  child: Text(
+                                    reopening
+                                        ? 'Reopening…'
+                                        : 'Reopen conversation',
+                                  ),
+                                ),
+                              if (permission.canTemplate)
+                                AppButton.filled(
+                                  onPressed: templates,
+                                  child: const Text('Send template'),
+                                ),
+                            ],
                           ),
                         ),
-                      if (permission.canTemplate)
-                        AppButton.filled(
-                          onPressed: templates,
-                          child: const Text('Send template'),
-                        ),
-                    ],
-                  ),
-                ),
-              )
-            else ...[
-              LoadingBar(picking),
-              SafeArea(
-                top: false,
-                child: ChatComposer(
-                  controller: composer,
-                  enabled: permission.canSend,
-                  busy: picking,
-                  replyAuthor: reply == null ? null : quoteAuthor(reply!),
-                  replyText: reply?.text,
-                  onCancelReply: () => setState(() => reply = null),
-                  attachment: attachment,
-                  onCancelAttachment: () => setState(() => attachment = null),
-                  onSend: send,
-                  onAttach: () => attachMenu(permission.canTemplate),
-                  onQuickReplies: quickReplies,
-                  onCamera: camera,
-                  onVoiceNote: sendVoiceNote,
-                  onTyping: typing,
-                ),
+                      )
+                    : Column(
+                        key: const ValueKey('composer'),
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          LoadingBar(picking),
+                          SafeArea(
+                            top: false,
+                            child: ChatComposer(
+                              controller: composer,
+                              enabled: permission.canSend,
+                              busy: picking,
+                              replyAuthor: reply == null
+                                  ? null
+                                  : quoteAuthor(reply!),
+                              replyText: reply?.text,
+                              onCancelReply: () => setState(() => reply = null),
+                              attachment: attachment,
+                              onCancelAttachment: () =>
+                                  setState(() => attachment = null),
+                              onSend: send,
+                              onAttach: () =>
+                                  attachMenu(permission.canTemplate),
+                              onQuickReplies: quickReplies,
+                              onCamera: camera,
+                              onVoiceNote: sendVoiceNote,
+                              onTyping: typing,
+                            ),
+                          ),
+                        ],
+                      ),
               ),
-            ],
+            ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A row that arrives while the chat is open grows into place: the bubbles
+/// above glide up to make room, and it pops in from its own side (the
+/// customer's left, yours right, activity in the middle) instead of the list
+/// jumping in one frame. Rows already on screen are left exactly as they are.
+class _PopIn extends StatefulWidget {
+  const _PopIn({
+    required this.animate,
+    required this.from,
+    required this.child,
+  });
+
+  /// Read once, when the row is first built.
+  final bool animate;
+  final Alignment from;
+  final Widget child;
+  @override
+  State<_PopIn> createState() => _PopInState();
+}
+
+class _PopInState extends State<_PopIn> with SingleTickerProviderStateMixin {
+  AnimationController? _controller;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_controller != null || !widget.animate) return;
+    if (MediaQuery.disableAnimationsOf(context)) return;
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    )..forward();
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    // Never animated: no extra layers for the many rows that stay still.
+    if (controller == null) return widget.child;
+    return SizeTransition(
+      sizeFactor: CurvedAnimation(
+        parent: controller,
+        curve: const Interval(0, .7, curve: Curves.easeOutCubic),
+      ),
+      alignment: Alignment.bottomCenter,
+      child: FadeTransition(
+        opacity: CurvedAnimation(
+          parent: controller,
+          curve: const Interval(.15, .8, curve: Curves.easeOut),
+        ),
+        child: ScaleTransition(
+          scale: Tween(begin: .85, end: 1.0).animate(
+            CurvedAnimation(
+              parent: controller,
+              curve: const Interval(.15, 1, curve: Curves.easeOutBack),
+            ),
+          ),
+          alignment: widget.from,
+          child: widget.child,
         ),
       ),
     );

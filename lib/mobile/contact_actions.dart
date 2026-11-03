@@ -367,22 +367,28 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
     final canAssign = data!['can_assign_contact'] == true;
     final notes = this.notes;
     final latest = notes.isEmpty ? null : readableText(notes.first['content']);
+    final shown = name.isEmpty ? formatPhone(c['wa_id']) : name;
     return DetailScaffold(
-      title: 'Contact',
+      // WhatsApp's contact info has no title; the header says who it is.
+      title: '',
       onRefresh: load,
       actions: [
-        AppIconButton(
-          tooltip: 'Edit name',
-          onPressed: editName,
-          icon: const AppIcon(Icons.edit_outlined),
-        ),
+        if (isCupertino(context))
+          AppIconButton(
+            tooltip: 'Edit name',
+            onPressed: editName,
+            icon: const AppIcon(Icons.edit_outlined),
+          )
+        else
+          OverflowMenu(items: [(label: 'Edit name', onPressed: editName)]),
       ],
       children: [
         ConversationWindow(
           expiresAt: windowExpires,
           builder: (context, open) => DetailHero(
             avatar: initials.isEmpty ? '?' : initials,
-            title: name.isEmpty ? formatPhone(c['wa_id']) : name,
+            avatarSeed: widget.id,
+            title: shown,
             subtitle: formatPhone(c['display_wa_id'] ?? c['wa_id']),
             onTitleTap: editName,
             online: open,
@@ -392,30 +398,8 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
                     final left => 'Window open · $left',
                   }
                 : null,
-            chips: [
-              StatusChip(
-                closed ? 'Closed' : 'Open',
-                icon: closed ? Icons.lock_outline : Icons.schedule,
-                positive: !closed,
-                onTap: saving.contains('status') ? null : status,
-              ),
-              StatusChip(
-                assignee == 'Unassigned'
-                    ? 'Unassigned'
-                    : 'Assigned to $assignee',
-                icon: Icons.person_outline,
-                onTap: canAssign ? assign : null,
-              ),
-              if (favourite)
-                const StatusChip('Favourite', icon: Icons.star_rounded),
-            ],
             actions: [
-              QuickAction(
-                Icons.chat_outlined,
-                'Message',
-                message,
-                primary: true,
-              ),
+              QuickAction(Icons.chat_outlined, 'Message', message),
               QuickAction(
                 favourite ? Icons.star_rounded : Icons.star_border_rounded,
                 favourite ? 'Unfavourite' : 'Favourite',
@@ -432,25 +416,23 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
           ),
         ),
         DetailSection(
-          title: 'Conversation',
           children: [
             DetailRow(
-              icon: Icons.person_outline,
-              label: 'Assigned to',
-              value: assignee,
-              onTap: canAssign ? assign : null,
-            ),
-            DetailRow(
-              icon: closed ? Icons.lock_outline : Icons.schedule,
-              tile: closed ? T.muted : T.green,
-              label: 'Status',
+              icon: closed ? Icons.lock_outline : Icons.chat_bubble_outline,
+              label: 'Conversation',
               value: saving.contains('status')
-                  ? null
+                  ? 'Saving…'
                   : closed
                   ? 'Closed'
                   : 'Open',
               trailing: spinner('status'),
               onTap: saving.contains('status') ? null : status,
+            ),
+            DetailRow(
+              icon: Icons.person_outline,
+              label: 'Assigned to',
+              value: assignee,
+              onTap: canAssign ? assign : null,
             ),
           ],
         ),
@@ -467,8 +449,15 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
           ],
         ),
         DetailSection(
-          title: 'More',
           children: [
+            DetailRow(
+              icon: Icons.photo_library_outlined,
+              label: 'Media, links and docs',
+              onTap: () => openPage(
+                context,
+                MediaGalleryPage(widget.session, contactId: widget.id),
+              ),
+            ),
             DetailRow(
               key: const ValueKey('notes-row'),
               icon: Icons.sticky_note_2_outlined,
@@ -487,23 +476,6 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
                 ContactFieldsPage(widget.session, widget.id),
               ),
             ),
-            for (final (kind, icon) in [
-              (SharedKind.media, Icons.photo_library_outlined),
-              (SharedKind.documents, Icons.description_outlined),
-              (SharedKind.links, Icons.link),
-            ])
-              DetailRow(
-                icon: icon,
-                label: kind.label,
-                onTap: () => openPage(
-                  context,
-                  MediaGalleryPage(
-                    widget.session,
-                    contactId: widget.id,
-                    initial: kind,
-                  ),
-                ),
-              ),
             if (callEligibility(widget.session.config, contact).shown)
               DetailRow(
                 icon: Icons.history,
@@ -520,16 +492,18 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
         ),
         if (can('dnd') || can('block'))
           DetailSection(
-            title: 'Privacy',
             children: [
               if (can('dnd'))
                 DetailRow(
                   icon: Icons.do_not_disturb_on_outlined,
                   label: 'Marketing do not disturb',
+                  subtitle: 'No marketing templates to this contact',
+                  onTap: saving.contains('dnd') ? null : () => toggle('dnd'),
                   trailing:
                       spinner('dnd') ??
                       Switch.adaptive(
                         value: data!['is_dnd'] == true,
+                        activeTrackColor: T.unread,
                         onChanged: (_) => toggle('dnd'),
                       ),
                 ),
@@ -537,8 +511,8 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
                 DetailRow(
                   icon: Icons.block,
                   label: data!['is_blocked'] == true
-                      ? 'Unblock contact'
-                      : 'Block contact',
+                      ? 'Unblock $shown'
+                      : 'Block $shown',
                   destructive: data!['is_blocked'] != true,
                   trailing: spinner('block'),
                   onTap: saving.contains('block')

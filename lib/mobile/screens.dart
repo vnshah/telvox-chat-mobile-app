@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'account_menu.dart';
 import 'contact_actions.dart';
 import 'conversation_window.dart';
 import 'editors.dart';
@@ -13,7 +14,6 @@ import 'call_push.dart';
 import 'calls.dart';
 import 'chat.dart';
 import 'models.dart';
-import 'perf_log.dart';
 import 'realtime.dart';
 import 'list_sync.dart';
 import 'message_content.dart';
@@ -623,10 +623,14 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
       (_) async {
         unawaited(widget.session.calls.ready());
         try {
-          await widget.session.api.post('presence/heartbeat');
+          await widget.session.api.post('presence/heartbeat', {
+            'open_contact_id': ?widget.session.openContactId,
+          });
         } catch (_) {
           /* Next foreground heartbeat retries presence only. */
         }
+        // A chat left without the server hearing it would hide its badge.
+        unawaited(widget.session.releaseOpenChats());
       },
     );
   }
@@ -640,6 +644,7 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       startHeartbeat();
       widget.session.realtime.start();
+      unawaited(widget.session.releaseOpenChats());
     } else if (!widget.session.calls.busy) {
       // A call in progress keeps the socket and its state; anything else
       // stops ringing here until the app is back.
@@ -704,15 +709,19 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
   Future<void> account() async {
     final name = '${widget.session.user?['name'] ?? 'Account'}';
     if (isCupertino(context)) {
-      final out = await showCupertinoModalPopup<bool>(
+      final out = await showCupertinoModalPopup<String>(
         context: context,
         builder: (popup) => CupertinoActionSheet(
           title: Text(name),
           message: Text('${widget.session.user?['email'] ?? ''}'),
           actions: [
             CupertinoActionSheetAction(
+              onPressed: () => Navigator.pop(popup, 'sound'),
+              child: const Text('Notification Sound'),
+            ),
+            CupertinoActionSheetAction(
               isDestructiveAction: true,
-              onPressed: () => Navigator.pop(popup, true),
+              onPressed: () => Navigator.pop(popup, 'signout'),
               child: const Text('Sign Out'),
             ),
           ],
@@ -722,7 +731,13 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
           ),
         ),
       );
-      if (out == true) await signOut();
+      if (!mounted) return;
+      switch (out) {
+        case 'sound':
+          await chooseNotificationSound(context, widget.session);
+        case 'signout':
+          await signOut();
+      }
     }
   }
 
@@ -732,13 +747,6 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
     final mode = this.mode;
     final tickets = mode == InboxMode.tickets;
     final title = tickets ? 'Tickets' : 'Inbox';
-    final initials = '${session.user?['name'] ?? '?'}'
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((p) => p.isNotEmpty)
-        .take(2)
-        .map((p) => p[0].toUpperCase())
-        .join();
     final body = mode == InboxMode.none
         ? _NoInbox(canSwitch: session.canSwitchNumber)
         : Column(
@@ -863,56 +871,9 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
                 ),
               ),
             ),
-          PopupMenuButton<String>(
-            tooltip: 'Account',
-            position: PopupMenuPosition.under,
-            onSelected: (v) {
-              if (v == 'signout') signOut();
-              if (v == 'perf') openPage(context, const PerfLogPage());
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem(
-                enabled: false,
-                child: Text(
-                  '${session.user?['name'] ?? 'Account'}',
-                  style: const TextStyle(
-                    color: T.ink,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'perf',
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.speed_outlined),
-                  title: Text('Performance log'),
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'signout',
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.logout),
-                  title: Text('Sign out'),
-                ),
-              ),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 12, 0),
-              child: CircleAvatar(
-                radius: 16,
-                backgroundColor: T.selected,
-                child: Text(
-                  initials.isEmpty ? '?' : initials,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: T.onSelected,
-                  ),
-                ),
-              ),
-            ),
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: AccountMenu(session: session, onSignOut: signOut),
           ),
         ],
       ),
@@ -994,6 +955,9 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   int serial = 0;
   // Agent names by id, for the assignee initials on each row.
   Map<int, String> people = {};
+
+  /// A tapped row waits a moment, showing its highlight, before it opens.
+  bool opening = false;
 
   /// What an empty tab says: what is missing, not that something failed.
   (String, String) get emptyText {
@@ -1534,6 +1498,15 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
                       ticket: ticket,
                       people: people,
                       onTap: () async {
+                        // The row lights up first, then the chat opens, as
+                        // on WhatsApp; a second tap meanwhile does nothing.
+                        if (opening) return;
+                        opening = true;
+                        await Future<void>.delayed(
+                          const Duration(milliseconds: 120),
+                        );
+                        opening = false;
+                        if (!context.mounted) return;
                         if (ticket) {
                           await openPage(
                             context,
@@ -1793,20 +1766,28 @@ class LiveConversationRow extends StatelessWidget {
         key: ValueKey('live-row-${item['id']}'),
         onTap: onTap,
         onLongPress: onLongPress,
+        // WhatsApp's pressed row: a light grey wash and a plain ripple.
+        splashFactory: InkRipple.splashFactory,
+        highlightColor: const Color(0x14000000),
+        splashColor: const Color(0x0F000000),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
           child: Row(
             children: [
               // Recently active customers get WhatsApp's green dot.
               ticket
-                  ? Avatar(name, size: 46)
+                  ? Avatar(name, size: 46, seed: contact['id'])
                   // Green while WhatsApp's conversation window is open.
                   : ValueListenableBuilder(
                       valueListenable: knownWindows,
                       builder: (_, _, _) => ConversationWindow(
                         expiresAt: rowWindowExpires(contact, [last]),
-                        builder: (_, open) =>
-                            Avatar(name, size: 46, online: open),
+                        builder: (_, open) => Avatar(
+                          name,
+                          size: 46,
+                          seed: contact['id'],
+                          online: open,
+                        ),
                       ),
                     ),
               const SizedBox(width: 12),
@@ -1825,8 +1806,9 @@ class LiveConversationRow extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 15,
+                              // Bold while it has unread messages.
                               fontWeight: strong
-                                  ? FontWeight.w600
+                                  ? FontWeight.w700
                                   : FontWeight.w500,
                             ),
                           ),
@@ -1834,9 +1816,9 @@ class LiveConversationRow extends StatelessWidget {
                         const SizedBox(width: 10),
                         Text(
                           time,
-                          style: mono(
-                            size: 11,
-                            color: strong ? T.green : T.muted,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: strong ? T.unread : T.listTime,
                           ),
                         ),
                       ],
@@ -1935,7 +1917,7 @@ class LiveConversationRow extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(horizontal: 6),
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: T.green,
+                              color: T.unread,
                               borderRadius: BorderRadius.circular(11),
                             ),
                             child: Text(

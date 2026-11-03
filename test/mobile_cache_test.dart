@@ -618,7 +618,10 @@ void main() {
         requests.add(r);
         if (r.path == 'inbox/sync') {
           if (!serverHasSync) {
-            return answer(r, h, {'success': false, 'message': 'Not found'}, 404);
+            return answer(r, h, {
+              'success': false,
+              'message': 'Not found',
+            }, 404);
           }
           syncAnswers++;
           return answer(r, h, {
@@ -654,15 +657,19 @@ void main() {
           .subtract(const Duration(hours: 24))
           .toIso8601String();
       for (final id in [12, 13]) {
-        await cache.putMessages(ConversationSync.keyFor(7, id), [
-          {
-            'id': 1,
-            'type': 1,
-            'message_body': 'Sent yesterday',
-            'message_status': 1,
-            'created_at': '2026-11-02T09:00:00Z',
-          },
-        ], {'sync': yesterday, 'synced_at': yesterday});
+        await cache.putMessages(
+          ConversationSync.keyFor(7, id),
+          [
+            {
+              'id': 1,
+              'type': 1,
+              'message_body': 'Sent yesterday',
+              'message_status': 1,
+              'created_at': '2026-11-02T09:00:00Z',
+            },
+          ],
+          {'sync': yesterday, 'synced_at': yesterday},
+        );
       }
     }
 
@@ -670,7 +677,10 @@ void main() {
 
     final moved = [
       for (final id in [12, 13])
-        {'id': id, 'last_message_date': DateTime.now().toUtc().toIso8601String()},
+        {
+          'id': id,
+          'last_message_date': DateTime.now().toUtc().toIso8601String(),
+        },
     ];
 
     test('new messages saved whole, ticks patched, in one request', () async {
@@ -678,13 +688,17 @@ void main() {
       await session.conversations.prefetch(moved);
       expect(requests.where((r) => r.path == 'inbox/sync'), hasLength(1));
       expect(requests.where((r) => r.path == 'inbox/messages'), isEmpty);
-      final twelve = (await cache.conversation(ConversationSync.keyFor(7, 12)))!;
+      final twelve = (await cache.conversation(
+        ConversationSync.keyFor(7, 12),
+      ))!;
       expect(
         twelve.messages.map((m) => m['message_body']),
         contains('While you were away'),
       );
       expect(twelve.cursor['sync'], '2026-11-03T10:00:00Z');
-      final thirteen = (await cache.conversation(ConversationSync.keyFor(7, 13)))!;
+      final thirteen = (await cache.conversation(
+        ConversationSync.keyFor(7, 13),
+      ))!;
       expect(thirteen.messages.single['message_status'], 3);
       expect(thirteen.messages.single['message_body'], 'Sent yesterday');
       session.dispose();
@@ -695,7 +709,9 @@ void main() {
       await session.conversations.prefetch(moved);
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(
-        requests.where((r) => r.path == 'inbox/messages').map((r) => object(r.data)['contact_id']),
+        requests
+            .where((r) => r.path == 'inbox/messages')
+            .map((r) => object(r.data)['contact_id']),
         [12, 13],
       );
       expect(ConversationSync.accountSyncMissing, isTrue);
@@ -716,7 +732,9 @@ void main() {
         }),
       });
       expect(requests, isEmpty);
-      final twelve = (await cache.conversation(ConversationSync.keyFor(7, 12)))!;
+      final twelve = (await cache.conversation(
+        ConversationSync.keyFor(7, 12),
+      ))!;
       expect(twelve.messages.map((m) => m['message_body']), contains('Pushed'));
       // Its cursor is untouched: the chat still asks for anything else.
       expect(twelve.cursor['sync'], isNot('2026-11-03T10:00:00Z'));

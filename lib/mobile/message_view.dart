@@ -83,6 +83,7 @@ class LiveMessageView extends StatelessWidget {
             decoration: BoxDecoration(
               color: T.incoming,
               borderRadius: BorderRadius.circular(8),
+              boxShadow: T.bubbleShadow,
             ),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),

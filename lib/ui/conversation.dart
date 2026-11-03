@@ -1010,10 +1010,11 @@ class ChatWallpaper extends CustomPainter {
   const ChatWallpaper();
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(Offset.zero & size, Paint()..color = Colors.white);
-    // A faint trace of the Telvox motif; the bubbles carry the contrast.
+    canvas.drawRect(Offset.zero & size, Paint()..color = T.chatWallpaper);
+    // A faint trace of the Telvox motif, as WhatsApp's doodles sit on its
+    // beige; the bubbles carry the contrast.
     final line = Paint()
-      ..color = T.brass.withValues(alpha: .07)
+      ..color = T.brass.withValues(alpha: .11)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.1
       ..strokeCap = StrokeCap.round;

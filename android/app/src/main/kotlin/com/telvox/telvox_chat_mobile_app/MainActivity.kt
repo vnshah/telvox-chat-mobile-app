@@ -1,8 +1,12 @@
 package com.telvox.telvox_chat_mobile_app
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.media.AudioManager
+import android.media.Ringtone
+import android.media.RingtoneManager
 import android.media.ToneGenerator
+import android.net.Uri
 import android.os.PowerManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -14,10 +18,13 @@ import io.flutter.plugin.common.MethodChannel
  *    voice-call stream so it comes out of the earpiece like a phone call's;
  *  - proximity: the screen turns off at the ear during a call, so a cheek
  *    cannot tap Mute or End call.
+ * And the notification sound picker's preview, played as a notification is
+ * (same stream, same volume), so what the user hears is what will ring.
  */
 class MainActivity : FlutterActivity() {
     private var tone: ToneGenerator? = null
     private var proximity: PowerManager.WakeLock? = null
+    private var preview: Ringtone? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -35,6 +42,42 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "telvox/notification_sound")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    // A raw resource name (telvox_chime), or null for the phone's default.
+                    "preview" -> {
+                        playPreview(call.arguments as String?)
+                        result.success(null)
+                    }
+                    "stop" -> {
+                        stopPreview()
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun playPreview(resource: String?) {
+        stopPreview()
+        val uri = if (resource == null) {
+            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        } else {
+            Uri.parse("android.resource://$packageName/raw/$resource")
+        }
+        preview = RingtoneManager.getRingtone(this, uri)?.also {
+            it.audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+            it.play()
+        }
+    }
+
+    private fun stopPreview() {
+        preview?.stop()
+        preview = null
     }
 
     private fun startRingback() {
@@ -70,6 +113,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        stopPreview()
         stopRingback()
         releaseProximity()
         super.onDestroy()

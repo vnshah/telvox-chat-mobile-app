@@ -75,6 +75,24 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Send your current location to a customer in a chat.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Telvox Chat records voice notes while you hold the microphone button.</string>
+	<string>Telvox Chat uses the microphone for voice notes you record and for WhatsApp calls with customers.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+		<string>audio</string>
+	</array>
+	<key>AppGroupId</key>
+	<string>$(CUSTOM_GROUP_ID)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ShareMedia-$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

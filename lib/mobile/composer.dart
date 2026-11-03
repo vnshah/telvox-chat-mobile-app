@@ -518,6 +518,7 @@ class _ChatComposerState extends State<ChatComposer>
       decoration: BoxDecoration(
         color: T.incoming,
         borderRadius: BorderRadius.circular(24),
+        boxShadow: T.bubbleShadow,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -656,12 +657,10 @@ class _ChatComposerState extends State<ChatComposer>
       child: AnimatedOpacity(
         opacity: widget.enabled ? 1 : .45,
         duration: motion,
-        child: Container(
+        // No bar of its own: the white pill floats on the chat's beige, as
+        // WhatsApp's does, so its rounded ends show.
+        child: Padding(
           padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            border: Border(top: BorderSide(color: T.hairline)),
-          ),
           child: voice == VoiceStage.locked
               ? LockedRecordingPanel(
                   elapsed: elapsed,

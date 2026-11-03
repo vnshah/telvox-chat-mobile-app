@@ -318,6 +318,8 @@ void main() {
       expect(find.text('VIP'), findsOneWidget);
       // The subject is edited by tapping it in the ticket header.
       await tester.scrollUntilVisible(find.text('Old subject'), -300);
+      await tester.ensureVisible(find.text('Old subject'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Old subject'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextFormField), 'Changed subject');
@@ -362,8 +364,11 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      // Edited in a sheet over the contact page, no separate screen.
-      await tester.tap(find.byTooltip('Edit name'));
+      // Edited in a sheet over the contact page, from its ⋮ menu as on
+      // WhatsApp; no separate screen.
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Edit name'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextFormField), 'Priya Sharma');
       await tester.tap(find.text('Save'));

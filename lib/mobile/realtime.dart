@@ -242,6 +242,12 @@ class Realtime extends ChangeNotifier {
     _socket = null;
     _socketId = null;
     _joined.clear();
+    // A new connection rejoins every channel in use from scratch.
+    for (final timer in _resubscribe.values) {
+      timer.cancel();
+    }
+    _resubscribe.clear();
+    _failures.clear();
   }
 
   void _receive(dynamic raw) {
@@ -272,6 +278,7 @@ class Realtime extends ChangeNotifier {
       case 'pusher_internal:subscription_succeeded':
         final channel = '${message['channel'] ?? ''}';
         _joined.add(channel);
+        _failures.remove(channel);
         if (!_everJoined.add(channel)) {
           for (final sub in [...?_listeners[channel]]) {
             sub.onResync?.call();
@@ -289,7 +296,7 @@ class Realtime extends ChangeNotifier {
           );
         }
       case 'pusher:subscription_error':
-        break;
+        _resubscribeLater('${message['channel'] ?? ''}');
       default:
         final channel = '${message['channel'] ?? ''}';
         if (event.startsWith('pusher')) return;
@@ -317,9 +324,41 @@ class Realtime extends ChangeNotifier {
       }
       _write('pusher:subscribe', {'channel': channel, 'auth': auth['auth']});
     } catch (_) {
-      // Not authorised for this channel (or offline): the screen still works
-      // through its own refreshes; the next reconnect tries again.
+      // Not authorised for this channel, or a request that failed (offline,
+      // a timeout): the screen still works through its own refreshes, and
+      // the channel is asked for again shortly, not only after a reconnect.
+      if (connection == _connection) _resubscribeLater(channel);
     }
+  }
+
+  /// Channels waiting to be asked for again, and how often each has failed.
+  final _resubscribe = <String, Timer>{};
+  final _failures = <String, int>{};
+
+  /// Retries a channel a screen is listening to after 5 s, 15 s, then every
+  /// minute. Without it, one failed sign-in left (say) the inbox list deaf to
+  /// new messages until the socket happened to reconnect.
+  void _resubscribeLater(String channel) {
+    if (channel.isEmpty || _resubscribe.containsKey(channel)) return;
+    final failures = _failures[channel] = (_failures[channel] ?? 0) + 1;
+    final connection = _connection;
+    _resubscribe[channel] = Timer(
+      Duration(
+        seconds: switch (failures) {
+          1 => 5,
+          2 => 15,
+          _ => 60,
+        },
+      ),
+      () {
+        _resubscribe.remove(channel);
+        final wanted = _listeners[channel]?.any((sub) => !sub.passive) ?? false;
+        if (connection != _connection || !wanted || _joined.contains(channel)) {
+          return;
+        }
+        _subscribe(channel);
+      },
+    );
   }
 
   void _write(String event, Json data) {

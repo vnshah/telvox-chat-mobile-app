@@ -878,6 +878,9 @@ class _CallScreenState extends State<CallScreen> {
               .take(2)
               .map((w) => w.characters.first.toUpperCase())
               .join();
+    // The caller's colour, as their inbox row and chat show it.
+    final id = c.contact['id'];
+    final colors = avatarColors(id == null ? name : '$id');
     // Back leaves the call running; the ongoing-call bar brings it back.
     return PopScope(
       canPop: c.state != CallState.incoming,
@@ -924,13 +927,14 @@ class _CallScreenState extends State<CallScreen> {
                   const SizedBox(height: 32),
                   CircleAvatar(
                     radius: 58,
-                    backgroundColor: T.greenWash,
+                    backgroundColor: colors.$1,
                     child: Text(
                       initials,
-                      style: const TextStyle(
-                        fontSize: 36,
-                        fontWeight: FontWeight.w500,
-                        color: T.forest,
+                      style: TextStyle(
+                        fontSize: avatarLetterSize(116, initials),
+                        fontWeight: FontWeight.w600,
+                        height: 1,
+                        color: colors.$2,
                       ),
                     ),
                   ),

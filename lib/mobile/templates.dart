@@ -248,7 +248,7 @@ class _TemplateSendState extends State<TemplateSend> {
                   title: 'Preview',
                   children: [
                     Container(
-                      color: T.incoming,
+                      color: T.wash,
                       padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
                       alignment: Alignment.centerRight,
                       child: TemplateBubble(

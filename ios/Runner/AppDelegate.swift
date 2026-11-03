@@ -1,6 +1,7 @@
 import Flutter
 import GoogleMaps
 import UIKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -15,6 +16,9 @@ import UIKit
     {
       GMSServices.provideAPIKey(key)
     }
+    // flutter_local_notifications shows new messages that arrive while the
+    // app is open, and reports taps on them, through this delegate.
+    UNUserNotificationCenter.current().delegate = self as? UNUserNotificationCenterDelegate
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

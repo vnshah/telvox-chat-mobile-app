@@ -927,6 +927,81 @@ class AppMenuButton<T> extends StatelessWidget {
   }
 }
 
+/// One row of an [OverflowMenu].
+typedef OverflowItem = ({String label, VoidCallback onPressed});
+
+/// An app bar's ⋮ menu as WhatsApp draws it on Android: Material's own menu,
+/// as a white card with a fine edge and a crisp, low shadow, and roomy
+/// text-only rows. [header] (who is signed in) sits above the rows.
+class OverflowMenu extends StatelessWidget {
+  const OverflowMenu({
+    super.key,
+    required this.items,
+    this.header,
+    this.tooltip = 'More options',
+  });
+  final List<OverflowItem> items;
+  final Widget? header;
+  final String tooltip;
+
+  static const _ink = Color(0xFF111B21);
+
+  @override
+  Widget build(BuildContext context) {
+    final row = MenuItemButton.styleFrom(
+      foregroundColor: _ink,
+      textStyle: const TextStyle(
+        fontSize: 16,
+        fontWeight: FontWeight.w400,
+        letterSpacing: 0,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      minimumSize: const Size(196, 48),
+      shape: const RoundedRectangleBorder(),
+    );
+    final header = this.header;
+    return MenuAnchor(
+      style: MenuStyle(
+        backgroundColor: const WidgetStatePropertyAll(Colors.white),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        shadowColor: const WidgetStatePropertyAll(Color(0x66000000)),
+        elevation: const WidgetStatePropertyAll(3),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(vertical: 8),
+        ),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: const BorderSide(color: Color(0x14000000), width: .5),
+          ),
+        ),
+      ),
+      alignmentOffset: const Offset(-8, 4),
+      menuChildren: [
+        if (header != null) ...[
+          header,
+          const Divider(height: 1, thickness: .5, color: Color(0x1F000000)),
+          const SizedBox(height: 4),
+        ],
+        for (final item in items)
+          MenuItemButton(
+            style: row,
+            onPressed: item.onPressed,
+            child: Text(item.label),
+          ),
+      ],
+      builder: (context, menu, _) => IconButton(
+        tooltip: tooltip,
+        onPressed: () {
+          FocusManager.instance.primaryFocus?.unfocus();
+          menu.isOpen ? menu.close() : menu.open();
+        },
+        icon: const Icon(Icons.more_vert),
+      ),
+    );
+  }
+}
+
 class AppListTile extends StatelessWidget {
   const AppListTile({
     super.key,

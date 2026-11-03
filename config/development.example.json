@@ -1,4 +1,10 @@
 {
   "APP_ENV": "development",
-  "API_BASE_URL": "https://chat.telvox.dev"
+  "API_BASE_URL": "https://chat.telvox.dev",
+  "FIREBASE_API_KEY": "",
+  "FIREBASE_APP_ID": "",
+  "FIREBASE_MESSAGING_SENDER_ID": "",
+  "FIREBASE_PROJECT_ID": "",
+  "FIREBASE_IOS_API_KEY": "",
+  "FIREBASE_IOS_APP_ID": ""
 }

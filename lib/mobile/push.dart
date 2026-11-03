@@ -8,6 +8,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../core/config/app_config.dart';
 import 'api.dart';
 import 'call_push.dart';
+import 'notification_sound.dart';
 
 /// What a push carries, whichever way it reached the app.
 class PushMessage {
@@ -36,7 +37,10 @@ abstract class PushTransport {
   Stream<PushMessage> get foreground;
   Stream<PushMessage> get opened;
   Future<PushMessage?> launchMessage();
-  Future<void> show(PushMessage message);
+  Future<void> show(PushMessage message, NotificationSound sound);
+
+  /// Makes [sound] the one new messages play from now on.
+  Future<void> useSound(NotificationSound sound);
   Future<void> forget();
 }
 
@@ -67,6 +71,7 @@ class PushService {
         return;
       }
       _started = true;
+      await transport.useSound(session.notificationSound.value);
       _subscriptions
         ..add(transport.tokenRefresh.listen(_register))
         ..add(transport.foreground.listen(_foreground))
@@ -77,20 +82,28 @@ class PushService {
     await _register(await transport.token());
   }
 
+  /// Tells the server where this phone gets pushes and which sound its new
+  /// messages ring with, so pushes posted while the app is closed use the
+  /// sound's channel (`messages_<sound>`) too.
   Future<void> _register(String? token) async {
     if (token == null || token.isEmpty || !session.signedIn) return;
-    if (token == _registered) return;
+    final sound = session.notificationSound.value;
+    final registration = '$token|${sound.name}';
+    if (registration == _registered) return;
     try {
       await session.api.request(
         'me/push-token',
         method: 'PUT',
-        data: {'token': token, 'provider': 'fcm'},
+        data: {'token': token, 'provider': 'fcm', 'sound': sound.serverName},
       );
-      _registered = token;
+      _registered = registration;
+      _token = token;
     } catch (_) {
-      // Retried on the next sign-in, number switch or token refresh.
+      // Retried on the next sign-in, number switch, token refresh or sound.
     }
   }
+
+  String? _token;
 
   /// Nothing to announce for the customer whose chat is on screen, whether
   /// it is their shared-inbox chat or one of their ticket conversations.
@@ -106,7 +119,20 @@ class PushService {
     unawaited(session.conversations.arrived(message.data));
     final contact = message.contactKey;
     if (contact != null && session.visibleContacts.contains(contact)) return;
-    _transport?.show(message);
+    _transport?.show(message, session.notificationSound.value);
+  }
+
+  /// A new sound applies once push has started; before then, start uses it.
+  /// The channel is made before the server hears of it, so a push for the
+  /// new sound never names a channel the phone does not have yet.
+  Future<void> useSound(NotificationSound sound) async {
+    if (!_started) return;
+    try {
+      await _transport?.useSound(sound);
+    } catch (_) {
+      // Shown pushes keep the previous sound until the next start.
+    }
+    await _register(_token);
   }
 
   void _open(PushMessage message) {
@@ -118,6 +144,7 @@ class PushService {
   /// too so a different account on this phone gets a fresh one.
   Future<void> disable() async {
     _registered = null;
+    _token = null;
     try {
       await _transport?.forget();
     } catch (_) {
@@ -148,9 +175,9 @@ class FirebasePushTransport implements PushTransport {
   Future<bool> start() async {
     if (Firebase.apps.isEmpty) {
       await Firebase.initializeApp(
-        options: const FirebaseOptions(
-          apiKey: AppConfig.firebaseApiKey,
-          appId: AppConfig.firebaseAppId,
+        options: FirebaseOptions(
+          apiKey: AppConfig.firebasePlatformApiKey,
+          appId: AppConfig.firebasePlatformAppId,
           messagingSenderId: AppConfig.firebaseSenderId,
           projectId: AppConfig.firebaseProjectId,
         ),
@@ -175,6 +202,11 @@ class FirebasePushTransport implements PushTransport {
           AndroidFlutterLocalNotificationsPlugin
         >()
         ?.createNotificationChannel(channel);
+    try {
+      await installIosSounds();
+    } catch (_) {
+      // Without them an iPhone plays its default sound.
+    }
     return true;
   }
 
@@ -217,24 +249,63 @@ class FirebasePushTransport implements PushTransport {
         : null;
   }
 
+  /// The channel new messages ring on with [sound]: one of the app's own,
+  /// or the server's [channel] for the phone's default sound. The server's
+  /// channel also carries the notifications it posts while the app is
+  /// closed for a phone that picked the default.
+  static AndroidNotificationChannel soundChannel(NotificationSound sound) {
+    final resource = sound.resource;
+    if (resource == null) return channel;
+    return AndroidNotificationChannel(
+      sound.channelId,
+      'New messages',
+      description: 'New customer messages, with the ${sound.label} sound',
+      importance: Importance.high,
+      sound: RawResourceAndroidNotificationSound(resource),
+    );
+  }
+
   @override
-  Future<void> show(PushMessage message) => _local.show(
-    id: _id++,
-    title: message.title,
-    body: message.body,
-    payload: jsonEncode(message.data),
-    notificationDetails: NotificationDetails(
-      android: AndroidNotificationDetails(
-        channel.id,
-        channel.name,
-        channelDescription: channel.description,
-        importance: Importance.high,
-        priority: Priority.high,
-        icon: 'ic_stat_telvox',
+  Future<void> useSound(NotificationSound sound) async {
+    final android = _local
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    if (android == null) return;
+    await android.createNotificationChannel(soundChannel(sound));
+    // One "New messages" entry in the phone's settings, not one per sound.
+    // The server's own channel always stays.
+    for (final other in NotificationSound.values) {
+      if (other != sound && !other.isSystem) {
+        await android.deleteNotificationChannel(channelId: other.channelId);
+      }
+    }
+  }
+
+  @override
+  Future<void> show(PushMessage message, NotificationSound sound) {
+    final ring = soundChannel(sound);
+    return _local.show(
+      id: _id++,
+      title: message.title,
+      body: message.body,
+      payload: jsonEncode(message.data),
+      notificationDetails: NotificationDetails(
+        android: AndroidNotificationDetails(
+          ring.id,
+          ring.name,
+          channelDescription: ring.description,
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: 'ic_stat_telvox',
+          sound: ring.sound,
+        ),
+        iOS: DarwinNotificationDetails(
+          sound: sound.resource == null ? null : '${sound.resource}.wav',
+        ),
       ),
-      iOS: const DarwinNotificationDetails(),
-    ),
-  );
+    );
+  }
 
   @override
   // ignore: deprecated_member_use

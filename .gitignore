@@ -63,3 +63,7 @@ android/maps.properties
 
 # Local-only handoff details (test contact, IDs)
 /HANDOFF.local.md
+
+# macOS metadata copied over with the project, and Android's build output.
+._*
+android/build/

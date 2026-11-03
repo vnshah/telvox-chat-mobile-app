@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
+import 'page_slide.dart';
 import 'platform.dart';
 export 'platform.dart';
 
@@ -47,12 +48,28 @@ abstract final class T {
   static const iosBar = Color(0xF2FAF8F4);
   static const iosSeparator = Color(0x293C3228);
 
-  /// The web inbox's sage: your messages stay green on the white chat.
-  static const outgoing = Color(0xFFD5E8D6);
+  /// WhatsApp's own sent-message green, so your messages look as they do on
+  /// WhatsApp.
+  static const outgoing = Color(0xFFD9FDD3);
 
-  /// A customer's message, and the day and activity pills: a light warm grey
-  /// that stands apart from the white chat.
-  static const incoming = Color(0xFFF4F2EE);
+  /// A customer's message, the day and activity pills and the composer:
+  /// white on the chat's beige, as on WhatsApp.
+  static const incoming = Colors.white;
+
+  /// WhatsApp's warm beige behind a conversation.
+  static const chatWallpaper = Color(0xFFEFEAE2);
+
+  /// The chat list's times as WhatsApp shows them: grey, or WhatsApp's green
+  /// (with the unread count in the same green) while a chat has unread
+  /// messages.
+  static const listTime = Color(0xFF636466);
+  static const unread = Color(0xFF1DAA61);
+
+  /// WhatsApp's faint lift under bubbles, pills and the composer on the
+  /// beige: one pixel down, barely blurred.
+  static const bubbleShadow = [
+    BoxShadow(color: Color(0x210B141A), offset: Offset(0, 1), blurRadius: .5),
+  ];
 
   /// Hairlines between inbox rows and around the chat's bars.
   static const hairline = Color(0xFFEFECE7);
@@ -136,6 +153,14 @@ abstract final class T {
       fontFamily: family,
       fontFamilyFallback: const ['Geist', 'Noto Color Emoji'],
       cupertinoOverrideTheme: cupertino,
+      // Android pages slide in from the right, as WhatsApp's do; iOS keeps
+      // its own slide.
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: SlidePageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        },
+      ),
       splashFactory: apple ? NoSplash.splashFactory : InkSparkle.splashFactory,
       highlightColor: apple ? Colors.transparent : null,
       scaffoldBackgroundColor: apple ? iosGrouped : surface,
@@ -463,63 +488,118 @@ class Eyebrow extends StatelessWidget {
   );
 }
 
+/// Soft tints with a deep letter of the same hue, so each person is told
+/// apart at a glance and the letters stay readable on white screens. Hues
+/// that look alike are kept apart in the list.
+const avatarPalette = <(Color, Color)>[
+  (Color(0xFFF6DED3), Color(0xFF9A3F1F)), // terracotta
+  (Color(0xFFD6E4F5), Color(0xFF1F4F8A)), // blue
+  (Color(0xFFE6EBCB), Color(0xFF515D12)), // olive
+  (Color(0xFFEBDCEF), Color(0xFF74357F)), // plum
+  (Color(0xFFCFE8E6), Color(0xFF145F5A)), // teal
+  (Color(0xFFF7E7C4), Color(0xFF7F5300)), // amber
+  (Color(0xFFDEDDF5), Color(0xFF46409A)), // indigo
+  (Color(0xFFD5EBDD), Color(0xFF1F6B45)), // green
+  (Color(0xFFF5D9E0), Color(0xFF9B2C4B)), // rose
+  (Color(0xFFDDE3E8), Color(0xFF3B5062)), // slate
+];
+
+/// A person's tint and letter colour, picked by [key] (their contact id, or
+/// else their name): the same person has the same colour in the list, the
+/// chat, their details and on a call, and two people sharing a name differ.
+(Color, Color) avatarColors(String key) {
+  // FNV-1a, not String.hashCode (which Dart does not promise across runs).
+  var hash = 0x811c9dc5;
+  for (final unit in key.trim().toLowerCase().codeUnits) {
+    hash = ((hash ^ unit) * 0x01000193) & 0xffffffff;
+  }
+  // Then a final mix: contacts made one after another have ids one apart,
+  // which alone would land on neighbouring colours.
+  hash ^= hash >> 16;
+  hash = (hash * 0x85ebca6b) & 0xffffffff;
+  hash ^= hash >> 13;
+  hash = (hash * 0xc2b2ae35) & 0xffffffff;
+  hash ^= hash >> 16;
+  return avatarPalette[hash % avatarPalette.length];
+}
+
+/// Up to two initials: "Urmi Shah" → "US", "Rahil" → "R".
+String avatarInitials(String name) => name
+    .trim()
+    .split(RegExp(r'\s+'))
+    .where((s) => s.isNotEmpty)
+    .take(2)
+    .map((s) => s.characters.first)
+    .join()
+    .toUpperCase();
+
+/// Large initials read best: one letter fills more of the circle than two.
+double avatarLetterSize(double size, String initials) =>
+    size * (initials.characters.length > 1 ? .38 : .46);
+
 class Avatar extends StatelessWidget {
   const Avatar(
     this.name, {
     super.key,
     this.size = 46,
-    this.color = T.selected,
+    this.color,
+    this.seed,
     this.online = false,
   });
   final String name;
   final double size;
-  final Color color;
+
+  /// What picks the colour, such as the contact's id; the name by default.
+  final Object? seed;
+
+  /// A fixed fill; by default each name gets its own colour.
+  final Color? color;
   final bool online;
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: size,
-    height: size,
-    child: Stack(
-      children: [
-        Container(
-          width: size,
-          height: size,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          child: Text(
-            name
-                .trim()
-                .split(' ')
-                .where((s) => s.isNotEmpty)
-                .take(2)
-                .map((s) => s[0])
-                .join()
-                .toUpperCase(),
-            style: TextStyle(
-              fontSize: size * .28,
-              fontWeight: FontWeight.w600,
-              color: T.onSelected,
-            ),
-          ),
-        ),
-        if (online)
-          Positioned(
-            key: const ValueKey('online-dot'),
-            right: 1,
-            bottom: 1,
-            child: Container(
-              width: 12,
-              height: 12,
-              decoration: BoxDecoration(
-                color: T.green,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
+  Widget build(BuildContext context) {
+    final initials = avatarInitials(name);
+    final (fill, ink) = color == null
+        ? avatarColors(seed == null ? name : '$seed')
+        : (color!, T.onSelected);
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        children: [
+          Container(
+            width: size,
+            height: size,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: fill, shape: BoxShape.circle),
+            child: Text(
+              initials,
+              style: TextStyle(
+                fontSize: avatarLetterSize(size, initials),
+                fontWeight: FontWeight.w600,
+                height: 1,
+                color: ink,
               ),
             ),
           ),
-      ],
-    ),
-  );
+          if (online)
+            Positioned(
+              key: const ValueKey('online-dot'),
+              right: 1,
+              bottom: 1,
+              child: Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: T.green,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class Pill extends StatelessWidget {

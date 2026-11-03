@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 /// Public build configuration. Never put credentials in Dart defines.
 abstract final class AppConfig {
   static const environment = String.fromEnvironment(
@@ -19,9 +21,23 @@ abstract final class AppConfig {
   static const firebaseProjectId = String.fromEnvironment(
     'FIREBASE_PROJECT_ID',
   );
+  // iPhones are a separate app in the same Firebase project, with their own
+  // app id and API key (from its GoogleService-Info.plist).
+  static const firebaseIosApiKey = String.fromEnvironment(
+    'FIREBASE_IOS_API_KEY',
+  );
+  static const firebaseIosAppId = String.fromEnvironment('FIREBASE_IOS_APP_ID');
+  static bool get _ios =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
+  /// This platform's Firebase app.
+  static String get firebasePlatformApiKey =>
+      _ios ? firebaseIosApiKey : firebaseApiKey;
+  static String get firebasePlatformAppId =>
+      _ios ? firebaseIosAppId : firebaseAppId;
   static bool get firebaseConfigured =>
-      firebaseApiKey != '' &&
-      firebaseAppId != '' &&
+      firebasePlatformApiKey != '' &&
+      firebasePlatformAppId != '' &&
       firebaseSenderId != '' &&
       firebaseProjectId != '';
   static const preview = bool.fromEnvironment(

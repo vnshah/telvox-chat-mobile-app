@@ -118,6 +118,7 @@ flutter:
 
   assets:
     - assets/brand/
+    - assets/sounds/
     - assets/fonts/OFL.txt
     - assets/fonts/Roboto-OFL.txt
   fonts:

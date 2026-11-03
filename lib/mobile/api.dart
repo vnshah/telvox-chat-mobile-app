@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -10,6 +11,7 @@ import 'call_push.dart';
 import 'calls.dart';
 import 'conversation_sync.dart';
 import 'local_cache.dart';
+import 'notification_sound.dart';
 import 'perf_log.dart';
 import 'push.dart';
 import 'realtime.dart';
@@ -206,6 +208,94 @@ class MobileSession extends ChangeNotifier {
   /// Brings the busiest chats' copies up to date in the background.
   late final conversations = ConversationSync(this);
 
+  /// Chats this phone has told the server it has open, per number: contact
+  /// id → open count. The server counts no unread messages for a chat
+  /// someone is viewing, and it treats this phone as viewing while the app
+  /// is in use, so a "left" that never arrived (the app was swiped away or
+  /// lost its network in a chat) would keep that chat's badge from ever
+  /// showing. Kept on the phone until the server has heard each one left.
+  static const _openChatsKey = 'open_chats';
+  Future<void> _openChatsLock = Future.value();
+
+  Future<T> _withOpenChats<T>(
+    T Function(Map<String, Map<String, int>> chats) change,
+  ) {
+    final done = _openChatsLock.then((_) async {
+      final saved = object(decoded(await store.read(_openChatsKey)));
+      final chats = {
+        for (final e in saved.entries)
+          e.key: {
+            for (final c in object(e.value).entries)
+              if (number(c.value) case final int n when n > 0) c.key: n,
+          },
+      };
+      final result = change(chats);
+      chats.removeWhere((_, open) => open.isEmpty);
+      await store.write(_openChatsKey, jsonEncode(chats));
+      return result;
+    });
+    _openChatsLock = done.then((_) {}, onError: (_) {});
+    return done;
+  }
+
+  /// Tells the server this phone opened or left a chat, as the web inbox
+  /// does: messages arriving while it is open are not counted as unread.
+  Future<void> focusChat(int contactId, {required bool open}) async {
+    final waba = '${api.wabaId ?? ''}';
+    try {
+      if (open) {
+        await _withOpenChats((chats) {
+          final mine = chats.putIfAbsent(waba, () => {});
+          mine['$contactId'] = (mine['$contactId'] ?? 0) + 1;
+        });
+      }
+      await api.post('inbox/conversation/focus', {
+        open ? 'contact_id' : 'previous_contact_id': contactId,
+      });
+      if (!open) await _forgetOpen(waba, contactId);
+    } catch (_) {
+      // A "left" that did not arrive stays listed; releaseOpenChats retries.
+    }
+  }
+
+  Future<void> _forgetOpen(String waba, int contactId) =>
+      _withOpenChats((chats) {
+        final mine = chats[waba];
+        if (mine == null) return;
+        final left = (mine['$contactId'] ?? 0) - 1;
+        if (left > 0) {
+          mine['$contactId'] = left;
+        } else {
+          mine.remove('$contactId');
+        }
+      });
+
+  /// Tells the server again that this phone left any chat it still lists as
+  /// open but no longer shows: after a restart, on returning to the app, and
+  /// with the heartbeat. Chats on screen keep their own focus.
+  Future<void> releaseOpenChats() async {
+    final waba = '${api.wabaId ?? ''}';
+    if (api.token == null) return;
+    try {
+      final stale = await _withOpenChats(
+        (chats) => {
+          for (final e in (chats[waba] ?? const <String, int>{}).entries)
+            if (!visibleContacts.contains('contact:${e.key}')) e.key: e.value,
+        },
+      );
+      for (final MapEntry(key: id, value: times) in stale.entries) {
+        for (var i = 0; i < times; i++) {
+          await api.post('inbox/conversation/focus', {
+            'previous_contact_id': int.parse(id),
+          });
+          await _forgetOpen(waba, int.parse(id));
+        }
+      }
+    } catch (_) {
+      // Offline: the next heartbeat or return to the app tries again.
+    }
+  }
+
   /// Opens the cache for this server and account. A failure only costs speed.
   Future<void> _openCache() async {
     try {
@@ -227,6 +317,17 @@ class MobileSession extends ChangeNotifier {
   /// Push registration and taps; enabled by the signed-in home.
   late final push = PushService(this, transport: pushTransport);
 
+  /// What a new message sounds like on this phone, chosen in the account
+  /// menu and kept on the phone across sign-ins.
+  final notificationSound = ValueNotifier(NotificationSound.fallback);
+  static const _soundKey = 'notification_sound';
+
+  Future<void> setNotificationSound(NotificationSound sound) async {
+    notificationSound.value = sound;
+    await store.write(_soundKey, sound.name);
+    await push.useSound(sound);
+  }
+
   /// Tests replace WebRTC; the app uses the device's microphone and network.
   final CallMedia Function()? callMedia;
 
@@ -236,6 +337,16 @@ class MobileSession extends ChangeNotifier {
   /// `contact:12` / `ticket:7` while that chat is on screen, so a push for it
   /// is not shown on top of the conversation itself.
   String? visibleConversation;
+
+  /// The shared-inbox chat on screen, which the heartbeat names: the server
+  /// counts a phone as viewing a chat only while it keeps naming it, so a
+  /// phone that dies in a chat stops hiding its new messages within minutes.
+  int? get openContactId {
+    final visible = visibleConversation ?? '';
+    return visible.startsWith('contact:')
+        ? int.tryParse(visible.substring(8))
+        : null;
+  }
 
   /// `contact:12` for the customer of the chat on screen (shared inbox or
   /// ticket), so a push about them is not shown over their conversation.
@@ -332,6 +443,9 @@ class MobileSession extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
+      notificationSound.value = NotificationSound.from(
+        await store.read(_soundKey),
+      );
       final saved = object(decoded(await store.read(storageKey)));
       api.token = saved['token'] as String?;
       if (api.token != null) {
@@ -447,6 +561,7 @@ class MobileSession extends ChangeNotifier {
     try {
       config = await api.get('config');
       await _persist();
+      unawaited(releaseOpenChats());
     } catch (_) {
       api.wabaId = null;
       rethrow;
@@ -490,6 +605,7 @@ class MobileSession extends ChangeNotifier {
     await push.disable();
     await api.post('auth/logout');
     await store.delete(storageKey);
+    await store.delete(_openChatsKey).catchError((_) {});
     _expired();
     error = null;
   }
@@ -498,6 +614,7 @@ class MobileSession extends ChangeNotifier {
   void dispose() {
     api.onUnauthorized = null;
     conversationActivity.dispose();
+    notificationSound.dispose();
     realtime.dispose();
     push.dispose();
     calls.dispose();
