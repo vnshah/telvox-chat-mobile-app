@@ -56,6 +56,15 @@ void main() {
     session.dispose();
   }
 
+  bool doneEnabled() => find
+      .ancestor(
+        of: find.byIcon(Icons.check_rounded),
+        matching: find.byType(IconButton),
+      )
+      .evaluate()
+      .map((e) => (e.widget as IconButton).onPressed != null)
+      .first;
+
   int detailLoads() =>
       requests.where((r) => r.path == 'inbox/getContactDetails').length;
 
@@ -141,32 +150,39 @@ void main() {
     await close(tester, session);
   });
 
-  testWidgets('notes open as a list of previews, then in full', (tester) async {
+  testWidgets('notes list as previews and open in a full-screen editor', (
+    tester,
+  ) async {
     const long =
         'Called about the delivery window. She prefers mornings, and the '
         'gate code is 4417. Follow up on Friday with the revised quote.';
-    final saved = [
-      {
-        'id': 2,
-        'content': 'Sent the quote',
-        'user': {'name': 'Asha'},
-      },
-      {
-        'id': 1,
-        'content': long,
-        'user': {'name': 'Asha'},
-      },
-    ];
+    final first = {
+      'id': 1,
+      'content': long,
+      'user': {'name': 'Asha'},
+    };
+    var saved = [first];
     final session = await open(
       tester,
       (s) => ContactActionsPage(s, 12),
       (r) => switch ((r.method, r.path)) {
-        (_, 'inbox/getContactDetails') => details(notes: [saved[1]]),
-        ('GET', 'inbox/notes') => {
+        (_, 'inbox/getContactDetails') => details(notes: [first]),
+        ('GET', 'inbox/notes') => {'success': true, 'data': saved},
+        ('POST', 'inbox/notes') => {
           'success': true,
-          'data': [saved[1]],
+          'data': saved = [
+            if (r.data['note_id'] == null)
+              {
+                'id': 2,
+                'content': r.data['note'],
+                'user': {'name': 'Asha'},
+              },
+            for (final n in saved)
+              n['id'] == r.data['note_id']
+                  ? {...n, 'content': r.data['note']}
+                  : n,
+          ],
         },
-        ('POST', 'inbox/notes') => {'success': true, 'data': saved},
         _ => null,
       },
     );
@@ -174,33 +190,79 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('notes-row')));
     await tester.pumpAndSettle();
-    expect(find.text('Notes'), findsWidgets);
     // A preview, two lines at most.
-    final preview = tester.widget<Text>(find.text(long));
-    expect(preview.maxLines, 2);
+    expect(tester.widget<Text>(find.text(long)).maxLines, 2);
 
+    // Tapping a note opens it for editing, keyboard up.
     await tester.tap(find.text(long));
     await tester.pumpAndSettle();
-    expect(find.byType(SelectableText), findsOneWidget);
+    final editor = find.byKey(const ValueKey('note-editor'));
+    expect(tester.widget<TextField>(editor).focusNode!.hasFocus, isTrue);
+    expect(find.byTooltip('Undo'), findsOneWidget);
+    expect(find.byTooltip('Redo'), findsOneWidget);
+    // Nothing changed yet, so there is nothing for Done to save.
+    expect(doneEnabled(), isFalse);
+
+    // Undo puts back what was there; Redo brings the edit back.
+    await tester.enterText(editor, 'Gate code changed to 5520');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.byTooltip('Undo'));
+    await tester.pump();
+    expect(find.text(long), findsOneWidget);
+    await tester.tap(find.byTooltip('Redo'));
+    await tester.pump();
+    expect(find.text('Gate code changed to 5520'), findsOneWidget);
+
+    // Leaving saves the edit, and the list shows it at once.
     await tester.pageBack();
     await tester.pumpAndSettle();
+    final edit = requests.lastWhere(
+      (r) => r.path == 'inbox/notes' && r.method == 'POST',
+    );
+    expect(edit.data, containsPair('note_id', 1));
+    expect(find.text('Gate code changed to 5520'), findsOneWidget);
 
-    // Adding a note: a tall box whose text starts at the top.
+    // A new note: a blank page, saved with Done.
     await tester.tap(find.byTooltip('Add note'));
     await tester.pumpAndSettle();
-    final box = tester.widget<TextField>(find.byType(TextField));
-    expect(box.minLines, greaterThanOrEqualTo(6));
-    expect(box.textAlignVertical, TextAlignVertical.top);
-    expect(box.decoration?.hintText, contains('note'));
-    await tester.enterText(find.byType(TextField), 'Sent the quote');
-    await tester.tap(find.text('Save'));
+    expect(find.text('New note'), findsOneWidget);
+    expect(tester.widget<TextField>(editor).focusNode!.hasFocus, isTrue);
+    expect(doneEnabled(), isFalse);
+    await tester.enterText(editor, 'Sent the quote');
+    await tester.pump();
+    expect(doneEnabled(), isTrue);
+    await tester.tap(find.byTooltip('Done'));
     await tester.pumpAndSettle();
-    expect(find.text('Sent the quote'), findsOneWidget);
+    expect(find.text('Saved'), findsOneWidget);
+    expect(doneEnabled(), isFalse);
+    // More typing after Done edits that note, not a second one.
+    await tester.enterText(editor, 'Sent the quote on Monday');
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    final posts = requests
+        .where((r) => r.method == 'POST' && r.path == 'inbox/notes')
+        .toList();
+    expect(posts, hasLength(3));
+    expect(posts.last.data, containsPair('note_id', 2));
+    expect(find.text('Sent the quote on Monday'), findsOneWidget);
+
+    // An untouched note is not saved again.
+    await tester.tap(find.text('Sent the quote on Monday'));
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(
+      requests.where((r) => r.method == 'POST' && r.path == 'inbox/notes'),
+      hasLength(3),
+    );
 
     // Back on the contact, the notes row already counts it.
     await tester.pageBack();
     await tester.pumpAndSettle();
-    expect(find.textContaining('2 notes · Sent the quote'), findsOneWidget);
+    expect(
+      find.textContaining('2 notes · Sent the quote on Monday'),
+      findsOneWidget,
+    );
     expect(detailLoads(), 1);
     await close(tester, session);
   });

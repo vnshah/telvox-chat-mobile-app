@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
-import 'editors.dart';
+import 'editors.dart' show confirmAction;
 import 'message_content.dart' show readableText;
 import 'models.dart' show MobileClock;
 import 'screens.dart' show mobileNotice, openPage;
@@ -33,33 +33,6 @@ class ContactNotes {
 
   Future<void> delete(Json note) =>
       session.api.request('inbox/notes/${note['id']}', method: 'DELETE');
-}
-
-/// The note sheet: a tall box whose text and placeholder start at the top.
-/// The saved list, or null when it was closed without saving.
-Future<List<Json>?> editNote(
-  BuildContext context,
-  ContactNotes notes, {
-  Json? existing,
-}) async {
-  List<Json>? saved;
-  await showEditorSheet(
-    context,
-    title: existing == null ? 'Add note' : 'Edit note',
-    fields: [
-      EditField(
-        'note',
-        'Note',
-        value: existing?['content'],
-        required: true,
-        lines: 6,
-        hint: 'Write a note for your team. Customers never see it.',
-      ),
-    ],
-    save: (v) async =>
-        saved = await notes.save('${v['note']}'.trim(), existing: existing),
-  );
-  return saved;
 }
 
 String noteMeta(Json note) => [
@@ -121,27 +94,20 @@ class _NotesPageState extends State<NotesPage> {
     widget.onChanged?.call(next);
   }
 
-  Future<void> add() async {
-    final saved = await editNote(context, api);
-    if (saved != null && mounted) show(saved);
-  }
+  Future<void> add() => open(null);
 
-  Future<void> open(Json note) => openPage(
+  /// Opens [note], or a blank page for a new one, in the editor.
+  Future<void> open(Json? note) => openPage(
     context,
-    NoteDetailPage(
-      note,
-      onEdit: () async {
-        final saved = await editNote(context, api, existing: note);
-        if (saved == null || !mounted) return null;
-        show(saved);
-        return saved.firstWhere(
-          (n) => n['id'] == note['id'],
-          orElse: () => note,
-        );
+    NoteEditorPage(
+      api,
+      note: note,
+      known: {for (final n in notes) n['id']},
+      onSaved: (saved) {
+        if (mounted) show(saved);
       },
-      onDelete: () async {
-        await api.delete(note);
-        if (mounted) show([...notes.where((n) => n['id'] != note['id'])]);
+      onDeleted: (gone) {
+        if (mounted) show([...notes.where((n) => n['id'] != gone['id'])]);
       },
     ),
   );
@@ -241,79 +207,251 @@ class _NotesPageState extends State<NotesPage> {
   );
 }
 
-/// One note in full, with Edit and Delete.
-class NoteDetailPage extends StatefulWidget {
-  const NoteDetailPage(
-    this.note, {
+/// A note on its own screen, as the phone's Notes app keeps one: the
+/// keyboard is up at once, Undo and Redo sit at the top, and what was written
+/// is saved on the way out, when the app goes to the background, or with Done.
+class NoteEditorPage extends StatefulWidget {
+  const NoteEditorPage(
+    this.notes, {
     super.key,
-    required this.onEdit,
-    required this.onDelete,
+    this.note,
+    this.known = const {},
+    required this.onSaved,
+    this.onDeleted,
   });
-  final Json note;
+  final ContactNotes notes;
 
-  /// The note as saved, or null when the edit was dropped.
-  final Future<Json?> Function() onEdit;
-  final Future<void> Function() onDelete;
+  /// The note to edit; null starts a new one.
+  final Json? note;
+
+  /// Ids already listed, so a new note is told apart in the saved list.
+  final Set<Object?> known;
+
+  /// The contact's notes after each save.
+  final ValueChanged<List<Json>> onSaved;
+  final ValueChanged<Json>? onDeleted;
   @override
-  State<NoteDetailPage> createState() => _NoteDetailPageState();
+  State<NoteEditorPage> createState() => _NoteEditorPageState();
 }
 
-class _NoteDetailPageState extends State<NoteDetailPage> {
-  late Json note = widget.note;
-  bool deleting = false;
+enum _Saved { clean, saving, saved, failed }
 
-  Future<void> edit() async {
-    final saved = await widget.onEdit();
-    if (saved != null && mounted) setState(() => note = saved);
+class _NoteEditorPageState extends State<NoteEditorPage> {
+  late Json? note = widget.note;
+  late final text = TextEditingController(
+    text: readableText(widget.note?['content']),
+  );
+  final undo = UndoHistoryController();
+  final focus = FocusNode();
+  late String stored = text.text.trim();
+  var state = _Saved.clean;
+  var leaving = false;
+
+  /// Saves run one after another, so a new note is created only once.
+  Future<bool> queue = Future.value(true);
+  late final lifecycle = AppLifecycleListener(onHide: save);
+
+  @override
+  void initState() {
+    super.initState();
+    lifecycle;
+    text.addListener(changed);
+  }
+
+  @override
+  void dispose() {
+    lifecycle.dispose();
+    text.dispose();
+    undo.dispose();
+    focus.dispose();
+    super.dispose();
+  }
+
+  bool get dirty => text.text.trim() != stored;
+
+  /// Whether Done was last drawn as enabled.
+  var shownDirty = false;
+
+  void changed() {
+    final stale = dirty && state != _Saved.clean && state != _Saved.saving;
+    // Rebuild only when Done turns on or off, not on every keystroke.
+    if (!stale && dirty == shownDirty) return;
+    setState(() {
+      shownDirty = dirty;
+      if (stale) state = _Saved.clean;
+    });
+  }
+
+  /// True once the page's text is on the server, or there is nothing to keep.
+  Future<bool> save() => queue = queue.then((_) => write());
+
+  Future<bool> write() async {
+    final draft = text.text.trim();
+    // An empty page is not a note: nothing is created, and a cleared note
+    // keeps what it had until it is deleted.
+    if (draft.isEmpty || draft == stored) return true;
+    if (mounted) setState(() => state = _Saved.saving);
+    try {
+      final saved = await widget.notes.save(draft, existing: note);
+      final id = note?['id'];
+      note = saved.firstWhere(
+        (n) => id != null ? n['id'] == id : !widget.known.contains(n['id']),
+        orElse: () => saved.isEmpty ? {'content': draft} : saved.first,
+      );
+      stored = draft;
+      widget.onSaved(saved);
+      if (mounted) {
+        setState(() {
+          shownDirty = dirty;
+          state = dirty ? _Saved.clean : _Saved.saved;
+        });
+      }
+      return true;
+    } catch (e) {
+      if (mounted) {
+        setState(() => state = _Saved.failed);
+        mobileNotice(context, e);
+      }
+      return false;
+    }
+  }
+
+  Future<void> done() async {
+    focus.unfocus();
+    await save();
+  }
+
+  Future<void> leave() async {
+    if (leaving) return;
+    leaving = true;
+    final kept =
+        await save() ||
+        (mounted &&
+            await confirmAction(
+              context,
+              'Note not saved',
+              'Leave and lose the changes?',
+            ));
+    leaving = false;
+    if (kept && mounted) Navigator.pop(context);
   }
 
   Future<void> delete() async {
+    final existing = note;
+    if (existing == null || existing['id'] == null) return;
     if (!await confirmAction(context, 'Delete note', 'Delete this note?')) {
       return;
     }
-    setState(() => deleting = true);
     try {
-      await widget.onDelete();
+      await queue;
+      await widget.notes.delete(existing);
+      widget.onDeleted?.call(existing);
+      stored = text.text.trim();
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      if (mounted) {
-        setState(() => deleting = false);
-        mobileNotice(context, e);
-      }
+      if (mounted) mobileNotice(context, e);
     }
   }
 
+  String get status => switch (state) {
+    _Saved.saving => 'Saving…',
+    _Saved.saved => 'Saved',
+    _Saved.failed => 'Not saved',
+    _Saved.clean => note == null ? 'New note' : noteMeta(note!),
+  };
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: platformAppBar(
-      context,
-      title: const Text('Note'),
-      actions: [
-        AppIconButton(
-          tooltip: 'Edit note',
-          onPressed: deleting ? null : edit,
-          icon: const AppIcon(Icons.edit_outlined),
+  Widget build(BuildContext context) => PopScope(
+    canPop: false,
+    onPopInvokedWithResult: (didPop, _) {
+      if (!didPop) leave();
+    },
+    child: Scaffold(
+      appBar: platformAppBar(
+        context,
+        title: const Text(''),
+        actions: [
+          ValueListenableBuilder<UndoHistoryValue>(
+            valueListenable: undo,
+            builder: (context, value, _) => Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AppIconButton(
+                  tooltip: 'Undo',
+                  onPressed: value.canUndo ? undo.undo : null,
+                  icon: const AppIcon(Icons.undo_rounded),
+                ),
+                AppIconButton(
+                  tooltip: 'Redo',
+                  onPressed: value.canRedo ? undo.redo : null,
+                  icon: const AppIcon(Icons.redo_rounded),
+                ),
+              ],
+            ),
+          ),
+          if (note?['id'] != null)
+            AppIconButton(
+              tooltip: 'Delete note',
+              onPressed: delete,
+              icon: const AppIcon(Icons.delete_outline_rounded),
+            ),
+          AppIconButton(
+            tooltip: 'Done',
+            // Only when there is something to save.
+            onPressed: dirty && state != _Saved.saving ? done : null,
+            icon: const AppIcon(Icons.check_rounded),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                status,
+                key: const ValueKey('note-status'),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: state == _Saved.failed ? T.danger : T.brass,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: TextField(
+                  key: const ValueKey('note-editor'),
+                  controller: text,
+                  undoController: undo,
+                  focusNode: focus,
+                  autofocus: true,
+                  expands: true,
+                  maxLines: null,
+                  keyboardType: TextInputType.multiline,
+                  textCapitalization: TextCapitalization.sentences,
+                  textAlignVertical: TextAlignVertical.top,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    height: 1.5,
+                    color: T.ink,
+                  ),
+                  decoration: const InputDecoration(
+                    hintText:
+                        'Write a note for your team. Customers never see it.',
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    filled: false,
+                    isCollapsed: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-        AppIconButton(
-          tooltip: 'Delete note',
-          onPressed: deleting ? null : delete,
-          icon: const AppIcon(Icons.delete_outline_rounded),
-        ),
-      ],
-    ),
-    body: ListView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-      children: [
-        Text(
-          noteMeta(note),
-          style: const TextStyle(fontSize: 13, color: T.brass),
-        ),
-        const SizedBox(height: 12),
-        SelectableText(
-          readableText(note['content']),
-          style: const TextStyle(fontSize: 16, height: 1.5, color: T.ink),
-        ),
-      ],
+      ),
     ),
   );
 }
