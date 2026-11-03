@@ -6,8 +6,9 @@ import 'api.dart';
 import 'editors.dart';
 import 'detail_layout.dart';
 import 'media.dart';
+import 'notes.dart';
 import 'message_content.dart' show readableText;
-import 'models.dart' show MobileClock, formatPhone;
+import 'models.dart' show formatPhone;
 import 'screens.dart' show failure, mobileNotice, openPage;
 import 'shared_media.dart';
 import 'call_history.dart';
@@ -25,7 +26,6 @@ class ContactActionsPage extends StatefulWidget {
   final MobileSession session;
   final int id;
 
-  /// When the customer was last seen active, from the open conversation.
   /// When the chat's conversation window closes, as the open chat knows it.
   final DateTime? windowExpires;
 
@@ -38,8 +38,16 @@ class ContactActionsPage extends StatefulWidget {
 class _ContactActionsPageState extends State<ContactActionsPage> {
   Json? data;
   String? error;
-  bool busy = false;
   MobileApi get api => widget.session.api;
+
+  /// Sections with a change in flight. Only that section waits; the rest of
+  /// the page stays as it is, so nothing flickers.
+  final saving = <String>{};
+
+  /// Bumped by every local change, so a reload that started before it cannot
+  /// put the older server copy back over it.
+  int version = 0;
+
   @override
   void initState() {
     super.initState();
@@ -48,48 +56,58 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
   }
 
   Future<void> load() async {
+    final started = version;
     try {
       final r = await api.post('inbox/getContactDetails', {
         'contact_id': widget.id,
       });
-      if (mounted) {
+      if (mounted && started == version) {
         setState(() {
           data = object(r['data']);
           error = null;
         });
       }
     } catch (e) {
-      if (mounted) setState(() => error = '$e');
+      if (mounted && data == null) setState(() => error = '$e');
     }
   }
 
-  Future<void> action(Future<void> Function() work) async {
-    if (busy) return;
-    setState(() => busy = true);
+  /// Applies [changes] to the details shown, at once.
+  void patch(Json changes) {
+    if (!mounted) return;
+    version++;
+    setState(() => data = {...?data, ...changes});
+  }
+
+  void patchContact(Json changes) => patch({
+    'contact': {...contact, ...changes},
+  });
+
+  /// Runs one section's change. [optimistic] shows the result before the
+  /// server answers; a failure puts back what was there and says why.
+  Future<void> change(
+    String section,
+    Future<void> Function() work, {
+    VoidCallback? optimistic,
+    bool reload = false,
+  }) async {
+    if (saving.contains(section)) return;
+    final before = data;
+    setState(() => saving.add(section));
+    optimistic?.call();
     try {
       await work();
-      if (mounted) await load();
+      // Only where the server works out more than the one value changed.
+      if (reload && mounted) await load();
     } catch (e) {
-      if (mounted) mobileNotice(context, e);
+      if (mounted) {
+        version++;
+        setState(() => data = before);
+        mobileNotice(context, e);
+      }
     } finally {
-      if (mounted) setState(() => busy = false);
+      if (mounted) setState(() => saving.remove(section));
     }
-  }
-
-  /// Small changes open over the page and save in place.
-  Future<void> edit(
-    String title,
-    List<EditField> fields,
-    Future<void> Function(Json) save,
-  ) async {
-    // The sheet shows its own progress; the page is idle while it is open.
-    setState(() => busy = false);
-    await showEditorSheet(context, title: title, fields: fields, save: save);
-    if (mounted) setState(() => busy = true);
-  }
-
-  Future<void> mutate(String path, {String method = 'POST', Json? body}) async {
-    await api.request(path, method: method, data: body);
   }
 
   Json get contact => object(data?['contact']);
@@ -101,70 +119,87 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
     return dates.lastOrNull;
   }
 
-  /// The name is edited where it is shown.
-  bool editingName = false;
-  late final nameField = TextEditingController();
+  Widget? spinner(String section) => saving.contains(section)
+      ? const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        )
+      : null;
 
-  void editName() {
-    nameField.text = '${contact['profile_name'] ?? ''}';
-    setState(() => editingName = true);
-  }
-
-  void saveName() {
-    final name = nameField.text.trim();
-    if (name.isEmpty || name == '${contact['profile_name'] ?? ''}') {
-      setState(() => editingName = false);
-      return;
-    }
-    action(() async {
-      await mutate(
-        'inbox/contacts/${widget.id}/profile',
-        body: {'profile_name': name},
-      );
-      if (mounted) setState(() => editingName = false);
-    });
-  }
-
-  @override
-  void dispose() {
-    nameField.dispose();
-    super.dispose();
-  }
-
-  void status() => action(
-    () => edit(
-      'Conversation status',
-      [
-        EditField(
-          'status',
-          'Status',
-          value: closed ? 0 : 1,
-          required: true,
-          options: const [
-            {'id': 1, 'name': 'Open'},
-            {'id': 0, 'name': 'Closed'},
-          ],
-        ),
-      ],
-      (v) => mutate(
-        'inbox/conversation/${v['status'] == 0 ? 'close' : 'reopen'}',
-        body: {'contact_id': widget.id},
+  Future<void> editName() => showEditorSheet(
+    context,
+    title: 'Contact name',
+    fields: [
+      EditField(
+        'profile_name',
+        'Name',
+        value: '${contact['profile_name'] ?? ''}',
+        required: true,
+        hint: 'Contact name',
       ),
-    ),
+    ],
+    save: (v) async {
+      final name = '${v['profile_name']}'.trim();
+      if (name == '${contact['profile_name'] ?? ''}') return;
+      await api.request(
+        'inbox/contacts/${widget.id}/profile',
+        method: 'POST',
+        data: {'profile_name': name},
+      );
+      patchContact({'profile_name': name});
+    },
   );
 
-  void assign() => action(() async {
+  Future<void> setStatus(bool open) => change(
+    'status',
+    () => api.request(
+      'inbox/conversation/${open ? 'reopen' : 'close'}',
+      method: 'POST',
+      data: {'contact_id': widget.id},
+    ),
+    optimistic: () => patchContact({'conversation_status': open ? 1 : 0}),
+  );
+
+  Future<void> status() => showEditorSheet(
+    context,
+    title: 'Conversation status',
+    fields: [
+      EditField(
+        'status',
+        'Status',
+        value: closed ? 0 : 1,
+        required: true,
+        options: const [
+          {'id': 1, 'name': 'Open'},
+          {'id': 0, 'name': 'Closed'},
+        ],
+      ),
+    ],
+    // The sheet waits for the save; the page shows it the moment it lands.
+    save: (v) async {
+      await api.request(
+        'inbox/conversation/${v['status'] == 0 ? 'close' : 'reopen'}',
+        method: 'POST',
+        data: {'contact_id': widget.id},
+      );
+      patchContact({'conversation_status': v['status'] == 0 ? 0 : 1});
+    },
+  );
+
+  Future<void> assign() async {
     final multi = data!['multiple_assignment_enabled'] == true;
     final users = rows(data!['users']);
-    await edit(
-      'Assign contact',
-      [
+    await showEditorSheet(
+      context,
+      title: 'Assign contact',
+      fields: [
         EditField(
           multi ? 'user_ids' : 'user_id',
           'Assignee',
           value: multi
               ? data!['assigned_user_ids']
-              : number(contact['assigned_to']),
+              : number(contact['assigned_to']) ?? 0,
           multiple: multi,
           options: multi
               ? users
@@ -174,95 +209,129 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
                 ],
         ),
       ],
-      (v) => mutate(
-        'inbox/contacts/${widget.id}/assign',
-        body: multi ? v : {'user_id': v['user_id'] == 0 ? null : v['user_id']},
-      ),
+      save: (v) async {
+        final r = object(
+          await api.request(
+            'inbox/contacts/${widget.id}/assign',
+            method: 'POST',
+            data: multi
+                ? v
+                : {'user_id': v['user_id'] == 0 ? null : v['user_id']},
+          ),
+        );
+        // The server answers with what it saved: the contact and assignee.
+        final saved = object(r['data']);
+        final ids = multi ? List.of(v['user_ids'] as List) : null;
+        patch({
+          if (saved['contact'] is Map)
+            'contact': {...contact, ...object(saved['contact'])},
+          if (!multi) 'assignUser': saved['assignUser'],
+          if (multi) 'assigned_user_ids': ids,
+          if (multi)
+            'assignUser': users
+                .where((u) => ids!.contains(u['id']))
+                .firstOrNull,
+        });
+      },
     );
-  });
+  }
 
-  void favourite() =>
-      action(() => mutate('inbox/contacts/${widget.id}/favorite'));
-
-  void closeOrReopen() => action(
-    () => mutate(
-      'inbox/conversation/${closed ? 'reopen' : 'close'}',
-      body: {'contact_id': widget.id},
-    ),
-  );
+  Future<void> favourite() {
+    final now = data!['is_favourite'] == true;
+    return change(
+      'favourite',
+      () => api.request('inbox/contacts/${widget.id}/favorite', method: 'POST'),
+      optimistic: () => patch({'is_favourite': !now}),
+    );
+  }
 
   bool can(String mode) =>
       data!['can_${mode == 'block' ? (data!['is_blocked'] == true ? 'unblock' : 'block') : (data!['is_dnd'] == true ? 'remove_dnd' : 'add_dnd')}'] ==
       true;
 
-  void toggle(String mode) => action(() async {
+  Future<void> toggle(String mode) async {
     final remove = data![mode == 'block' ? 'is_blocked' : 'is_dnd'] == true;
-    if (await confirmAction(
+    if (!await confirmAction(
       context,
       'Update contact',
       '${remove ? 'Remove' : 'Apply'} ${mode == 'block' ? 'WhatsApp blocking' : 'marketing do-not-disturb'} for this contact?',
     )) {
-      await mutate(
+      return;
+    }
+    // Which of block/unblock the user may do next is the server's call.
+    await change(
+      mode,
+      () => api.request(
         'inbox/contacts/${widget.id}/$mode',
         method: remove ? 'DELETE' : 'POST',
-      );
-    }
-  });
+      ),
+      reload: true,
+    );
+  }
 
-  void removeTag(Json tag) => action(
-    () => mutate(
+  List<Json> get tags => rows(data!['tags']);
+
+  Future<void> removeTag(Json tag) => change(
+    'tags',
+    () => api.request(
       'inbox/contacts/tag/remove',
-      body: {'contact_id': widget.id, 'tag_id': tag['id']},
+      method: 'POST',
+      data: {'contact_id': widget.id, 'tag_id': tag['id']},
     ),
+    optimistic: () =>
+        patch({'tags': tags.where((t) => t['id'] != tag['id']).toList()}),
   );
 
-  void addTag() => action(() async {
-    final tags = rows(
-      (await api.get('inbox/tags', query: {'contact_id': widget.id}))['data'],
-    );
+  Future<void> addTag() async {
+    late final List<Json> options;
+    try {
+      setState(() => saving.add('tags'));
+      options = rows(
+        (await api.get('inbox/tags', query: {'contact_id': widget.id}))['data'],
+      );
+    } catch (e) {
+      if (mounted) mobileNotice(context, e);
+      return;
+    } finally {
+      if (mounted) setState(() => saving.remove('tags'));
+    }
     if (!mounted) return;
-    await edit(
-      'Add tag',
-      [EditField('tag_id', 'Tag', options: tags, required: true)],
-      (v) => mutate(
-        'inbox/contacts/tag/add',
-        body: {'contact_id': widget.id, ...v},
-      ),
-    );
-  });
-
-  void note([Json? existing]) => action(
-    () => edit(
-      existing == null ? 'Add note' : 'Edit note',
-      [
+    final have = {for (final t in tags) t['id']};
+    await showEditorSheet(
+      context,
+      title: 'Add tag',
+      fields: [
         EditField(
-          'note',
-          'Note',
-          value: existing?['content'],
+          'tag_id',
+          'Tag',
+          options: [...options.where((o) => !have.contains(o['id']))],
           required: true,
-          lines: 4,
         ),
       ],
-      (v) => mutate(
-        'inbox/notes',
-        body: {
-          'contact_id': widget.id,
-          if (existing != null) 'note_id': existing['id'],
-          ...v,
-        },
-      ),
+      save: (v) async {
+        await api.request(
+          'inbox/contacts/tag/add',
+          method: 'POST',
+          data: {'contact_id': widget.id, ...v},
+        );
+        patch({
+          'tags': [...tags, options.firstWhere((o) => o['id'] == v['tag_id'])],
+        });
+      },
+    );
+  }
+
+  List<Json> get notes => rows(data!['notes']);
+
+  Future<void> openNotes() => openPage(
+    context,
+    NotesPage(
+      widget.session,
+      widget.id,
+      initial: notes,
+      onChanged: (next) => patch({'notes': next}),
     ),
   );
-
-  void deleteNote(Json existing) => action(() async {
-    if (await confirmAction(
-      context,
-      'Delete note',
-      'Delete this internal note?',
-    )) {
-      await mutate('inbox/notes/${existing['id']}', method: 'DELETE');
-    }
-  });
 
   /// Opened from a chat, Message simply returns to that conversation.
   void message() {
@@ -295,17 +364,16 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
         .join();
     final assignee = '${object(data!['assignUser'])['name'] ?? 'Unassigned'}';
     final favourite = data!['is_favourite'] == true;
-    final notes = rows(data!['notes']);
-    final tags = rows(data!['tags']);
-    final apple = isCupertino(context);
+    final canAssign = data!['can_assign_contact'] == true;
+    final notes = this.notes;
+    final latest = notes.isEmpty ? null : readableText(notes.first['content']);
     return DetailScaffold(
       title: 'Contact',
-      busy: busy,
       onRefresh: load,
       actions: [
         AppIconButton(
           tooltip: 'Edit name',
-          onPressed: busy ? null : editName,
+          onPressed: editName,
           icon: const AppIcon(Icons.edit_outlined),
         ),
       ],
@@ -316,36 +384,7 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
             avatar: initials.isEmpty ? '?' : initials,
             title: name.isEmpty ? formatPhone(c['wa_id']) : name,
             subtitle: formatPhone(c['display_wa_id'] ?? c['wa_id']),
-            onTitleTap: busy ? null : editName,
-            titleEditor: editingName
-                ? SizedBox(
-                    width: 300,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            key: const ValueKey('name-editor'),
-                            controller: nameField,
-                            autofocus: true,
-                            textAlign: TextAlign.center,
-                            textCapitalization: TextCapitalization.words,
-                            onSubmitted: (_) => saveName(),
-                          ),
-                        ),
-                        AppIconButton(
-                          tooltip: 'Save name',
-                          onPressed: busy ? null : saveName,
-                          icon: const Icon(Icons.check, color: T.green),
-                        ),
-                        AppIconButton(
-                          tooltip: 'Cancel',
-                          onPressed: () => setState(() => editingName = false),
-                          icon: const Icon(Icons.close, color: T.muted),
-                        ),
-                      ],
-                    ),
-                  )
-                : null,
+            onTitleTap: editName,
             online: open,
             status: open
                 ? switch (windowLabel(windowExpires)) {
@@ -358,16 +397,14 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
                 closed ? 'Closed' : 'Open',
                 icon: closed ? Icons.lock_outline : Icons.schedule,
                 positive: !closed,
-                onTap: busy ? null : status,
+                onTap: saving.contains('status') ? null : status,
               ),
               StatusChip(
                 assignee == 'Unassigned'
                     ? 'Unassigned'
                     : 'Assigned to $assignee',
                 icon: Icons.person_outline,
-                onTap: data!['can_assign_contact'] == true && !busy
-                    ? assign
-                    : null,
+                onTap: canAssign ? assign : null,
               ),
               if (favourite)
                 const StatusChip('Favourite', icon: Icons.star_rounded),
@@ -382,18 +419,14 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
               QuickAction(
                 favourite ? Icons.star_rounded : Icons.star_border_rounded,
                 favourite ? 'Unfavourite' : 'Favourite',
-                busy ? null : this.favourite,
+                saving.contains('favourite') ? null : this.favourite,
               ),
-              if (data!['can_assign_contact'] == true)
-                QuickAction(
-                  Icons.person_add_alt_1_outlined,
-                  'Assign',
-                  busy ? null : assign,
-                ),
+              if (canAssign)
+                QuickAction(Icons.person_add_alt_1_outlined, 'Assign', assign),
               QuickAction(
                 closed ? Icons.replay : Icons.task_alt,
                 closed ? 'Reopen' : 'Close',
-                busy ? null : closeOrReopen,
+                saving.contains('status') ? null : () => setStatus(closed),
               ),
             ],
           ),
@@ -405,16 +438,19 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
               icon: Icons.person_outline,
               label: 'Assigned to',
               value: assignee,
-              onTap: data!['can_assign_contact'] == true && !busy
-                  ? assign
-                  : null,
+              onTap: canAssign ? assign : null,
             ),
             DetailRow(
               icon: closed ? Icons.lock_outline : Icons.schedule,
               tile: closed ? T.muted : T.green,
               label: 'Status',
-              value: closed ? 'Closed' : 'Open',
-              onTap: busy ? null : status,
+              value: saving.contains('status')
+                  ? null
+                  : closed
+                  ? 'Closed'
+                  : 'Open',
+              trailing: spinner('status'),
+              onTap: saving.contains('status') ? null : status,
             ),
           ],
         ),
@@ -423,49 +459,29 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
           children: [
             TagWrap(
               tags: [for (final t in tags) '${t['name']}'],
-              onRemove: busy ? null : (i) => removeTag(tags[i]),
-              onAdd: busy ? null : addTag,
+              onRemove: saving.contains('tags')
+                  ? null
+                  : (i) => removeTag(tags[i]),
+              onAdd: saving.contains('tags') ? null : addTag,
             ),
-          ],
-        ),
-        DetailSection(
-          title: 'Notes',
-          action: 'Add',
-          onAction: busy ? null : note,
-          children: [
-            if (notes.isEmpty)
-              const DetailRow(
-                icon: Icons.sticky_note_2_outlined,
-                label: 'No notes yet',
-              ),
-            for (final n in notes)
-              DetailRow(
-                icon: Icons.sticky_note_2_outlined,
-                label: '${n['content'] ?? ''}',
-                subtitle: [
-                  readableText(object(n['user'])['name']),
-                  const MobileClock().listTime(n['created_at']),
-                ].where((p) => p.isNotEmpty).join(' · '),
-                onTap: busy ? null : () => note(n),
-                trailing: AppIconButton(
-                  tooltip: 'Delete note',
-                  onPressed: busy ? null : () => deleteNote(n),
-                  icon: AppIcon(
-                    Icons.delete_outline_rounded,
-                    size: 20,
-                    color: apple ? T.danger : T.muted,
-                  ),
-                ),
-              ),
           ],
         ),
         DetailSection(
           title: 'More',
           children: [
             DetailRow(
+              key: const ValueKey('notes-row'),
+              icon: Icons.sticky_note_2_outlined,
+              label: 'Notes',
+              subtitle: latest == null
+                  ? 'No notes yet'
+                  : '${notes.length} ${notes.length == 1 ? 'note' : 'notes'} · ${latest.replaceAll('\n', ' ')}',
+              subtitleLines: 1,
+              onTap: openNotes,
+            ),
+            DetailRow(
               icon: Icons.tune_outlined,
-              label: 'Details',
-              subtitle: 'Custom fields',
+              label: 'Custom fields',
               onTap: () => openPage(
                 context,
                 ContactFieldsPage(widget.session, widget.id),
@@ -510,10 +526,12 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
                 DetailRow(
                   icon: Icons.do_not_disturb_on_outlined,
                   label: 'Marketing do not disturb',
-                  trailing: Switch.adaptive(
-                    value: data!['is_dnd'] == true,
-                    onChanged: busy ? null : (_) => toggle('dnd'),
-                  ),
+                  trailing:
+                      spinner('dnd') ??
+                      Switch.adaptive(
+                        value: data!['is_dnd'] == true,
+                        onChanged: (_) => toggle('dnd'),
+                      ),
                 ),
               if (can('block'))
                 DetailRow(
@@ -522,13 +540,51 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
                       ? 'Unblock contact'
                       : 'Block contact',
                   destructive: data!['is_blocked'] != true,
-                  onTap: busy ? null : () => toggle('block'),
+                  trailing: spinner('block'),
+                  onTap: saving.contains('block')
+                      ? null
+                      : () => toggle('block'),
                 ),
             ],
           ),
       ],
     );
   }
+}
+
+/// How one custom field type (config/customfield.php) is edited and saved:
+/// the update endpoint's field_type, the editor input, and its icon.
+class FieldSpec {
+  const FieldSpec(this.saveAs, this.input, this.icon, {this.choice = false});
+  final String saveAs, input;
+  final IconData icon;
+
+  /// Picked from the field's own options.
+  final bool choice;
+
+  static FieldSpec of(Json field) => switch (number(field['type'])) {
+    2 => const FieldSpec('textarea', 'textarea', Icons.notes),
+    3 ||
+    12 => const FieldSpec('select', 'select', Icons.expand_more, choice: true),
+    13 => const FieldSpec('select', 'switch', Icons.toggle_on_outlined),
+    4 || 10 => const FieldSpec(
+      'multi_select',
+      'multi',
+      Icons.checklist,
+      choice: true,
+    ),
+    11 => const FieldSpec('multi_select', 'list', Icons.list),
+    5 => const FieldSpec('date', 'datetime', Icons.event_outlined),
+    6 => const FieldSpec('date', 'date', Icons.calendar_today_outlined),
+    7 => const FieldSpec('date_range', 'range', Icons.date_range_outlined),
+    8 => const FieldSpec('text', 'password', Icons.lock_outline),
+    9 => const FieldSpec('text', 'email', Icons.alternate_email),
+    14 => const FieldSpec('text', 'number', Icons.pin_outlined),
+    15 => const FieldSpec('image', 'file:image', Icons.image_outlined),
+    16 => const FieldSpec('file', 'file:document', Icons.attach_file),
+    17 => const FieldSpec('video', 'file:video', Icons.videocam_outlined),
+    _ => const FieldSpec('text', 'text', Icons.short_text),
+  };
 }
 
 class ContactFieldsPage extends StatefulWidget {
@@ -561,77 +617,114 @@ class _ContactFieldsPageState extends State<ContactFieldsPage> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => error = '$e');
+      if (mounted && data == null) setState(() => error = '$e');
     }
   }
 
-  Future<void> edit(Json field) async {
-    final type = number(field['type']);
-    final value = object(object(data!['customFieldValues'])['${field['id']}']);
-    final kind = switch (type) {
-      2 => 'textarea',
-      3 || 12 || 13 => 'select',
-      4 || 10 || 11 => 'multi_select',
-      5 || 6 => 'date',
-      7 => 'date_range',
-      15 => 'image',
-      16 => 'file',
-      17 => 'video',
-      _ => 'text',
+  Json valueOf(Json field) =>
+      object(object(data!['customFieldValues'])['${field['id']}']);
+
+  List<Json> optionsOf(Json field) => [
+    for (final v in '${field['option_value'] ?? ''}'.split(','))
+      if (v.trim().isNotEmpty) {'id': v.trim(), 'name': v.trim()},
+  ];
+
+  /// The saved value as it reads in the list, or null when there is none.
+  String? shown(Json field) {
+    final spec = FieldSpec.of(field);
+    final v = valueOf(field);
+    final text = readableText(v['value']);
+    return switch (spec.input) {
+      'switch' => text == '1' ? 'On' : (v.isEmpty ? null : 'Off'),
+      'password' => text.isEmpty ? null : '••••••••',
+      'multi' || 'list' =>
+        text.isEmpty ? null : text.split(',').map((s) => s.trim()).join(', '),
+      'date' || 'datetime' =>
+        '${v['start_date'] ?? ''}'.isEmpty
+            ? null
+            : shownDate('${v['start_date']}', time: spec.input == 'datetime'),
+      'range' =>
+        '${v['start_date'] ?? ''}'.isEmpty
+            ? null
+            : [
+                shownDate('${v['start_date']}'),
+                if ('${v['end_date'] ?? ''}'.isNotEmpty)
+                  shownDate('${v['end_date']}'),
+              ].join(' – '),
+      _ when spec.input.startsWith('file:') =>
+        readableText(v['name']).isNotEmpty
+            ? readableText(v['name'])
+            : ('${v['url'] ?? ''}'.isEmpty ? null : 'File attached'),
+      _ => text.isEmpty ? null : text,
     };
-    final options = '${field['option_value'] ?? ''}'
-        .split(',')
-        .where((v) => v.isNotEmpty)
-        .map((v) => <String, dynamic>{'id': v.trim(), 'name': v.trim()})
-        .toList();
+  }
+
+  Future<void> edit(Json field) async {
+    final spec = FieldSpec.of(field);
+    final value = valueOf(field);
+    final required = number(field['required']) == 1;
+    final name = '${field['name']}';
+    final options = optionsOf(field);
     final fields = <EditField>[
-      if (['image', 'file', 'video'].contains(kind))
-        EditField(
-          'file',
-          'File',
-          kind: 'file:${kind == 'file' ? 'document' : kind}',
-          required: true,
-        )
-      else if (kind == 'date' || kind == 'date_range') ...[
+      if (spec.input.startsWith('file:'))
+        EditField('file', name, kind: spec.input, required: true)
+      else if (spec.input == 'range') ...[
         EditField(
           'start_date',
-          'Start date',
+          'From',
           value: value['start_date'],
           kind: 'date',
-          required: number(field['required']) == 1,
+          required: required,
         ),
-        if (kind == 'date_range')
-          EditField(
-            'end_date',
-            'End date',
-            value: value['end_date'],
-            kind: 'date',
-          ),
-      ] else
+        EditField('end_date', 'To', value: value['end_date'], kind: 'date'),
+      ] else if (spec.input == 'date' || spec.input == 'datetime')
+        EditField(
+          'start_date',
+          name,
+          value: value['start_date'],
+          kind: spec.input,
+          required: required,
+        )
+      else
         EditField(
           'value',
-          '${field['name']}',
-          value: kind == 'multi_select'
-              ? '${value['value'] ?? ''}'
-                    .split(',')
-                    .where((s) => s.isNotEmpty)
-                    .toList()
-              : value['value'],
-          required: number(field['required']) == 1,
-          options: options.isEmpty ? null : options,
-          multiple: kind == 'multi_select',
-          lines: kind == 'textarea' ? 4 : 1,
+          name,
+          value: switch (spec.input) {
+            'multi' =>
+              '${value['value'] ?? ''}'
+                  .split(',')
+                  .map((s) => s.trim())
+                  .where((s) => s.isNotEmpty)
+                  .toList(),
+            'switch' => '${value['value'] ?? '0'}',
+            _ => value['value'],
+          },
+          required: required,
+          options: spec.choice && options.isNotEmpty ? options : null,
+          multiple: spec.input == 'multi',
+          lines: spec.input == 'textarea' ? 4 : 1,
+          kind: switch (spec.input) {
+            'switch' || 'email' || 'number' || 'password' => spec.input,
+            _ => 'text',
+          },
+          hint: switch (spec.input) {
+            'list' => 'Separate values with commas',
+            'email' => 'name@example.com',
+            'textarea' => 'Write $name',
+            _ => null,
+          },
         ),
     ];
+    Json? saved;
     await showEditorSheet(
       context,
-      title: '${field['name']}',
+      title: name,
       fields: fields,
       save: (values) async {
         final body = <String, dynamic>{
           'contact_id': widget.id,
           'custom_field_id': field['id'],
-          'field_type': kind,
+          'field_type': spec.saveAs,
           ...values,
         };
         if (body['value'] is List) {
@@ -647,32 +740,107 @@ class _ContactFieldsPageState extends State<ContactFieldsPage> {
         } else {
           await widget.session.api.post('inbox/custom-fields/update', body);
         }
+        saved = {
+          ...value,
+          for (final k in ['value', 'start_date', 'end_date'])
+            if (body.containsKey(k)) k: body[k],
+        };
       },
     );
-    if (mounted) load();
+    if (saved == null || !mounted) return;
+    if (spec.input.startsWith('file:')) {
+      // The stored name and link are the server's; fetch them.
+      await load();
+      return;
+    }
+    // Only this field's value changes; the rest of the form stays put.
+    setState(() {
+      data = {
+        ...data!,
+        'customFieldValues': {
+          ...object(data!['customFieldValues']),
+          '${field['id']}': saved,
+        },
+      };
+    });
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Custom fields')),
-    body: data == null
-        ? error == null
-              ? const Center(child: CircularProgressIndicator())
-              : failure(error!, load)
-        : ListView(
-            children: [
-              if (rows(data!['customFields']).isEmpty)
-                const ListTile(title: Text('No custom fields')),
-              for (final f in rows(data!['customFields']))
-                AppListTile(
-                  title: Text('${f['name']}'),
-                  subtitle: Text(
-                    '${object(object(data!['customFieldValues'])['${f['id']}'])['value'] ?? object(object(data!['customFieldValues'])['${f['id']}'])['name'] ?? object(object(data!['customFieldValues'])['${f['id']}'])['start_date'] ?? 'Not set'}',
-                  ),
-                  trailing: const Icon(Icons.edit_outlined),
-                  onTap: () => edit(f),
-                ),
-            ],
-          ),
-  );
+  Widget build(BuildContext context) {
+    final fields = data == null ? <Json>[] : rows(data!['customFields']);
+    return Scaffold(
+      appBar: platformAppBar(context, title: const Text('Custom fields')),
+      body: data == null
+          ? error == null
+                ? const Center(child: CircularProgressIndicator.adaptive())
+                : failure(error!, load)
+          : RefreshIndicator(
+              onRefresh: load,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+                children: [
+                  if (fields.isEmpty)
+                    const EmptyView(
+                      title: 'No custom fields',
+                      description: 'Custom fields are set up on the web, under Settings.',
+                      icon: Icons.tune_outlined,
+                    )
+                  else
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (final f in fields)
+                              Padding(
+                                key: ValueKey('field-${f['id']}'),
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 7),
+                                      child: Text.rich(
+                                        TextSpan(
+                                          text: '${f['name']}',
+                                          children: [
+                                            if (number(f['required']) == 1)
+                                              const TextSpan(
+                                                text: ' *',
+                                                style: TextStyle(
+                                                  color: T.danger,
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: T.secondary,
+                                        ),
+                                      ),
+                                    ),
+                                    FieldBox(
+                                      text: shown(f),
+                                      hint: 'Not set',
+                                      icon: FieldSpec.of(f).icon,
+                                      lines: FieldSpec.of(f).input == 'textarea'
+                                          ? 3
+                                          : 1,
+                                      onTap: () => edit(f),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+    );
+  }
 }

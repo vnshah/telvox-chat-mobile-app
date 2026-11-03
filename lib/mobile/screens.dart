@@ -986,19 +986,28 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   Map<int, String> people = {};
 
   /// What an empty tab says: what is missing, not that something failed.
-  String get emptyText {
+  (String, String) get emptyText {
     final tickets = widget.kind == 2;
     final what = tickets ? 'tickets' : 'chats';
     return switch (filter) {
-      'mychats' => 'No $what assigned to you right now.',
-      'unread' => 'You are all caught up: no unread $what.',
-      'unassigned' => 'Every ${tickets ? 'ticket' : 'chat'} has someone on it.',
-      'favourite' => 'No favourites yet. Long-press a chat to add one.',
-      'closed' => 'No closed $what.',
+      'mychats' => (
+        'Nothing assigned to you',
+        'No $what are assigned to you right now.',
+      ),
+      'unread' => ('All caught up', 'No unread $what.'),
+      'unassigned' => (
+        'Everything is assigned',
+        'Every ${tickets ? 'ticket' : 'chat'} has someone on it.',
+      ),
+      'favourite' => (
+        'No favourites yet',
+        'Long-press a chat to add it to your favourites.',
+      ),
+      'closed' => ('No closed $what', 'Closed $what appear here.'),
       _ =>
         tickets
-            ? 'No tickets yet.'
-            : 'No chats yet. Tap + to add a contact and start one.',
+            ? ('No tickets yet', 'New tickets appear here.')
+            : ('No chats yet', 'Tap + to add a contact and start one.'),
     };
   }
 
@@ -1482,9 +1491,12 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
                     if (index == items.length) {
                       return items.isEmpty && !busy
                           ? EmptyView(
-                              search.text.trim().isNotEmpty
+                              title: search.text.trim().isNotEmpty
+                                  ? 'No matches'
+                                  : emptyText.$1,
+                              description: search.text.trim().isNotEmpty
                                   ? 'Nothing matches “${search.text.trim()}”.'
-                                  : emptyText,
+                                  : emptyText.$2,
                               icon: search.text.trim().isNotEmpty
                                   ? Icons.search_off
                                   : widget.kind == 2
@@ -1979,37 +1991,6 @@ class _RowChip extends StatelessWidget {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color),
-    ),
-  );
-}
-
-/// An empty list, said kindly: an icon in the brand wash and what to do next.
-class EmptyView extends StatelessWidget {
-  const EmptyView(this.text, {super.key, this.icon = Icons.inbox_outlined});
-  final String text;
-  final IconData icon;
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(32, 48, 32, 32),
-    child: Column(
-      children: [
-        Container(
-          width: 64,
-          height: 64,
-          decoration: const BoxDecoration(
-            color: T.selected,
-            shape: BoxShape.circle,
-          ),
-          child: Icon(icon, color: T.bronze, size: 30),
-        ),
-        const SizedBox(height: 14),
-        Text(
-          text,
-          key: const ValueKey('empty-view'),
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 14.5, color: T.secondary),
-        ),
-      ],
     ),
   );
 }

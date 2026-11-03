@@ -157,34 +157,39 @@ class _MaterialAction extends StatelessWidget {
   const _MaterialAction(this.action);
   final QuickAction action;
   @override
-  Widget build(BuildContext context) => Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Material(
-        color: action.primary ? T.green : T.selected,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
+  // The label is part of the button, as WhatsApp's are: either one taps it.
+  Widget build(BuildContext context) => GestureDetector(
+    behavior: HitTestBehavior.opaque,
+    onTap: action.onTap,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Material(
+          color: action.primary ? T.green : T.selected,
           borderRadius: BorderRadius.circular(16),
-          onTap: action.onTap,
-          child: SizedBox(
-            width: 52,
-            height: 46,
-            child: Icon(
-              action.icon,
-              size: 22,
-              color: action.primary ? Colors.white : T.onSelected,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: action.onTap,
+            child: SizedBox(
+              width: 52,
+              height: 46,
+              child: Icon(
+                action.icon,
+                size: 22,
+                color: action.primary ? Colors.white : T.onSelected,
+              ),
             ),
           ),
         ),
-      ),
-      const SizedBox(height: 6),
-      Text(
-        action.label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 12, color: T.secondary),
-      ),
-    ],
+        const SizedBox(height: 6),
+        Text(
+          action.label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12, color: T.secondary),
+        ),
+      ],
+    ),
   );
 }
 
@@ -321,10 +326,14 @@ class DetailRow extends StatelessWidget {
     this.trailing,
     this.destructive = false,
     this.tile = T.brass,
+    this.subtitleLines,
   });
   final IconData icon;
   final String label;
   final String? value, subtitle;
+
+  /// Cuts a long second line (a note preview) with an ellipsis.
+  final int? subtitleLines;
   final VoidCallback? onTap;
   final Widget? trailing;
   final bool destructive;
@@ -367,6 +376,8 @@ class DetailRow extends StatelessWidget {
           ? null
           : Text(
               subtitle!,
+              maxLines: subtitleLines,
+              overflow: subtitleLines == null ? null : TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 12.5, color: T.muted),
             ),
       trailing:
@@ -439,75 +450,122 @@ class StatusChip extends StatelessWidget {
 }
 
 /// Removable tag on both platforms, plus an add pill.
-class TagWrap extends StatelessWidget {
-  const TagWrap({super.key, required this.tags, this.onRemove, this.onAdd});
+class TagWrap extends StatefulWidget {
+  const TagWrap({
+    super.key,
+    required this.tags,
+    this.onRemove,
+    this.onAdd,
+    this.limit = 6,
+  });
   final List<String> tags;
   final void Function(int index)? onRemove;
   final VoidCallback? onAdd;
+
+  /// Shown before "+N more", so many tags never stretch the page.
+  final int limit;
   @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    alignment: Alignment.centerLeft,
-    padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-    child: Wrap(
-      spacing: 6,
-      runSpacing: 6,
-      children: [
-        for (var i = 0; i < tags.length; i++)
-          Container(
-            padding: EdgeInsets.fromLTRB(11, 5, onRemove == null ? 11 : 4, 5),
-            decoration: BoxDecoration(
-              color: T.selected,
-              borderRadius: BorderRadius.circular(999),
+  State<TagWrap> createState() => _TagWrapState();
+}
+
+class _TagWrapState extends State<TagWrap> {
+  bool all = false;
+
+  Widget chip(
+    String text, {
+    Widget? trailing,
+    VoidCallback? onTap,
+    bool outlined = false,
+    IconData? leading,
+  }) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: EdgeInsets.fromLTRB(9, 4, trailing == null ? 9 : 3, 4),
+      decoration: BoxDecoration(
+        color: outlined ? null : T.selected,
+        border: outlined ? Border.all(color: T.control) : null,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (leading != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 3),
+              child: AppIcon(leading, size: 14, color: T.brass),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  tags[i],
-                  style: const TextStyle(fontSize: 13, color: T.onSelected),
-                ),
-                if (onRemove != null)
-                  GestureDetector(
-                    onTap: () => onRemove!(i),
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 4),
-                      child: AppIcon(
-                        Icons.close,
-                        size: 15,
-                        color: T.onSelected,
-                        semanticLabel: 'Remove ${tags[i]}',
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        if (onAdd != null)
-          GestureDetector(
-            onTap: onAdd,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
-              decoration: BoxDecoration(
-                border: Border.all(color: T.control),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AppIcon(Icons.add, size: 15, color: T.brass),
-                  SizedBox(width: 3),
-                  Text(
-                    'Add tag',
-                    style: TextStyle(fontSize: 13, color: T.brass),
-                  ),
-                ],
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 180),
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                color: outlined ? T.brass : T.onSelected,
               ),
             ),
           ),
-      ],
+          ?trailing,
+        ],
+      ),
     ),
   );
+
+  @override
+  Widget build(BuildContext context) {
+    final tags = widget.tags;
+    final hidden = all ? 0 : (tags.length - widget.limit).clamp(0, tags.length);
+    final shown = tags.length - hidden;
+    return Container(
+      width: double.infinity,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (var i = 0; i < shown; i++)
+            chip(
+              tags[i],
+              trailing: widget.onRemove == null
+                  ? null
+                  : GestureDetector(
+                      onTap: () => widget.onRemove!(i),
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 3),
+                        child: AppIcon(
+                          Icons.close,
+                          size: 14,
+                          color: T.onSelected,
+                          semanticLabel: 'Remove ${tags[i]}',
+                        ),
+                      ),
+                    ),
+            ),
+          if (hidden > 0)
+            chip(
+              '+$hidden more',
+              outlined: true,
+              onTap: () => setState(() => all = true),
+            )
+          else if (all && tags.length > widget.limit)
+            chip(
+              'Show less',
+              outlined: true,
+              onTap: () => setState(() => all = false),
+            ),
+          if (widget.onAdd != null)
+            chip(
+              'Add tag',
+              outlined: true,
+              onTap: widget.onAdd,
+              leading: Icons.add,
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 /// The page frame for a detail screen: native bar, then sections on the

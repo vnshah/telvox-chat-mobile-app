@@ -362,16 +362,18 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      // Edited in place on the contact page, no separate screen.
+      // Edited in a sheet over the contact page, no separate screen.
       await tester.tap(find.byTooltip('Edit name'));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('name-editor')),
-        'Priya Sharma',
-      );
-      await tester.tap(find.byTooltip('Save name'));
+      await tester.enterText(find.byType(TextFormField), 'Priya Sharma');
+      await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('name-editor')), findsNothing);
+      // Shown at once, without fetching the whole contact again.
+      expect(find.text('Priya Sharma'), findsOneWidget);
+      expect(
+        requests.where((r) => r.path == 'inbox/getContactDetails'),
+        hasLength(1),
+      );
       expect(
         requests.singleWhere((r) => r.path == 'inbox/contacts/12/profile').data,
         {'profile_name': 'Priya Sharma'},

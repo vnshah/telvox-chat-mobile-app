@@ -644,6 +644,8 @@ class AppTextFormField extends StatefulWidget {
     this.minLines,
     this.maxLines = 1,
     this.maxLength,
+    this.textAlignVertical,
+    this.bordered = false,
   });
   final TextEditingController? controller;
   final String? initialValue;
@@ -655,6 +657,13 @@ class AppTextFormField extends StatefulWidget {
   final TextStyle? style;
   final TextAlign textAlign;
   final int? minLines, maxLines, maxLength;
+
+  /// Top for multi-line notes, so text and placeholder start at the top.
+  final TextAlignVertical? textAlignVertical;
+
+  /// An outline on iOS too, for fields on a white sheet where the grouped
+  /// background that normally frames them is missing.
+  final bool bordered;
   @override
   State<AppTextFormField> createState() => _AppTextFormFieldState();
 }
@@ -684,6 +693,7 @@ class _AppTextFormFieldState extends State<AppTextFormField> {
         minLines: widget.minLines,
         maxLines: widget.maxLines,
         maxLength: widget.maxLength,
+        textAlignVertical: widget.textAlignVertical,
       );
     }
     final controller = widget.controller ?? owned!;
@@ -709,6 +719,7 @@ class _AppTextFormFieldState extends State<AppTextFormField> {
             minLines: widget.minLines,
             maxLines: widget.maxLines,
             maxLength: widget.maxLength,
+            textAlignVertical: widget.textAlignVertical,
             placeholder: widget.decoration.hintText,
             placeholderStyle: Theme.of(context).textTheme.bodyMedium
                 ?.copyWith(color: const Color(0xFFA39A90)),
@@ -727,6 +738,9 @@ class _AppTextFormFieldState extends State<AppTextFormField> {
               border: Border.all(
                 color: field.hasError
                     ? CupertinoColors.systemRed
+                    : widget.bordered
+                    // T.control, the outline every Material field uses.
+                    ? const Color(0xFFCFC6B8)
                     : const Color(0x00000000),
               ),
               borderRadius: BorderRadius.circular(10),
