@@ -9,6 +9,7 @@ import 'package:record/record.dart';
 
 import '../ui/theme.dart';
 import 'media.dart';
+import 'voice_recording.dart';
 
 /// Records a voice note to a temporary file. A seam so tests need no microphone.
 abstract class VoiceRecorder {
@@ -18,6 +19,13 @@ abstract class VoiceRecorder {
   /// The recorded file's path, or null if nothing was captured.
   Future<String?> stop();
   Future<void> cancel();
+
+  /// Hold and continue a locked recording into the same file.
+  Future<void> pause();
+  Future<void> resume();
+
+  /// The microphone's level, 0 (silence) to 1, several times a second.
+  Stream<double> levels();
   void dispose();
 }
 
@@ -42,6 +50,16 @@ class DeviceVoiceRecorder implements VoiceRecorder {
   Future<String?> stop() async => _instance?.stop();
   @override
   Future<void> cancel() async => _instance?.cancel();
+  @override
+  Future<void> pause() async => _instance?.pause();
+  @override
+  Future<void> resume() async => _instance?.resume();
+
+  /// dBFS from about -50 (room noise) to 0 (loud), as 0–1.
+  @override
+  Stream<double> levels() => _recorder
+      .onAmplitudeChanged(const Duration(milliseconds: 100))
+      .map((a) => ((a.current + 50) / 50).clamp(0.0, 1.0));
   @override
   void dispose() => _instance?.dispose();
 }
@@ -192,13 +210,38 @@ class ChatComposer extends StatefulWidget {
   State<ChatComposer> createState() => _ChatComposerState();
 }
 
-class _ChatComposerState extends State<ChatComposer> {
+/// Where a voice note is: not recording; recording while the mic is held
+/// (release sends, slide left cancels, slide up locks); or locked, recording
+/// hands-free until Delete or Send.
+enum VoiceStage { idle, holding, locked }
+
+class _ChatComposerState extends State<ChatComposer>
+    with SingleTickerProviderStateMixin {
   late final VoiceRecorder recorder = widget.recorder ?? DeviceVoiceRecorder();
-  bool recording = false, cancelled = false;
-  double drag = 0;
+  var voice = VoiceStage.idle;
+  bool paused = false;
+
+  /// The finger's travel from where it pressed the mic.
+  Offset drag = Offset.zero;
+  Offset? _origin;
+
+  /// The finger is still on the mic (it may lift before recording starts).
+  bool _pressing = false;
   Duration elapsed = Duration.zero;
-  Timer? ticker;
-  static const cancelDistance = 110.0;
+  Timer? ticker, _hintTimer;
+  bool lockHint = false;
+  final levels = <double>[];
+  StreamSubscription<double>? _levels;
+  static const cancelDistance = 110.0, lockDistance = 80.0;
+  static const _tick = Duration(milliseconds: 100);
+
+  /// The cancelled recording's microphone dropping into the bin.
+  late final binDrop = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+
+  bool get recording => voice != VoiceStage.idle;
 
   bool get canSend =>
       widget.controller.text.trim().isNotEmpty || widget.attachment != null;
@@ -222,6 +265,10 @@ class _ChatComposerState extends State<ChatComposer> {
   void initState() {
     super.initState();
     widget.controller.addListener(_changed);
+    // The bin gives the emoji button its place back once the drop ends.
+    binDrop.addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) setState(() {});
+    });
   }
 
   @override
@@ -239,14 +286,25 @@ class _ChatComposerState extends State<ChatComposer> {
   void dispose() {
     focus.dispose();
     widget.controller.removeListener(_changed);
-    ticker?.cancel();
+    _stopClock();
     if (recording) recorder.cancel();
     recorder.dispose();
+    binDrop.dispose();
     super.dispose();
   }
 
-  Future<void> _startRecording() async {
+  void _stopClock() {
+    ticker?.cancel();
+    _hintTimer?.cancel();
+    _levels?.cancel();
+    _levels = null;
+  }
+
+  /// Recording starts the moment the mic is pressed, as on WhatsApp.
+  Future<void> _press(Offset at) async {
     if (!widget.enabled || recording) return;
+    _pressing = true;
+    _origin = at;
     HapticFeedback.mediumImpact();
     try {
       if (!await recorder.start()) {
@@ -262,36 +320,106 @@ class _ChatComposerState extends State<ChatComposer> {
       return;
     }
     setState(() {
-      recording = true;
-      cancelled = false;
-      drag = 0;
+      voice = VoiceStage.holding;
+      paused = false;
+      drag = Offset.zero;
       elapsed = Duration.zero;
+      lockHint = false;
+      levels.clear();
     });
-    ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() => elapsed += const Duration(seconds: 1));
+    ticker = Timer.periodic(_tick, (_) {
+      if (mounted && !paused) setState(() => elapsed += _tick);
     });
+    _hintTimer = Timer(const Duration(milliseconds: 700), () {
+      if (mounted && voice == VoiceStage.holding) {
+        setState(() => lockHint = true);
+      }
+    });
+    try {
+      _levels = recorder.levels().listen((level) {
+        if (!mounted || paused) return;
+        setState(() {
+          levels.add(level);
+          if (levels.length > 120) levels.removeAt(0);
+        });
+      }, onError: (_) {});
+    } catch (_) {
+      // No levels on this device: the waveform stays flat.
+    }
+    // Lifted before the microphone was ready: a tap, not a hold.
+    if (!_pressing) _release();
   }
 
-  void _dragged(double dx) {
-    if (!recording || cancelled) return;
-    setState(() => drag = dx.clamp(-cancelDistance, 0));
-    if (dx <= -cancelDistance) _finish(send: false);
+  void _move(Offset at) {
+    if (voice != VoiceStage.holding || _origin == null) return;
+    final d = at - _origin!;
+    if (d.dy <= -lockDistance) {
+      _lock();
+    } else if (d.dx <= -cancelDistance) {
+      _discard(animate: true);
+    } else {
+      setState(
+        () => drag = Offset(
+          d.dx.clamp(-cancelDistance, 0),
+          d.dy.clamp(-lockDistance, 0),
+        ),
+      );
+    }
   }
 
-  /// Release sends; sliding left past the threshold cancels, as on WhatsApp.
-  Future<void> _finish({required bool send}) async {
-    if (!recording) return;
-    ticker?.cancel();
-    final duration = elapsed;
+  /// Letting go of a held recording sends it; a locked one keeps going.
+  void _release() {
+    _pressing = false;
+    _origin = null;
+    if (voice == VoiceStage.holding) _send();
+  }
+
+  void _lock() {
+    HapticFeedback.mediumImpact();
     setState(() {
-      recording = false;
-      cancelled = !send;
-      drag = 0;
+      voice = VoiceStage.locked;
+      drag = Offset.zero;
+      lockHint = false;
     });
-    if (!send || duration < const Duration(seconds: 1)) {
+  }
+
+  Future<void> _togglePause() async {
+    try {
+      paused ? await recorder.resume() : await recorder.pause();
+    } catch (e) {
+      if (mounted) _notice('$e');
+      return;
+    }
+    if (mounted) setState(() => paused = !paused);
+  }
+
+  /// Drops the recording; sliding away shows it falling into the bin.
+  Future<void> _discard({bool animate = false}) async {
+    if (!recording) return;
+    _stopClock();
+    setState(() {
+      voice = VoiceStage.idle;
+      drag = Offset.zero;
+      lockHint = false;
+    });
+    HapticFeedback.lightImpact();
+    if (animate) binDrop.forward(from: 0);
+    await recorder.cancel();
+  }
+
+  /// Sends what was recorded; under a second is a tap, and says how.
+  Future<void> _send() async {
+    if (!recording) return;
+    final duration = elapsed;
+    _stopClock();
+    setState(() {
+      voice = VoiceStage.idle;
+      drag = Offset.zero;
+      lockHint = false;
+    });
+    if (duration < const Duration(seconds: 1)) {
       await recorder.cancel();
-      if (send && mounted) _notice('Hold to record, release to send.');
-      if (!send) HapticFeedback.lightImpact();
+      if (mounted) _notice('Hold to record, release to send.');
       return;
     }
     try {
@@ -372,22 +500,26 @@ class _ChatComposerState extends State<ChatComposer> {
             alignment: Alignment.bottomCenter,
             child: _preview(),
           ),
-          if (recording)
-            _RecordingBar(elapsed: elapsed, drag: drag)
+          if (voice == VoiceStage.holding)
+            _RecordingBar(elapsed: elapsed, drag: drag.dx)
           else
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                AppIconButton(
-                  tooltip: emoji ? 'Keyboard' : 'Emoji',
-                  onPressed: _toggleEmoji,
-                  icon: AppIcon(
-                    emoji
-                        ? Icons.keyboard_outlined
-                        : Icons.emoji_emotions_outlined,
-                    color: T.brass,
+                // Where a cancelled recording drops, in the emoji's place.
+                if (binDrop.isAnimating)
+                  BinDrop(binDrop)
+                else
+                  AppIconButton(
+                    tooltip: emoji ? 'Keyboard' : 'Emoji',
+                    onPressed: _toggleEmoji,
+                    icon: AppIcon(
+                      emoji
+                          ? Icons.keyboard_outlined
+                          : Icons.emoji_emotions_outlined,
+                      color: T.brass,
+                    ),
                   ),
-                ),
                 Expanded(
                   child: AppTextField(
                     controller: widget.controller,
@@ -438,47 +570,48 @@ class _ChatComposerState extends State<ChatComposer> {
       ),
     );
     final sendMode = canSend && !recording;
-    final button = Tooltip(
-      message: sendMode ? 'Send message' : 'Hold to record a voice note',
-      child: Semantics(
-        button: true,
-        label: sendMode ? 'Send message' : 'Record voice note',
-        child: GestureDetector(
-          onLongPressStart: sendMode ? null : (_) => _startRecording(),
-          onLongPressMoveUpdate: sendMode
-              ? null
-              : (d) => _dragged(d.offsetFromOrigin.dx),
-          onLongPressEnd: sendMode ? null : (_) => _finish(send: !cancelled),
-          child: AnimatedScale(
-            scale: recording ? 1.28 : 1,
-            duration: motion,
-            child: Material(
-              color: T.green,
-              shape: const CircleBorder(),
-              elevation: 1,
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: widget.busy
-                    ? null
-                    : sendMode
-                    ? widget.onSend
-                    : () => _notice('Hold to record, release to send.'),
-                child: SizedBox(
-                  width: 48,
-                  height: 48,
-                  // The microphone turns into the send arrow as you type.
-                  child: AnimatedSwitcher(
-                    duration: motion,
-                    transitionBuilder: (child, animation) => ScaleTransition(
-                      scale: animation,
-                      child: FadeTransition(opacity: animation, child: child),
-                    ),
-                    child: AppIcon(
-                      sendMode ? Icons.send : Icons.mic,
-                      key: ValueKey(sendMode),
-                      color: Colors.white,
-                      size: sendMode ? 21 : 24,
-                    ),
+    // A long press is how a voice note is recorded, so the mic carries no
+    // tooltip: one would open over the lock while recording.
+    Widget button = Semantics(
+      button: true,
+      label: sendMode ? 'Send message' : 'Record voice note',
+      // Raw pointer events: recording starts on touch, not after a
+      // long-press delay, and the finger's path locks or cancels it.
+      child: Listener(
+        onPointerDown: sendMode ? null : (e) => _press(e.position),
+        onPointerMove: sendMode ? null : (e) => _move(e.position),
+        onPointerUp: sendMode ? null : (_) => _release(),
+        onPointerCancel: sendMode
+            ? null
+            : (_) {
+                _pressing = false;
+                if (voice == VoiceStage.holding) _discard();
+              },
+        child: AnimatedScale(
+          scale: voice == VoiceStage.holding ? 1.45 : 1,
+          duration: motion,
+          child: Material(
+            color: T.green,
+            shape: const CircleBorder(),
+            elevation: 1,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: widget.busy || !sendMode ? null : widget.onSend,
+              child: SizedBox(
+                width: 48,
+                height: 48,
+                // The microphone turns into the send arrow as you type.
+                child: AnimatedSwitcher(
+                  duration: motion,
+                  transitionBuilder: (child, animation) => ScaleTransition(
+                    scale: animation,
+                    child: FadeTransition(opacity: animation, child: child),
+                  ),
+                  child: AppIcon(
+                    sendMode ? Icons.send : Icons.mic,
+                    key: ValueKey(sendMode),
+                    color: Colors.white,
+                    size: sendMode ? 21 : 24,
                   ),
                 ),
               ),
@@ -487,6 +620,8 @@ class _ChatComposerState extends State<ChatComposer> {
         ),
       ),
     );
+    if (sendMode) button = Tooltip(message: 'Send message', child: button);
+
     final composer = IgnorePointer(
       ignoring: !widget.enabled,
       child: AnimatedOpacity(
@@ -498,14 +633,40 @@ class _ChatComposerState extends State<ChatComposer> {
             color: Colors.white,
             border: Border(top: BorderSide(color: T.hairline)),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(child: pill),
-              const SizedBox(width: 6),
-              button,
-            ],
-          ),
+          child: voice == VoiceStage.locked
+              ? LockedRecordingPanel(
+                  elapsed: elapsed,
+                  levels: levels,
+                  paused: paused,
+                  onDelete: _discard,
+                  onPause: _togglePause,
+                  onSend: _send,
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(child: pill),
+                    const SizedBox(width: 6),
+                    // While held, the mic follows the finger, with the lock
+                    // waiting above it.
+                    Stack(
+                      clipBehavior: Clip.none,
+                      alignment: Alignment.bottomRight,
+                      children: [
+                        if (voice == VoiceStage.holding)
+                          Positioned(
+                            right: 4,
+                            bottom: 66 + (-drag.dy) * .3,
+                            child: LockTab(
+                              progress: -drag.dy / lockDistance,
+                              hint: lockHint,
+                            ),
+                          ),
+                        Transform.translate(offset: drag, child: button),
+                      ],
+                    ),
+                  ],
+                ),
         ),
       ),
     );

@@ -496,6 +496,19 @@ class MessageStamp extends StatelessWidget {
   }
 }
 
+/// What tapping a bubble's reply quote does: shows the quoted message.
+/// Given above a bubble by the chat; without it a quote is not tappable.
+class ReplyTap extends InheritedWidget {
+  const ReplyTap({super.key, required this.onTap, required super.child});
+  final VoidCallback? onTap;
+
+  static VoidCallback? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<ReplyTap>()?.onTap;
+
+  @override
+  bool updateShouldNotify(ReplyTap old) => old.onTap != onTap;
+}
+
 class MessageBubble extends StatelessWidget {
   const MessageBubble({
     super.key,
@@ -569,35 +582,45 @@ class MessageBubble extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (m.reply != null)
-              Container(
-                margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-                decoration: BoxDecoration(
-                  color: T.green.withValues(alpha: .07),
-                  border: const Border(
-                    left: BorderSide(color: T.green, width: 3),
+              GestureDetector(
+                // Tapping a quote shows the message it quotes, as on WhatsApp.
+                onTap: ReplyTap.of(context),
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 7,
                   ),
-                  borderRadius: BorderRadius.circular(5),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      m.replyAuthor ?? 'Reply',
-                      style: const TextStyle(
-                        color: T.green,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                  decoration: BoxDecoration(
+                    color: T.green.withValues(alpha: .07),
+                    border: const Border(
+                      left: BorderSide(color: T.green, width: 3),
+                    ),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        m.replyAuthor ?? 'Reply',
+                        style: const TextStyle(
+                          color: T.green,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      m.reply!,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12, color: T.secondary),
-                    ),
-                  ],
+                      const SizedBox(height: 2),
+                      Text(
+                        m.reply!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: T.secondary,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ?contentBefore,

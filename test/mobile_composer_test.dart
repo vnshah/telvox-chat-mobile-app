@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -8,7 +9,8 @@ import 'package:telvox_chat_mobile_app/mobile/media.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
 class FakeRecorder implements VoiceRecorder {
-  bool started = false, cancelled = false;
+  bool started = false, cancelled = false, paused = false;
+  final level = StreamController<double>.broadcast();
   String? file;
   @override
   Future<bool> start() async => started = true;
@@ -21,6 +23,12 @@ class FakeRecorder implements VoiceRecorder {
 
   @override
   Future<void> cancel() async => cancelled = true;
+  @override
+  Future<void> pause() async => paused = true;
+  @override
+  Future<void> resume() async => paused = false;
+  @override
+  Stream<double> levels() => level.stream;
   @override
   void dispose() {}
 }
@@ -160,5 +168,137 @@ void main() {
     await tester.tap(find.text('Gallery'));
     await tester.pumpAndSettle();
     expect(picked, AttachChoice.gallery);
+  });
+
+  group('voice notes as WhatsApp records them', () {
+    late FakeRecorder recorder;
+    Attachment? note;
+
+    Future<TestGesture> hold(WidgetTester tester) async {
+      recorder = FakeRecorder();
+      note = null;
+      await tester.pumpWidget(
+        host(
+          ChatComposer(
+            controller: TextEditingController(),
+            onSend: () {},
+            onAttach: () {},
+            onQuickReplies: () {},
+            onVoiceNote: (a) => note = a,
+            recorder: recorder,
+          ),
+        ),
+      );
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byIcon(Icons.mic)),
+      );
+      await tester.pump();
+      return gesture;
+    }
+
+    testWidgets('recording starts on touch, with the lock above the mic', (
+      tester,
+    ) async {
+      final gesture = await hold(tester);
+      // No long-press wait: the press itself starts it.
+      expect(recorder.started, isTrue);
+      expect(find.text('Slide to cancel'), findsOneWidget);
+      expect(find.byKey(const ValueKey('voice-lock')), findsOneWidget);
+      // Held a moment, the hint says what the lock is for.
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('Slide up to lock recording'), findsOneWidget);
+      await gesture.up();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      await tester.pumpAndSettle();
+      expect(note, isNotNull);
+    });
+
+    testWidgets('sliding up locks it: Pause, Resume and Send, hands free', (
+      tester,
+    ) async {
+      final gesture = await hold(tester);
+      await tester.pump(const Duration(seconds: 1));
+      await gesture.moveBy(const Offset(0, -100));
+      await tester.pump();
+      // Locked: letting go keeps recording.
+      await gesture.up();
+      await tester.pump();
+      expect(find.text('Pause'), findsOneWidget);
+      expect(find.byTooltip('Delete recording'), findsOneWidget);
+      expect(find.byTooltip('Send voice note'), findsOneWidget);
+      expect(find.text('Slide to cancel'), findsNothing);
+      expect(note, isNull);
+
+      // The waveform follows the microphone.
+      recorder.level
+        ..add(.2)
+        ..add(.9);
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.text('0:03'), findsOneWidget);
+
+      // Paused, the clock stops; resumed, it goes on.
+      await tester.tap(find.text('Pause'));
+      await tester.pump();
+      expect(recorder.paused, isTrue);
+      expect(find.text('Resume'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.text('0:03'), findsOneWidget);
+      await tester.tap(find.text('Resume'));
+      await tester.pump(const Duration(seconds: 1));
+      expect(recorder.paused, isFalse);
+      expect(find.text('0:04'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Send voice note'));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      await tester.pumpAndSettle();
+      expect(note?.kind, 'audio');
+      expect(find.text('Pause'), findsNothing);
+      expect(find.byIcon(Icons.mic), findsOneWidget);
+    });
+
+    testWidgets('a locked recording deleted is never sent', (tester) async {
+      final gesture = await hold(tester);
+      await gesture.moveBy(const Offset(0, -100));
+      await gesture.up();
+      await tester.pump(const Duration(seconds: 3));
+      await tester.tap(find.byTooltip('Delete recording'));
+      await tester.pumpAndSettle();
+      expect(recorder.cancelled, isTrue);
+      expect(note, isNull);
+      expect(find.text('Pause'), findsNothing);
+    });
+
+    testWidgets('sliding left drops the mic into the bin', (tester) async {
+      final gesture = await hold(tester);
+      await tester.pump(const Duration(seconds: 1));
+      await gesture.moveBy(const Offset(-60, 0));
+      await tester.pump();
+      // Half way, it is still recording; the mic has followed the finger.
+      expect(recorder.cancelled, isFalse);
+      await gesture.moveBy(const Offset(-80, 0));
+      await tester.pump(const Duration(milliseconds: 450));
+      expect(recorder.cancelled, isTrue);
+      expect(find.byKey(const ValueKey('voice-bin')), findsOneWidget);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      // The bin goes, the message box is back, nothing was sent.
+      expect(find.byKey(const ValueKey('voice-bin')), findsNothing);
+      expect(find.byTooltip('Emoji'), findsOneWidget);
+      expect(note, isNull);
+    });
+
+    testWidgets('a tap says how to record, and sends nothing', (tester) async {
+      final gesture = await hold(tester);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(find.text('Hold to record, release to send.'), findsOneWidget);
+      expect(recorder.cancelled, isTrue);
+      expect(note, isNull);
+    });
   });
 }

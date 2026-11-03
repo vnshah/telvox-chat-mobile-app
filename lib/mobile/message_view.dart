@@ -53,6 +53,7 @@ class LiveMessageView extends StatelessWidget {
     this.onCallBack,
     this.contactName,
     this.businessName = '',
+    this.onQuoteTap,
   });
   final ApiMessage message;
   final String apiBase;
@@ -60,6 +61,9 @@ class LiveMessageView extends StatelessWidget {
 
   /// This WhatsApp number's name, as a call permission request names it.
   final String businessName;
+
+  /// Shows the message this one replies to.
+  final VoidCallback? onQuoteTap;
   final bool first;
   final VoidCallback? onReply;
   final void Function(BuildContext)? onActions;
@@ -328,6 +332,7 @@ class LiveMessageView extends StatelessWidget {
       ),
     );
     bubble = SwipeReply(onReply: onReply, child: bubble);
+    bubble = ReplyTap(onTap: onQuoteTap, child: bubble);
     return Padding(
       padding: EdgeInsets.only(
         top: first ? 7 : 1,

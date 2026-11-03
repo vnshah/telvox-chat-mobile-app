@@ -126,7 +126,7 @@ void main() {
       // First frame, before any response: composer already usable from cache.
       expect(find.textContaining('Checking conversation'), findsNothing);
       // An empty composer offers the voice-note mic, as WhatsApp does.
-      expect(find.byTooltip('Hold to record a voice note'), findsOneWidget);
+      expect(find.bySemanticsLabel('Record voice note'), findsOneWidget);
       await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox());
       await tester.pumpAndSettle();

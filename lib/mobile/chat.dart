@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart' show XFile;
 
@@ -13,6 +14,7 @@ import '../ui/conversation.dart' show ChatWallpaper;
 import 'call_history.dart';
 import 'camera.dart';
 import 'calls.dart';
+import 'conversation_search.dart';
 import 'conversation_window.dart';
 import 'api.dart';
 import 'models.dart';
@@ -97,6 +99,19 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   /// starts over from the newest page instead, so history never has a gap.
   bool replaceNext = false;
 
+  /// True while the list shows a page around a found or quoted message and
+  /// newer messages lie beyond it, not yet loaded. Scrolling down pages them
+  /// in until the list meets the live chat again.
+  bool newerMore = false;
+
+  /// The message just jumped to, lit up for a moment.
+  int? highlightId;
+  Timer? highlightTimer;
+  final highlightKey = GlobalKey();
+
+  /// Builds every row for a frame, so the jumped-to row can be scrolled to.
+  bool reaching = false;
+
   /// Beyond this, catching up change by change costs more than starting over.
   static const catchUpLimit = Duration(days: 3);
 
@@ -152,6 +167,9 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   /// Keeps what the server just returned, for this run and the next launch,
   /// and moves this conversation's inbox row to its latest message.
   void remember([List<ApiMessage> rows = const [], bool replace = false]) {
+    // A page around an older message is not the conversation's newest: the
+    // kept copy waits until the list meets the live chat again.
+    if (newerMore) return;
     if (rows.isNotEmpty) announce();
     final c = cursor;
     widget.session.viewCache[cacheKey] = messages;
@@ -196,7 +214,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    scroll.addListener(() => scrolledUp.value = scroll.offset > 400);
+    scroll.addListener(() {
+      scrolledUp.value = newerMore || scroll.offset > 400;
+      // Not while scrolling to a jumped-to message: only the reader's own
+      // scroll down pages newer messages in.
+      if (newerMore && !reaching && scroll.offset < 300) loadNewer();
+    });
     final cached = widget.session.viewCache[detailKey] as List<Json?>?;
     if (cached != null) {
       detail = cached.first;
@@ -305,6 +328,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
     widget.session.visibleContacts.remove('contact:$contactId');
     liveDebounce?.cancel();
+    highlightTimer?.cancel();
     for (final sub in live) {
       sub.cancel();
     }
@@ -387,6 +411,146 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     });
   }
 
+  /// Shows a message: scrolls to it when it is loaded, otherwise loads the
+  /// page around it (inbox/messages around_id or around_message_id), then
+  /// lights it up — for a search result or a tapped reply quote.
+  Future<void> jumpTo({int? id, String? wamid}) async {
+    ApiMessage? shown;
+    for (final m in messages) {
+      if ((id != null && number(m.id) == id) ||
+          (wamid != null && wamid.isNotEmpty && m.wamid == wamid)) {
+        shown = m;
+      }
+    }
+    if (shown != null) {
+      reveal(number(shown.id)!);
+      return;
+    }
+    if (busy) return;
+    busy = true;
+    setState(() => showLoading = true);
+    try {
+      final r = await widget.session.api.post('inbox/messages', {
+        'contact_id': contactId,
+        'limit': 40,
+        if (id != null) 'around_id': id else 'around_message_id': wamid,
+      });
+      if (!mounted) return;
+      final meta = object(r['meta']);
+      final target = number(meta['target_id']);
+      if (target == null) {
+        // An older server answers with the newest page instead.
+        mobileNotice(context, 'This server cannot open older messages yet.');
+        return;
+      }
+      setState(() {
+        messages = mergeMessages(
+          [],
+          rows(r['data']).map(ApiMessage.new).toList(),
+        );
+        more = meta['has_more_before'] == true;
+        newerMore = meta['has_more_after'] == true;
+        oldest = number(meta['oldest_id']);
+      });
+      scrolledUp.value = newerMore;
+      reveal(target);
+    } catch (e) {
+      if (mounted) {
+        mobileNotice(
+          context,
+          e is ApiFailure && e.httpStatus == 404
+              ? 'That message is no longer in this chat.'
+              : e,
+        );
+      }
+    } finally {
+      busy = false;
+      if (mounted) setState(() => showLoading = false);
+    }
+  }
+
+  /// Scrolls the loaded message into the middle and lights it up briefly.
+  void reveal(int id) {
+    highlightTimer?.cancel();
+    setState(() {
+      highlightId = id;
+      reaching = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final row = highlightKey.currentContext;
+      if (row != null && row.mounted) {
+        await Scrollable.ensureVisible(
+          row,
+          alignment: .5,
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 250),
+        );
+      }
+      if (mounted) setState(() => reaching = false);
+    });
+    highlightTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => highlightId = null);
+    });
+  }
+
+  /// The next newer page after a jump; the last one rejoins the live chat.
+  Future<void> loadNewer() async {
+    if (!newerMore || busy || messages.isEmpty) return;
+    busy = true;
+    try {
+      final r = await widget.session.api.post('inbox/messages', {
+        'contact_id': contactId,
+        'limit': 50,
+        'after_id': number(messages.last.id),
+      });
+      if (!mounted) return;
+      final meta = object(r['meta']);
+      setState(() {
+        messages = mergeMessages(
+          messages,
+          rows(r['data']).map(ApiMessage.new).toList(),
+        );
+        newerMore = meta['has_more'] == true;
+      });
+      scrolledUp.value = newerMore || scroll.offset > 400;
+    } catch (e) {
+      if (mounted) mobileNotice(context, e);
+    } finally {
+      busy = false;
+    }
+    // Met the live chat: catch up on anything that changed meanwhile.
+    if (mounted && !newerMore) load(quiet: true);
+  }
+
+  /// Back to the newest messages from anywhere in the history.
+  void jumpToLatest() {
+    if (!newerMore) {
+      scrollToEnd(animate: true);
+      return;
+    }
+    setState(() {
+      newerMore = false;
+      sync = null;
+      replaceNext = true;
+    });
+    load();
+    scrollToEnd();
+  }
+
+  Future<void> searchChat() async {
+    final found = await openPage<Json>(
+      context,
+      ConversationSearchPage(
+        widget.session,
+        contactId: contactId,
+        contactName:
+            '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}',
+      ),
+    );
+    if (found != null && mounted) jumpTo(id: number(found['id']));
+  }
+
   Future<void> load({bool older = false, bool quiet = false}) async {
     if (busy) {
       // Never drop a live update: fetch again once this request finishes.
@@ -434,6 +598,14 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         }
       }
       final known = {for (final m in messages) m.id: m};
+      // Away from the newest, live changes update what is shown (ticks,
+      // reactions); new messages arrive when the list pages down to them.
+      if (newerMore && !older) {
+        incoming = [
+          for (final m in incoming)
+            if (known.containsKey(m.id)) m,
+        ];
+      }
       final fresh = incoming.where((m) => !known.containsKey(m.id)).toList();
       final changed =
           fresh.isNotEmpty ||
@@ -720,6 +892,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     typedAt = null;
     final text = composer.text.trim();
     if (text.isEmpty && attachment == null) return;
+    // A message goes at the bottom of the live chat, so show it.
+    if (newerMore) jumpToLatest();
     final item = PendingSend(
       {
         'waba_user_id': widget.session.api.wabaId,
@@ -1030,7 +1204,16 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            messageRow(pendingMessage(p), previous, interactive: false),
+            // Shaped as a saved row is (see below), so it is updated in place.
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 400),
+              color: Colors.transparent,
+              child: messageRow(
+                pendingMessage(p),
+                previous,
+                interactive: false,
+              ),
+            ),
             // Photos, videos and documents show their own upload ring.
             if (p.sending && p.attachment?.kind == 'audio')
               SizedBox(
@@ -1047,12 +1230,19 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       );
     }
     final m = messages[position];
+    final lit = highlightId != null && number(m.id) == highlightId;
     return KeyedSubtree(
       key: ValueKey(rowKey(m)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          messageRow(m, position == 0 ? null : messages[position - 1]),
+          // A jumped-to message glows for a moment, as on WhatsApp.
+          AnimatedContainer(
+            key: lit ? highlightKey : null,
+            duration: const Duration(milliseconds: 400),
+            color: lit ? T.brass.withValues(alpha: .18) : Colors.transparent,
+            child: messageRow(m, position == 0 ? null : messages[position - 1]),
+          ),
         ],
       ),
     );
@@ -1201,6 +1391,11 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           contactName:
               '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}',
           businessName: widget.session.wabaName,
+          onQuoteTap:
+              widget.ticketId == null &&
+                  '${m.json['contextual_reply_id'] ?? ''}'.isNotEmpty
+              ? () => jumpTo(wamid: '${m.json['contextual_reply_id']}')
+              : null,
         ),
       ],
     );
@@ -1263,6 +1458,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         // Updates are live, so no refresh button. iOS puts contact details
         // behind an info button; Android behind the overflow menu.
         actions: [
+          if (widget.ticketId == null)
+            AppIconButton(
+              tooltip: 'Search chat',
+              onPressed: searchChat,
+              icon: const AppIcon(Icons.search),
+            ),
           if (widget.ticketId == null)
             CallButton(session: widget.session, contact: callContact),
           if (isCupertino(context))
@@ -1346,6 +1547,11 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                           controller: scroll,
                           reverse: true,
                           padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                          // Every row is built for the frame that scrolls to
+                          // a jumped-to message, so it can be found.
+                          scrollCacheExtent: reaching
+                              ? const ScrollCacheExtent.pixels(1e6)
+                              : null,
                           itemCount: messages.length + pending.length + 1,
                           itemBuilder: (_, index) => historyItem(
                             messages.length + pending.length - index,
@@ -1362,9 +1568,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                               duration: const Duration(milliseconds: 150),
                               child: AppIconButton.filledTonal(
                                 tooltip: 'Scroll to latest',
-                                onPressed: up
-                                    ? () => scrollToEnd(animate: true)
-                                    : null,
+                                onPressed: up ? jumpToLatest : null,
                                 icon: const Icon(Icons.keyboard_arrow_down),
                               ),
                             ),
