@@ -300,5 +300,42 @@ void main() {
       expect(recorder.cancelled, isTrue);
       expect(note, isNull);
     });
+
+    testWidgets('leaving the app pauses a locked note, kept for later', (
+      tester,
+    ) async {
+      final gesture = await hold(tester);
+      await gesture.moveBy(const Offset(0, -100));
+      await gesture.up();
+      await tester.pump(const Duration(seconds: 2));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      // Kept, paused, for Resume, Delete or Send on return.
+      expect(recorder.paused, isTrue);
+      expect(find.text('Resume'), findsOneWidget);
+      expect(recorder.cancelled, isFalse);
+      tester.binding
+        ..handleAppLifecycleStateChanged(AppLifecycleState.hidden)
+        ..handleAppLifecycleStateChanged(AppLifecycleState.inactive)
+        ..handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.tap(find.byTooltip('Delete recording'));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('leaving the app while holding drops the note', (tester) async {
+      final gesture = await hold(tester);
+      await tester.pump(const Duration(seconds: 1));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pumpAndSettle();
+      expect(recorder.cancelled, isTrue);
+      expect(note, isNull);
+      tester.binding
+        ..handleAppLifecycleStateChanged(AppLifecycleState.hidden)
+        ..handleAppLifecycleStateChanged(AppLifecycleState.inactive)
+        ..handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(note, isNull);
+    });
   });
 }

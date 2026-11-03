@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 import 'package:telvox_chat_mobile_app/mobile/media.dart';
 import 'package:telvox_chat_mobile_app/mobile/message_view.dart';
 import 'package:telvox_chat_mobile_app/mobile/models.dart';
@@ -35,6 +37,54 @@ Map<String, dynamic> row(
   'message_status': 3,
   'created_at': '2026-10-31T09:0$id:00Z',
 };
+
+/// The phone's player, as video_player's platform side answers.
+class FakePlayers extends VideoPlayerPlatform {
+  final events = <int, StreamController<VideoEvent>>{};
+  final playing = <int>{};
+  final speeds = <int, double>{};
+  int _next = 0;
+
+  @override
+  Future<void> init() async {}
+  @override
+  Future<int?> createWithOptions(VideoCreationOptions options) async {
+    final id = ++_next;
+    events[id] = StreamController<VideoEvent>();
+    scheduleMicrotask(
+      () => events[id]!.add(
+        VideoEvent(
+          eventType: VideoEventType.initialized,
+          duration: const Duration(seconds: 6),
+          size: Size.zero,
+        ),
+      ),
+    );
+    return id;
+  }
+
+  @override
+  Stream<VideoEvent> videoEventsFor(int playerId) => events[playerId]!.stream;
+  @override
+  Future<void> play(int playerId) async => playing.add(playerId);
+  @override
+  Future<void> pause(int playerId) async => playing.remove(playerId);
+  @override
+  Future<void> setPlaybackSpeed(int playerId, double speed) async =>
+      speeds[playerId] = speed;
+  @override
+  Future<void> setLooping(int playerId, bool looping) async {}
+  @override
+  Future<void> setVolume(int playerId, double volume) async {}
+  @override
+  Future<void> seekTo(int playerId, Duration position) async {}
+  @override
+  Future<Duration> getPosition(int playerId) async => Duration.zero;
+  @override
+  Future<void> dispose(int playerId) async => playing.remove(playerId);
+  @override
+  Future<void> setMixWithOthers(bool mixWithOthers) async {}
+}
 
 double mean(List<double> v) => v.reduce((a, b) => a + b) / v.length;
 
@@ -218,4 +268,62 @@ void main() {
       );
     },
   );
+
+  testWidgets('a playing voice note shows its speed; one plays at a time', (
+    tester,
+  ) async {
+    final players = FakePlayers();
+    VideoPlayerPlatform.instance = players;
+    VoiceNoteFile.fetch = (_) async => fixture;
+    Widget note(int id) => LiveMessageView(
+      message: ApiMessage(
+        row(id, 2, 'audio', {
+          'type': 'audio',
+          'media_path': 'https://chat.telvox.dev/storage/1/2/audio/v$id.ogg',
+          'media_mime_type': 'audio/ogg',
+        }),
+      ),
+      apiBase: api,
+      first: true,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: T.themeFor(TargetPlatform.android),
+        home: Scaffold(body: Column(children: [note(1), note(2)])),
+      ),
+    );
+    Future<void> settle() async {
+      for (var i = 0; i < 10; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump();
+      }
+    }
+
+    await settle();
+    // Not playing: the avatar, no speed.
+    expect(find.byKey(const ValueKey('voice-speed')), findsNothing);
+
+    Future<void> play(int index) async {
+      await tester.tap(find.byTooltip('Play').at(index));
+      await settle();
+    }
+
+    await play(0);
+    expect(players.playing, {1});
+    // WhatsApp puts the speed where the avatar was: 1x, 1.5x, 2x, 1x.
+    expect(find.text('1×'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('voice-speed')));
+    await tester.pump();
+    expect(find.text('1.5×'), findsOneWidget);
+    expect(players.speeds[1], 1.5);
+    await tester.tap(find.byKey(const ValueKey('voice-speed')));
+    await tester.pump();
+    expect(players.speeds[1], 2);
+
+    // The other note starts: the first pauses.
+    await play(0);
+    expect(players.playing, {2});
+  });
 }

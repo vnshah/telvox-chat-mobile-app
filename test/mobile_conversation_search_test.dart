@@ -82,7 +82,8 @@ class History {
         (m) => m['id'] == around || m['message_id'] == around,
       );
       if (at < 0) return 404;
-      final from = (at - 20).clamp(0, all.length), to = (at + 21).clamp(0, all.length);
+      final from = (at - 20).clamp(0, all.length),
+          to = (at + 21).clamp(0, all.length);
       return page(all.sublist(from, to), {
         'has_more': from > 0,
         'target_id': all[at]['id'],
@@ -164,10 +165,10 @@ void main() {
   test('found words are marked, whatever their case', () {
     final span = marked('Refund approved; the REFUND is sent', 'refund');
     final parts = span.children!.cast<TextSpan>();
-    expect(
-      parts.where((p) => p.style != null).map((p) => p.text),
-      ['Refund', 'REFUND'],
-    );
+    expect(parts.where((p) => p.style != null).map((p) => p.text), [
+      'Refund',
+      'REFUND',
+    ]);
   });
 
   testWidgets('search waits for a pause and two letters, then lists matches', (
@@ -178,7 +179,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'r');
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('Type at least 2 letters to search this chat.'), findsOneWidget);
+    expect(
+      find.text('Type at least 2 letters to search this chat.'),
+      findsOneWidget,
+    );
 
     await tester.enterText(find.byType(TextField), 'ref');
     await tester.pump(const Duration(milliseconds: 100));
@@ -214,7 +218,10 @@ void main() {
     tester,
   ) async {
     await open(tester);
-    expect(find.textContaining('Message 150', findRichText: true), findsOneWidget);
+    expect(
+      find.textContaining('Message 150', findRichText: true),
+      findsOneWidget,
+    );
     await search(tester, 'approved');
     await tester.tap(find.byKey(const ValueKey('search-result-13')));
     await tester.pumpAndSettle();
@@ -233,7 +240,10 @@ void main() {
     // Jump to latest goes straight back to the newest messages.
     await tester.tap(find.byTooltip('Scroll to latest'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Message 150', findRichText: true), findsOneWidget);
+    expect(
+      find.textContaining('Message 150', findRichText: true),
+      findsOneWidget,
+    );
     await close(tester);
   });
 
@@ -244,9 +254,7 @@ void main() {
     await search(tester, 'approved');
     await tester.tap(find.byKey(const ValueKey('search-result-13')));
     await tester.pumpAndSettle();
-    final list = tester.state<ScrollableState>(
-      find.byType(Scrollable).first,
-    );
+    final list = tester.state<ScrollableState>(find.byType(Scrollable).first);
     list.position.jumpTo(0);
     await tester.pumpAndSettle();
     expect(asked('after_id').first['after_id'], 33);
@@ -257,9 +265,7 @@ void main() {
     tester,
   ) async {
     await open(tester);
-    await tester.tap(
-      find.text('The refund for order 4417 is approved').first,
-    );
+    await tester.tap(find.text('The refund for order 4417 is approved').first);
     await tester.pumpAndSettle();
     // Not loaded yet: fetched by its WhatsApp id.
     expect(asked('around_message_id').single['around_message_id'], 'wamid.13');
@@ -273,16 +279,23 @@ void main() {
   ) async {
     await open(tester, History(jumps: false, searches: false));
     await search(tester, 'refund');
-    expect(find.text('Search is not available on this server yet.'), findsOneWidget);
+    expect(
+      find.text('Search is not available on this server yet.'),
+      findsOneWidget,
+    );
     await tester.pageBack();
     await tester.pumpAndSettle();
     // A quote on an older server: the newest page comes back, not a jump.
-    await tester.tap(
-      find.text('The refund for order 4417 is approved').first,
-    );
+    await tester.tap(find.text('The refund for order 4417 is approved').first);
     await tester.pumpAndSettle();
-    expect(find.text('This server cannot open older messages yet.'), findsOneWidget);
-    expect(find.textContaining('Message 150', findRichText: true), findsOneWidget);
+    expect(
+      find.text('This server cannot open older messages yet.'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Message 150', findRichText: true),
+      findsOneWidget,
+    );
     await close(tester);
   });
 }

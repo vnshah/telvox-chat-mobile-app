@@ -216,7 +216,7 @@ class ChatComposer extends StatefulWidget {
 enum VoiceStage { idle, holding, locked }
 
 class _ChatComposerState extends State<ChatComposer>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final VoiceRecorder recorder = widget.recorder ?? DeviceVoiceRecorder();
   var voice = VoiceStage.idle;
   bool paused = false;
@@ -264,6 +264,7 @@ class _ChatComposerState extends State<ChatComposer>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_changed);
     // The bin gives the emoji button its place back once the drop ends.
     binDrop.addStatusListener((status) {
@@ -282,8 +283,25 @@ class _ChatComposerState extends State<ChatComposer>
 
   void _changed() => setState(() {});
 
+  /// Leaving the app mid-recording: a held note is dropped (the finger is
+  /// gone), a locked one pauses, kept for Resume, Delete or Send on return.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.paused &&
+        state != AppLifecycleState.inactive) {
+      return;
+    }
+    if (voice == VoiceStage.holding) {
+      _pressing = false;
+      _discard();
+    } else if (voice == VoiceStage.locked && !paused) {
+      _togglePause();
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     focus.dispose();
     widget.controller.removeListener(_changed);
     _stopClock();
@@ -383,14 +401,20 @@ class _ChatComposerState extends State<ChatComposer>
     });
   }
 
+  /// Pause or resume. The new state is set first: leaving the app sends
+  /// inactive then paused in quick succession, and the second must see the
+  /// first's pause, not undo it.
   Future<void> _togglePause() async {
+    final pausing = !paused;
+    setState(() => paused = pausing);
     try {
-      paused ? await recorder.resume() : await recorder.pause();
+      pausing ? await recorder.pause() : await recorder.resume();
     } catch (e) {
-      if (mounted) _notice('$e');
-      return;
+      if (mounted) {
+        setState(() => paused = !pausing);
+        _notice('$e');
+      }
     }
-    if (mounted) setState(() => paused = !paused);
   }
 
   /// Drops the recording; sliding away shows it falling into the bin.

@@ -9,6 +9,7 @@ import 'package:telvox_chat_mobile_app/mobile/maps.dart';
 import 'package:telvox_chat_mobile_app/mobile/message_content.dart';
 import 'package:telvox_chat_mobile_app/mobile/message_view.dart';
 import 'package:telvox_chat_mobile_app/mobile/models.dart';
+import 'package:telvox_chat_mobile_app/ui/chat_message.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
 import 'support/ui.dart';
@@ -115,7 +116,7 @@ void main() {
   ) async {
     await loadUiFonts();
     Directory('build/review').createSync(recursive: true);
-    tester.view.physicalSize = const Size(390, 1240);
+    tester.view.physicalSize = const Size(390, 1400);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -151,6 +152,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await saveReviewImage(
+      tester,
+      boundary,
+      'build/review/location-messages.png',
+    );
     expect(tester.takeException(), isNull);
 
     // The call request: its message, then the card the customer answers.
@@ -165,16 +171,32 @@ void main() {
     // A named place, and the customer's bare pin read by its coordinates.
     expect(find.text('Head office'), findsOneWidget);
     expect(find.text('Ashram Road, Ahmedabad, Gujarat 380009'), findsOneWidget);
-    expect(find.text('Shared location'), findsOneWidget);
-    expect(find.text('21.17024, 72.83106'), findsOneWidget);
-    expect(find.text('Open in Google Maps'), findsNWidgets(2));
+    // The customer's bare pin is the map alone, its time over the map, as
+    // WhatsApp shows one; tapping either opens Google Maps.
+    expect(find.text('Shared location'), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (w) =>
+            w is Semantics &&
+            w.properties.label == 'Open Location in Google Maps',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) =>
+            w is Semantics &&
+            w.properties.label == 'Open Head office in Google Maps',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byType(OverlayStamp), findsOneWidget);
+    // Buttons hang under the time, the bubble's full width.
+    expect(find.byType(BubbleButtons), findsNWidgets(2));
     // The pin answers the request, quoted above it as on the web.
-    expect(find.text('Please share your location.'), findsNWidgets(2));
-
-    await saveReviewImage(
-      tester,
-      boundary,
-      'build/review/location-messages.png',
+    expect(
+      find.textContaining('Please share your location.', findRichText: true),
+      findsNWidgets(2),
     );
   });
 

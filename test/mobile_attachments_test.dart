@@ -271,7 +271,14 @@ void main() {
       // Shown as the location card it becomes.
       expect(find.byType(LocationCard), findsOneWidget);
       expect(find.text('Head office'), findsOneWidget);
-      expect(find.text('Open in Google Maps'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w is Semantics &&
+              w.properties.label == 'Open Head office in Google Maps',
+        ),
+        findsOneWidget,
+      );
       await close(tester);
     });
 

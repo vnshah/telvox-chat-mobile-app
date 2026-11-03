@@ -105,42 +105,92 @@ class DevicePlaceLookup implements PlaceLookup {
 
 PlaceLookup placeLookup = DevicePlaceLookup();
 
-/// A location's map: a still Google map with a pin, or, without a Maps key,
-/// a drawn stand-in with the same pin.
+/// Where location bubbles get their map picture: the server's Google Static
+/// Maps proxy (GET inbox/static-map), drawn with a key that never ships in
+/// the app. Set by the chat; null in tests and before sign-in.
+class StaticMapSource {
+  StaticMapSource(this.api);
+  final MobileApi api;
+
+  /// The server answered that it has no maps: stop asking this run.
+  static bool unavailable = false;
+
+  Uri url(double latitude, double longitude, int width, int height) =>
+      Uri.parse(api.dio.options.baseUrl)
+          .resolve('inbox/static-map')
+          .replace(
+            queryParameters: {
+              'lat': latitude.toStringAsFixed(5),
+              'lng': longitude.toStringAsFixed(5),
+              'w': '$width',
+              'h': '$height',
+            },
+          );
+
+  Map<String, String> get headers => {
+    if (api.token != null) 'Authorization': 'Bearer ${api.token}',
+    if (api.wabaId != null) 'X-Waba-User-Id': '${api.wabaId}',
+  };
+}
+
+StaticMapSource? staticMaps;
+
+/// A location's map picture with its pin, as WhatsApp shows one: Google's
+/// still map from the server, or a live lite-mode map when the app has its
+/// own Maps key; a drawn stand-in while it loads or when neither is set up.
 class LocationPreview extends StatelessWidget {
   const LocationPreview(
     this.latitude,
     this.longitude, {
     super.key,
     this.height = 140,
+    this.width = 254,
   });
   final double latitude, longitude;
-  final double height;
+  final double height, width;
 
   @override
   Widget build(BuildContext context) {
     final point = LatLng(latitude, longitude);
     // Lite mode is a still image, light enough for a chat list; iOS has no
-    // lite mode, so it keeps the drawn map there.
+    // lite mode.
     final live = mapsEnabled && !kIsWeb && Platform.isAndroid;
-    return SizedBox(
-      height: height,
-      width: double.infinity,
-      child: live
-          ? IgnorePointer(
-              child: GoogleMap(
-                liteModeEnabled: true,
-                initialCameraPosition: CameraPosition(target: point, zoom: 15),
-                markers: {
-                  Marker(markerId: const MarkerId('pin'), position: point),
-                },
-                mapToolbarEnabled: false,
-                zoomControlsEnabled: false,
-                myLocationButtonEnabled: false,
-              ),
-            )
-          : const _DrawnMap(),
-    );
+    final source = staticMaps;
+    final Widget map;
+    if (live) {
+      map = IgnorePointer(
+        child: GoogleMap(
+          liteModeEnabled: true,
+          initialCameraPosition: CameraPosition(target: point, zoom: 15),
+          markers: {Marker(markerId: const MarkerId('pin'), position: point)},
+          mapToolbarEnabled: false,
+          zoomControlsEnabled: false,
+          myLocationButtonEnabled: false,
+        ),
+      );
+    } else if (source != null &&
+        !StaticMapSource.unavailable &&
+        height.isFinite) {
+      map = Image.network(
+        source
+            .url(latitude, longitude, width.round(), height.round())
+            .toString(),
+        headers: source.headers,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        semanticLabel: 'Map',
+        frameBuilder: (context, child, frame, sync) =>
+            frame == null && !sync ? const _DrawnMap() : child,
+        errorBuilder: (_, error, _) {
+          // A server without maps answers 404 once; the rest draw at once.
+          if ('$error'.contains('404')) StaticMapSource.unavailable = true;
+          return const _DrawnMap();
+        },
+      );
+    } else {
+      map = const _DrawnMap();
+    }
+    return SizedBox(height: height, width: double.infinity, child: map);
   }
 }
 

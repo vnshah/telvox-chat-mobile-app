@@ -134,6 +134,9 @@ class LiveMessageView extends StatelessWidget {
     final location = m.type == 'location'
         ? object(object(decoded(m.json['message_body_json']))['location'])
         : const <String, dynamic>{};
+    final place = locationOf(location);
+    final barePin =
+        place != null && place.name.isEmpty && place.address.isEmpty;
     // WhatsApp frames each kind differently; anything else keeps the generic
     // bubble below with its text, media tiles, fields and buttons.
     final Widget? special = switch (m.type) {
@@ -180,7 +183,17 @@ class LiveMessageView extends StatelessWidget {
           stamp: presentation,
         ),
       ),
-      'location' when locationOf(location) != null => MessageBubble(
+      'location' when barePin =>
+        // A bare pin: the map alone, the time over it.
+        MessageBubble(
+          message: bare(''),
+          first: first,
+          maxWidth: 254 + 17,
+          tight: true,
+          showStamp: false,
+          contentBefore: LocationCard(location, stamp: presentation),
+        ),
+      'location' when place != null => MessageBubble(
         message: bare(''),
         first: first,
         // The bubble hugs the card, as for a document.
@@ -193,6 +206,9 @@ class LiveMessageView extends StatelessWidget {
         first: first,
         maxWidth: width,
         contentAfter: CallPermissionCard(businessName),
+        footer: const BubbleButtons([
+          (Icons.expand_more, 'Choose preference'),
+        ], iconAfter: true),
       ),
       _ => null,
     };
@@ -261,7 +277,13 @@ class LiveMessageView extends StatelessWidget {
                                     ],
                                   ),
                                 ),
-                          contentAfter: !c.structured
+                          // WhatsApp hangs a message's buttons under its time.
+                          footer: c.buttons.isEmpty
+                              ? null
+                              : BubbleButtons([
+                                  for (final b in c.buttons) (buttonIcon(b), b),
+                                ]),
+                          contentAfter: c.fields.isEmpty
                               ? null
                               : ConstrainedBox(
                                   constraints: const BoxConstraints(
@@ -282,47 +304,6 @@ class LiveMessageView extends StatelessWidget {
                                             style: const TextStyle(
                                               fontSize: 13,
                                             ),
-                                          ),
-                                        ),
-                                      for (final b in c.buttons)
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 9,
-                                            horizontal: 4,
-                                          ),
-                                          decoration: const BoxDecoration(
-                                            border: Border(
-                                              top: BorderSide(color: T.edge),
-                                            ),
-                                          ),
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              if (buttonIcon(b)
-                                                  case final IconData icon)
-                                                Padding(
-                                                  padding:
-                                                      const EdgeInsets.only(
-                                                        right: 6,
-                                                      ),
-                                                  child: Icon(
-                                                    icon,
-                                                    size: 17,
-                                                    color: T.green,
-                                                  ),
-                                                ),
-                                              Flexible(
-                                                child: Text(
-                                                  b,
-                                                  textAlign: TextAlign.center,
-                                                  style: const TextStyle(
-                                                    color: T.green,
-                                                    fontSize: 13,
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
                                           ),
                                         ),
                                     ],
@@ -975,6 +956,31 @@ class _AudioNoteState extends State<AudioNote> {
   VoiceNoteFile? note;
   bool loading = false, failed = false;
 
+  /// WhatsApp's playback speeds, cycled by the pill that stands in for the
+  /// avatar while a voice note plays.
+  double speed = 1;
+
+  /// The one note playing: starting another pauses it, as on WhatsApp.
+  static _AudioNoteState? _playing;
+
+  void _claim() {
+    final other = _playing;
+    if (other != null && other != this && other.mounted) {
+      other.player?.pause();
+    }
+    _playing = this;
+  }
+
+  Future<void> cycleSpeed() async {
+    final next = switch (speed) {
+      1 => 1.5,
+      1.5 => 2.0,
+      _ => 1.0,
+    };
+    setState(() => speed = next);
+    await player?.setPlaybackSpeed(next);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -988,6 +994,7 @@ class _AudioNoteState extends State<AudioNote> {
 
   @override
   void dispose() {
+    if (_playing == this) _playing = null;
     player?.dispose();
     super.dispose();
   }
@@ -996,7 +1003,12 @@ class _AudioNoteState extends State<AudioNote> {
   Future<void> toggle() async {
     final current = player;
     if (current != null && current.value.isInitialized) {
-      current.value.isPlaying ? await current.pause() : await current.play();
+      if (current.value.isPlaying) {
+        await current.pause();
+      } else {
+        _claim();
+        await current.play();
+      }
       return;
     }
     setState(() {
@@ -1036,6 +1048,8 @@ class _AudioNoteState extends State<AudioNote> {
         player = controller;
         loading = false;
       });
+      _claim();
+      await controller.setPlaybackSpeed(speed);
       await controller.play();
     } catch (_) {
       await controller.dispose();
@@ -1056,6 +1070,9 @@ class _AudioNoteState extends State<AudioNote> {
 
   static String clock(Duration d) =>
       '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
+
+  static String _speedLabel(double s) =>
+      s == s.roundToDouble() ? '${s.round()}×' : '$s×';
 
   @override
   Widget build(BuildContext context) {
@@ -1099,6 +1116,34 @@ class _AudioNoteState extends State<AudioNote> {
           ),
       ],
     );
+    // Playing (or part-played), a voice note swaps its avatar for the speed.
+    final Widget lead = widget.voice && (playing || position > Duration.zero)
+        ? Semantics(
+            button: true,
+            label: 'Playback speed ${_speedLabel(speed)}',
+            child: GestureDetector(
+              key: const ValueKey('voice-speed'),
+              onTap: cycleSpeed,
+              child: Container(
+                width: 44,
+                height: 28,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: T.secondary.withValues(alpha: .55),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Text(
+                  _speedLabel(speed),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          )
+        : avatar;
     final button = SizedBox(
       width: 40,
       height: 40,
@@ -1163,7 +1208,7 @@ class _AudioNoteState extends State<AudioNote> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          if (!widget.outgoing) ...[avatar, const SizedBox(width: 6)],
+          if (!widget.outgoing) ...[lead, const SizedBox(width: 6)],
           button,
           const SizedBox(width: 2),
           Expanded(
@@ -1191,7 +1236,7 @@ class _AudioNoteState extends State<AudioNote> {
               ],
             ),
           ),
-          if (widget.outgoing) ...[const SizedBox(width: 8), avatar],
+          if (widget.outgoing) ...[const SizedBox(width: 8), lead],
         ],
       ),
     );
@@ -1251,26 +1296,28 @@ class _TrackPainter extends CustomPainter {
 }
 
 /// A shared location: a map-styled tile with the place, opening Maps on tap.
-/// A shared location as WhatsApp frames one: the map, then the place's name
-/// and address (or its coordinates), and a link to open it in Google Maps.
+/// A shared location as WhatsApp frames one: the map fills the bubble; a
+/// named place puts its name and address under it, a bare pin carries the
+/// time over the map. Tapping it opens Google Maps.
 class LocationCard extends StatelessWidget {
-  const LocationCard(this.location, {super.key});
+  const LocationCard(this.location, {super.key, this.stamp});
   final Json location;
+
+  /// Drawn over the map when the pin has no name or address to sit under.
+  final Message? stamp;
   @override
   Widget build(BuildContext context) {
     final place = locationOf(location);
     if (place == null) return const SizedBox.shrink();
-    final title = place.name.isNotEmpty
+    final named = place.name.isNotEmpty || place.address.isNotEmpty;
+    final label = place.name.isNotEmpty
         ? place.name
         : place.address.isNotEmpty
         ? place.address
-        : 'Shared location';
-    final detail = place.name.isNotEmpty && place.address.isNotEmpty
-        ? place.address
-        : coordinates(place.latitude, place.longitude);
+        : 'Location';
     return Semantics(
       button: true,
-      label: 'Open $title in Google Maps',
+      label: 'Open $label in Google Maps',
       child: GestureDetector(
         onTap: () => openInMaps(place.latitude, place.longitude),
         child: SizedBox(
@@ -1280,59 +1327,69 @@ class LocationCard extends StatelessWidget {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(6.5),
-                child: LocationPreview(place.latitude, place.longitude),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(6, 8, 6, 0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Stack(
                   children: [
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: T.ink,
-                      ),
+                    LocationPreview(
+                      place.latitude,
+                      place.longitude,
+                      height: 150,
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      detail,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12.5, color: T.muted),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                margin: const EdgeInsets.only(top: 8),
-                padding: const EdgeInsets.symmetric(vertical: 9),
-                decoration: const BoxDecoration(
-                  border: Border(top: BorderSide(color: T.edge)),
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.map_outlined, size: 17, color: T.green),
-                    SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        'Open in Google Maps',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: T.green,
+                    if (stamp != null && !named)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          height: 34,
+                          padding: const EdgeInsets.fromLTRB(0, 0, 7, 5),
+                          alignment: Alignment.bottomRight,
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Colors.transparent, Colors.black38],
+                            ),
+                          ),
+                          child: OverlayStamp(stamp!),
                         ),
                       ),
-                    ),
                   ],
                 ),
               ),
+              if (named)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(6, 7, 6, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (place.name.isNotEmpty)
+                        Text(
+                          place.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            color: T.ink,
+                          ),
+                        ),
+                      if (place.address.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            place.address,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              height: 1.3,
+                              color: T.muted,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
             ],
           ),
         ),
@@ -1347,79 +1404,47 @@ class CallPermissionCard extends StatelessWidget {
   const CallPermissionCard(this.business, {super.key});
   final String business;
   @override
-  Widget build(BuildContext context) => SizedBox(
+  Widget build(BuildContext context) => Container(
     width: 250,
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    margin: const EdgeInsets.only(top: 6, bottom: 2),
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .55),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          margin: const EdgeInsets.only(top: 6),
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: .55),
-            borderRadius: BorderRadius.circular(8),
+          width: 36,
+          height: 36,
+          decoration: const BoxDecoration(
+            color: T.surfaceHigh,
+            shape: BoxShape.circle,
           ),
-          child: Row(
+          child: const Icon(Icons.call_outlined, size: 19, color: T.ink),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: const BoxDecoration(
-                  color: T.surfaceHigh,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.call_outlined, size: 19, color: T.ink),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      business.isEmpty
-                          ? 'Can we call you?'
-                          : 'Can $business call you?',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: T.ink,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    const Text(
-                      'You can update your preference anytime in the '
-                      'business profile.',
-                      style: TextStyle(fontSize: 12, color: T.muted),
-                    ),
-                  ],
+              Text(
+                business.isEmpty
+                    ? 'Can we call you?'
+                    : 'Can $business call you?',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: T.ink,
                 ),
               ),
-            ],
-          ),
-        ),
-        Container(
-          margin: const EdgeInsets.only(top: 8),
-          padding: const EdgeInsets.symmetric(vertical: 9),
-          decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: T.edge)),
-          ),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Flexible(
-                child: Text(
-                  'Choose preference',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: T.green,
-                  ),
-                ),
+              const SizedBox(height: 3),
+              const Text(
+                'You can update your preference anytime in the business '
+                'profile.',
+                style: TextStyle(fontSize: 12, color: T.muted),
               ),
-              Icon(Icons.expand_more, size: 18, color: T.green),
             ],
           ),
         ),

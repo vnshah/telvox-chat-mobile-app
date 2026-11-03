@@ -520,9 +520,13 @@ class MessageBubble extends StatelessWidget {
     this.contentAfter,
     this.tight = false,
     this.showStamp = true,
+    this.footer,
   });
   final Message message;
   final Widget? contentBefore, contentAfter;
+
+  /// Under the time, the bubble's full width: WhatsApp's reply buttons.
+  final Widget? footer;
 
   /// Media fills the bubble with a thin margin, as WhatsApp frames photos.
   final bool tight;
@@ -558,16 +562,17 @@ class MessageBubble extends StatelessWidget {
         child: body,
       );
     }
+    final inset = EdgeInsets.fromLTRB(
+      framed ? 3 : 9,
+      framed ? 3 : 5,
+      framed ? 3 : 8,
+      framed ? 3 : 6,
+    );
     return CustomPaint(
       painter: first ? _BubbleTail(m.out, color) : null,
       child: Container(
         constraints: BoxConstraints(maxWidth: width),
-        padding: EdgeInsets.fromLTRB(
-          framed ? 3 : 9,
-          framed ? 3 : 5,
-          framed ? 3 : 8,
-          framed ? 3 : 6,
-        ),
+        padding: footer == null ? inset : EdgeInsets.zero,
         decoration: BoxDecoration(
           color: color,
           borderRadius: BorderRadius.only(
@@ -577,151 +582,226 @@ class MessageBubble extends StatelessWidget {
             bottomRight: const Radius.circular(9),
           ),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (m.reply != null)
-              GestureDetector(
-                // Tapping a quote shows the message it quotes, as on WhatsApp.
-                onTap: ReplyTap.of(context),
-                child: Container(
-                  margin: const EdgeInsets.only(bottom: 6),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: T.green.withValues(alpha: .07),
-                    border: const Border(
-                      left: BorderSide(color: T.green, width: 3),
+        child: _withFooter(
+          inset,
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (m.reply != null)
+                GestureDetector(
+                  // Tapping a quote shows the message it quotes, as on WhatsApp.
+                  onTap: ReplyTap.of(context),
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 7,
                     ),
-                    borderRadius: BorderRadius.circular(5),
+                    decoration: BoxDecoration(
+                      color: T.green.withValues(alpha: .07),
+                      border: const Border(
+                        left: BorderSide(color: T.green, width: 3),
+                      ),
+                      borderRadius: BorderRadius.circular(5),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          m.replyAuthor ?? 'Reply',
+                          style: const TextStyle(
+                            color: T.green,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          m.reply!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: T.secondary,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                ),
+              ?contentBefore,
+              if (m.type == 'image' || m.type == 'order') ...[
+                SizedBox(
+                  width: width - 8,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: const SizedBox(
+                      height: 122,
+                      child: ProductArt(icon: Icons.shopping_bag_outlined),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+              ],
+              if (m.type == 'document')
+                Container(
+                  padding: const EdgeInsets.all(9),
+                  margin: const EdgeInsets.only(bottom: 4),
+                  decoration: BoxDecoration(
+                    color: T.green.withValues(alpha: .06),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        m.replyAuthor ?? 'Reply',
-                        style: const TextStyle(
-                          color: T.green,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                      const AppIcon(
+                        Icons.description_outlined,
+                        color: T.brass,
+                        size: 28,
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              m.text,
+                              style: const TextStyle(fontSize: 12),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const Text(
+                              'PDF · 248 KB',
+                              style: TextStyle(fontSize: 9, color: T.muted),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        m.reply!,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: T.secondary,
-                        ),
+                      const SizedBox(width: 10),
+                      const AppIcon(
+                        Icons.download_rounded,
+                        size: 20,
+                        color: T.brass,
                       ),
                     ],
                   ),
                 ),
-              ),
-            ?contentBefore,
-            if (m.type == 'image' || m.type == 'order') ...[
-              SizedBox(
-                width: width - 8,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: const SizedBox(
-                    height: 122,
-                    child: ProductArt(icon: Icons.shopping_bag_outlined),
+              if (m.type == 'audio')
+                SizedBox(
+                  width: width - 17,
+                  child: Row(
+                    children: [
+                      const AppIcon(
+                        Icons.play_arrow_rounded,
+                        color: T.green,
+                        size: 30,
+                      ),
+                      const SizedBox(width: 4),
+                      const Expanded(
+                        child: SizedBox(height: 32, child: VoiceWave()),
+                      ),
+                      const SizedBox(width: 8),
+                      Text('0:12', style: mono(size: 9)),
+                    ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 6),
+              if (m.type == 'location')
+                Container(
+                  height: 88,
+                  width: width - 17,
+                  margin: const EdgeInsets.only(bottom: 6),
+                  decoration: BoxDecoration(
+                    color: T.selected,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Center(
+                    child: AppIcon(Icons.location_on, color: T.green, size: 32),
+                  ),
+                ),
+              if (contentAfter != null) ...[
+                if (m.text.isNotEmpty)
+                  Text(
+                    m.text,
+                    style: const TextStyle(fontSize: 15, height: 1.3),
+                  ),
+                contentAfter!,
+              ],
+              if (showStamp || !metadataOnly) body,
             ],
-            if (m.type == 'document')
-              Container(
-                padding: const EdgeInsets.all(9),
-                margin: const EdgeInsets.only(bottom: 4),
-                decoration: BoxDecoration(
-                  color: T.green.withValues(alpha: .06),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const AppIcon(
-                      Icons.description_outlined,
-                      color: T.brass,
-                      size: 28,
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            m.text,
-                            style: const TextStyle(fontSize: 12),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const Text(
-                            'PDF · 248 KB',
-                            style: TextStyle(fontSize: 9, color: T.muted),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    const AppIcon(
-                      Icons.download_rounded,
-                      size: 20,
-                      color: T.brass,
-                    ),
-                  ],
-                ),
-              ),
-            if (m.type == 'audio')
-              SizedBox(
-                width: width - 17,
-                child: Row(
-                  children: [
-                    const AppIcon(
-                      Icons.play_arrow_rounded,
-                      color: T.green,
-                      size: 30,
-                    ),
-                    const SizedBox(width: 4),
-                    const Expanded(
-                      child: SizedBox(height: 32, child: VoiceWave()),
-                    ),
-                    const SizedBox(width: 8),
-                    Text('0:12', style: mono(size: 9)),
-                  ],
-                ),
-              ),
-            if (m.type == 'location')
-              Container(
-                height: 88,
-                width: width - 17,
-                margin: const EdgeInsets.only(bottom: 6),
-                decoration: BoxDecoration(
-                  color: T.selected,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Center(
-                  child: AppIcon(Icons.location_on, color: T.green, size: 32),
-                ),
-              ),
-            if (contentAfter != null) ...[
-              if (m.text.isNotEmpty)
-                Text(m.text, style: const TextStyle(fontSize: 15, height: 1.3)),
-              contentAfter!,
-            ],
-            if (showStamp || !metadataOnly) body,
-          ],
+          ),
         ),
       ),
     );
   }
+
+  /// The content in its usual inset, with the footer across the full width
+  /// under it; without a footer, the content as it is (the inset is the
+  /// bubble's own padding then).
+  Widget _withFooter(EdgeInsets inset, Widget content) => footer == null
+      ? content
+      : IntrinsicWidth(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(padding: inset, child: content),
+              footer!,
+            ],
+          ),
+        );
+}
+
+/// WhatsApp's buttons under a message: full width, a hairline above each,
+/// the label centred with its icon. They show what the customer can tap.
+class BubbleButtons extends StatelessWidget {
+  const BubbleButtons(this.buttons, {super.key, this.iconAfter = false});
+  final List<(IconData?, String)> buttons;
+
+  /// The icon follows the label, as a dropdown's arrow does.
+  final bool iconAfter;
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (final (icon, label) in buttons)
+        Container(
+          constraints: const BoxConstraints(minHeight: 42),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          decoration: const BoxDecoration(
+            border: Border(top: BorderSide(color: T.edge)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (icon != null && !iconAfter)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Icon(icon, size: 18, color: T.green),
+                ),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: T.green,
+                  ),
+                ),
+              ),
+              if (icon != null && iconAfter)
+                Padding(
+                  padding: const EdgeInsets.only(left: 2),
+                  child: Icon(icon, size: 18, color: T.green),
+                ),
+            ],
+          ),
+        ),
+    ],
+  );
 }
 
 class _BubbleTail extends CustomPainter {
