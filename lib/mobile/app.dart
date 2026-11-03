@@ -9,6 +9,8 @@ import 'api.dart';
 import 'calls.dart';
 import 'local_cache.dart';
 import 'screens.dart';
+import 'share_intake.dart';
+import 'share_sheet.dart';
 
 class MobileApplication extends StatefulWidget {
   const MobileApplication({super.key, this.session});
@@ -24,17 +26,39 @@ class _MobileApplicationState extends State<MobileApplication> {
         final store = SecureSessionStore();
         return MobileSession(MobileApi(), store, cache: SqlLocalCache(store));
       })();
+
+  /// Files shared from another app, held until there is a number to send
+  /// them from (signed in, a number picked), then offered as WhatsApp does.
+  late final shares = ShareIntake();
+
   @override
   void initState() {
     super.initState();
     unawaited(session.restore());
     session.callPush.start();
+    shares.pending.addListener(_offerShare);
+    session.addListener(_offerShare);
+    unawaited(shares.start());
   }
 
   @override
   void dispose() {
+    shares.pending.removeListener(_offerShare);
+    session.removeListener(_offerShare);
+    shares.dispose();
     if (widget.session == null) session.dispose();
     super.dispose();
+  }
+
+  void _offerShare() {
+    if (shares.pending.value == null || !session.ready) return;
+    // After this frame: the navigator for the current app may be new.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final navigator = _navigator?.currentState;
+      if (!mounted || navigator == null || !session.ready) return;
+      final files = shares.take();
+      if (files != null) unawaited(openShare(navigator, session, files));
+    });
   }
 
   /// A fresh navigator key for each app instance the key below rebuilds, so a
