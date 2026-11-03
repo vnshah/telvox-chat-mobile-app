@@ -231,6 +231,9 @@ class _ChatComposerState extends State<ChatComposer>
   Timer? ticker, _hintTimer;
   bool lockHint = false;
   final levels = <double>[];
+
+  /// Levels received this recording, so the waveform knows a new one came.
+  int samples = 0;
   StreamSubscription<double>? _levels;
   static const cancelDistance = 110.0, lockDistance = 80.0;
   static const _tick = Duration(milliseconds: 100);
@@ -344,6 +347,7 @@ class _ChatComposerState extends State<ChatComposer>
       elapsed = Duration.zero;
       lockHint = false;
       levels.clear();
+      samples = 0;
     });
     ticker = Timer.periodic(_tick, (_) {
       if (mounted && !paused) setState(() => elapsed += _tick);
@@ -358,6 +362,7 @@ class _ChatComposerState extends State<ChatComposer>
         if (!mounted || paused) return;
         setState(() {
           levels.add(level);
+          samples++;
           if (levels.length > 120) levels.removeAt(0);
         });
       }, onError: (_) {});
@@ -661,6 +666,7 @@ class _ChatComposerState extends State<ChatComposer>
               ? LockedRecordingPanel(
                   elapsed: elapsed,
                   levels: levels,
+                  samples: samples,
                   paused: paused,
                   onDelete: _discard,
                   onPause: _togglePause,

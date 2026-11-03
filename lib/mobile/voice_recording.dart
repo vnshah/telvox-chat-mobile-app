@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 
 import '../ui/theme.dart';
 
@@ -9,24 +10,91 @@ String recordingClock(Duration d) =>
     '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
 
 /// The microphone's level as bars, newest on the right, as WhatsApp draws a
-/// recording while it is made.
-class LiveWaveform extends StatelessWidget {
-  const LiveWaveform(this.levels, {super.key, this.color = T.secondary});
+/// recording while it is made. Levels arrive about ten times a second; the
+/// bars glide left between them every frame, so the wave moves continuously
+/// with the sound rather than jumping.
+class LiveWaveform extends StatefulWidget {
+  const LiveWaveform(
+    this.levels, {
+    super.key,
+    required this.samples,
+    this.running = true,
+    this.color = T.secondary,
+  });
 
   /// 0 (silence) to 1, oldest first.
   final List<double> levels;
+
+  /// How many levels have arrived in all; a new one restarts the glide.
+  final int samples;
+
+  /// False while paused: the wave holds still.
+  final bool running;
   final Color color;
+
+  /// How often the recorder reports a level (DeviceVoiceRecorder.levels).
+  static const interval = Duration(milliseconds: 100);
   @override
-  Widget build(BuildContext context) => CustomPaint(
-    size: const Size(double.infinity, 30),
-    painter: _WaveformPainter(levels, color),
+  State<LiveWaveform> createState() => _LiveWaveformState();
+}
+
+class _LiveWaveformState extends State<LiveWaveform>
+    with SingleTickerProviderStateMixin {
+  /// Time on the frame clock, and when the latest level arrived on it.
+  Duration now = Duration.zero, sampleAt = Duration.zero;
+  late final Ticker ticker = createTicker(
+    (elapsed) => setState(() => now = elapsed),
   );
+
+  @override
+  void initState() {
+    super.initState();
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(LiveWaveform old) {
+    super.didUpdateWidget(old);
+    if (old.samples != widget.samples) sampleAt = now;
+    _sync();
+  }
+
+  void _sync() {
+    if (widget.running && !ticker.isActive) {
+      ticker.start();
+      now = sampleAt = Duration.zero;
+    } else if (!widget.running && ticker.isActive) {
+      ticker.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    ticker.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // How far between the last level and the next one: 0 just after a level
+    // arrived, 1 when the next is due.
+    final between = widget.running
+        ? ((now - sampleAt).inMicroseconds /
+                  LiveWaveform.interval.inMicroseconds)
+              .clamp(0.0, 1.0)
+        : 0.0;
+    return CustomPaint(
+      size: const Size(double.infinity, 30),
+      painter: _WaveformPainter(List.of(widget.levels), widget.color, between),
+    );
+  }
 }
 
 class _WaveformPainter extends CustomPainter {
-  _WaveformPainter(this.levels, this.color);
+  _WaveformPainter(this.levels, this.color, this.between);
   final List<double> levels;
   final Color color;
+  final double between;
   static const bar = 3.0, gap = 2.0;
 
   @override
@@ -35,13 +103,18 @@ class _WaveformPainter extends CustomPainter {
       ..color = color
       ..strokeWidth = bar
       ..strokeCap = StrokeCap.round;
-    final fits = (size.width / (bar + gap)).floor();
+    final step = bar + gap;
+    final fits = (size.width / step).floor() + 1;
     final shown = levels.length > fits
         ? levels.sublist(levels.length - fits)
         : levels;
     final mid = size.height / 2;
+    // Every bar slides left by part of a step as the next level is awaited.
+    final slide = between * step;
+    canvas.clipRect(Offset.zero & size);
     for (var i = 0; i < shown.length; i++) {
-      final x = size.width - (shown.length - i) * (bar + gap) + bar / 2;
+      final x = size.width - (shown.length - i) * step + bar / 2 - slide + step;
+      if (x < -bar) continue;
       final half = math.max(1.5, shown[i] * size.height / 2);
       canvas.drawLine(Offset(x, mid - half), Offset(x, mid + half), paint);
     }
@@ -49,6 +122,8 @@ class _WaveformPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_WaveformPainter old) =>
+      old.between != between ||
+      old.color != color ||
       old.levels.length != levels.length ||
       (levels.isNotEmpty && old.levels.last != levels.last);
 }
@@ -124,6 +199,7 @@ class LockedRecordingPanel extends StatelessWidget {
     super.key,
     required this.elapsed,
     required this.levels,
+    required this.samples,
     required this.paused,
     required this.onDelete,
     required this.onPause,
@@ -131,6 +207,9 @@ class LockedRecordingPanel extends StatelessWidget {
   });
   final Duration elapsed;
   final List<double> levels;
+
+  /// Levels received so far; see [LiveWaveform.samples].
+  final int samples;
   final bool paused;
   final VoidCallback onDelete, onPause, onSend;
   @override
@@ -152,6 +231,8 @@ class LockedRecordingPanel extends StatelessWidget {
             Expanded(
               child: LiveWaveform(
                 levels,
+                samples: samples,
+                running: !paused,
                 color: paused ? T.muted : T.secondary,
               ),
             ),

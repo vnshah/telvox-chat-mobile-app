@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:telvox_chat_mobile_app/mobile/composer.dart';
+import 'package:telvox_chat_mobile_app/mobile/voice_recording.dart';
 import 'package:telvox_chat_mobile_app/mobile/media.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
@@ -336,6 +337,44 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
       expect(note, isNull);
+    });
+
+    testWidgets('the recording wave moves every frame, not once a second', (
+      tester,
+    ) async {
+      final gesture = await hold(tester);
+      await gesture.moveBy(const Offset(0, -100));
+      await gesture.up();
+      await tester.pump();
+      CustomPainter wave() => tester
+          .widget<CustomPaint>(
+            find.descendant(
+              of: find.byType(LiveWaveform),
+              matching: find.byType(CustomPaint),
+            ),
+          )
+          .painter!;
+
+      recorder.level.add(.8);
+      await tester.pump();
+      final before = wave();
+      // No new level yet: the bars still glide between frames.
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(wave().shouldRepaint(before), isTrue);
+      final later = wave();
+      // A new level is drawn at once.
+      recorder.level.add(.2);
+      await tester.pump();
+      expect(wave().shouldRepaint(later), isTrue);
+
+      // Paused, the wave holds still.
+      await tester.tap(find.text('Pause'));
+      await tester.pump();
+      final held = wave();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(wave().shouldRepaint(held), isFalse);
+      await tester.tap(find.byTooltip('Delete recording'));
+      await tester.pumpAndSettle();
     });
   });
 }
