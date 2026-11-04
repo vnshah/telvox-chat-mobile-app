@@ -11,6 +11,7 @@ import 'package:video_player/video_player.dart';
 import '../ui/theme.dart';
 import 'api.dart';
 import 'media_cache.dart';
+import 'media_preview.dart';
 
 class Attachment {
   const Attachment(this.file, this.kind, this.size, this.mime);
@@ -237,24 +238,29 @@ class MediaTile extends StatelessWidget {
   final MessageMedia media;
   @override
   Widget build(BuildContext context) => InkWell(
-    onTap: () => Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => MediaViewer(media)),
-    ),
+    onTap: () => ['image', 'sticker', 'video'].contains(media.type)
+        ? openMediaPreview(context, media, heroTag: 'tile-${media.url}')
+        : Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => MediaViewer(media)),
+          ),
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         if (media.type == 'image' || media.type == 'sticker')
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image(
-              image: mediaImage(media.url),
-              width: 250,
-              height: 180,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => const SizedBox(
-                height: 90,
-                child: Center(child: Icon(Icons.broken_image_outlined)),
+            child: Hero(
+              tag: 'tile-${media.url}',
+              child: Image(
+                image: mediaImage(media.url),
+                width: 250,
+                height: 180,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const SizedBox(
+                  height: 90,
+                  child: Center(child: Icon(Icons.broken_image_outlined)),
+                ),
               ),
             ),
           )

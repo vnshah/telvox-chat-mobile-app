@@ -47,6 +47,10 @@ class FakePlayers extends VideoPlayerPlatform {
 
   @override
   Future<void> init() async {}
+
+  /// A video's picture: nothing to draw in a test.
+  @override
+  Widget buildViewWithOptions(VideoViewOptions options) => const SizedBox();
   @override
   Future<int?> createWithOptions(VideoCreationOptions options) async {
     final id = ++_next;

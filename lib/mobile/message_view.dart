@@ -13,6 +13,7 @@ import '../ui/conversation.dart' show SwipeReply;
 import 'api.dart';
 import 'maps.dart';
 import 'media.dart';
+import 'media_preview.dart';
 import 'models.dart';
 import 'message_content.dart';
 import 'voice_waveform.dart';
@@ -151,6 +152,17 @@ class LiveMessageView extends StatelessWidget {
           file,
           stamp: c.text.isEmpty ? presentation : null,
           progress: progress,
+          heroTag: 'media-${m.tempId.isNotEmpty ? m.tempId : m.id}',
+          title: m.outgoing
+              ? 'You'
+              : (contactName?.trim().isNotEmpty ?? false)
+              ? contactName!.trim()
+              : 'Customer',
+          subtitle: m.json['created_at'] == null
+              ? ''
+              : '${const MobileClock().dayLabel(m.json['created_at'])}, '
+                    '${const MobileClock().time(m.json['created_at'])}',
+          caption: c.text,
         ),
       ),
       'document' when file != null => MessageBubble(
@@ -597,8 +609,23 @@ class OverlayStamp extends StatelessWidget {
 /// A photo or video filling its bubble; tap to open full screen. While it
 /// uploads, WhatsApp's ring shows how much has gone over it.
 class MediaFrame extends StatelessWidget {
-  const MediaFrame(this.media, {super.key, this.stamp, this.progress});
+  const MediaFrame(
+    this.media, {
+    super.key,
+    this.stamp,
+    this.progress,
+    this.heroTag,
+    this.title = '',
+    this.subtitle = '',
+    this.caption = '',
+  });
   final MessageMedia media;
+
+  /// Names this picture for the preview to grow out of and back into.
+  final Object? heroTag;
+
+  /// Who sent it and when, and its caption, for the preview's bars.
+  final String title, subtitle, caption;
 
   /// Drawn over the bottom of the media when there is no caption.
   final Message? stamp;
@@ -608,12 +635,23 @@ class MediaFrame extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final video = media.type == 'video';
+    final tag = heroTag ?? 'media-${media.url}';
+    Widget flying(Widget child) => Hero(
+      tag: tag,
+      flightShuttleBuilder: (f, a, d, from, to) =>
+          mediaFlight(f, a, d, from, to, media),
+      child: child,
+    );
     return GestureDetector(
       onTap: progress != null
           ? null
-          : () => Navigator.push(
+          : () => openMediaPreview(
               context,
-              MaterialPageRoute(builder: (_) => MediaViewer(media)),
+              media,
+              heroTag: tag,
+              title: title,
+              subtitle: subtitle,
+              caption: caption,
             ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(6.5),
@@ -624,30 +662,36 @@ class MediaFrame extends StatelessWidget {
             fit: StackFit.expand,
             children: [
               if (video)
-                media.url.scheme == 'file'
-                    ? VideoFirstFrame(media.url)
-                    : const ColoredBox(color: Color(0xFF1F2C34))
+                flying(
+                  media.url.scheme == 'file'
+                      ? VideoFirstFrame(media.url)
+                      : const ColoredBox(color: Color(0xFF1F2C34)),
+                )
               else
-                Image(
-                  image: mediaImage(media.url),
-                  fit: BoxFit.cover,
-                  gaplessPlayback: true,
-                  semanticLabel: 'Photo',
-                  loadingBuilder: (context, child, loading) => loading == null
-                      ? child
-                      : const ColoredBox(
-                          color: T.wash,
-                          child: Center(
-                            child: SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                flying(
+                  Image(
+                    image: mediaImage(media.url),
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                    semanticLabel: 'Photo',
+                    loadingBuilder: (context, child, loading) => loading == null
+                        ? child
+                        : const ColoredBox(
+                            color: T.wash,
+                            child: Center(
+                              child: SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                  errorBuilder: (_, _, _) => const ColoredBox(
-                    color: T.wash,
-                    child: Icon(Icons.broken_image_outlined, color: T.muted),
+                    errorBuilder: (_, _, _) => const ColoredBox(
+                      color: T.wash,
+                      child: Icon(Icons.broken_image_outlined, color: T.muted),
+                    ),
                   ),
                 ),
               if (progress != null)

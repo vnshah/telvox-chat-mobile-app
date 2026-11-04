@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../ui/theme.dart';
 import 'api.dart';
 import 'media.dart';
+import 'media_preview.dart';
 import 'models.dart';
 import 'screens.dart' show mobileNotice;
 
@@ -307,23 +308,22 @@ class _MediaThumb extends StatelessWidget {
     final url = mediaUri(item['media_link'], apiBase);
     final video = '${item['type']}' == 'video';
     final size = (MediaQuery.devicePixelRatioOf(context) * 132).round();
+    final tag = 'gallery-${item['id'] ?? item['media_link']}';
     return Semantics(
       button: true,
       label: video ? 'Video' : 'Photo',
       child: GestureDetector(
         onTap: url == null
             ? null
-            : () => Navigator.push(
+            : () => openMediaPreview(
                 context,
-                MaterialPageRoute(
-                  builder: (_) => MediaViewer(
-                    MessageMedia(
-                      '${item['type']}',
-                      url,
-                      '${item['media_name'] ?? 'Media'}',
-                    ),
-                  ),
+                MessageMedia(
+                  '${item['type']}',
+                  url,
+                  '${item['media_name'] ?? 'Media'}',
                 ),
+                heroTag: tag,
+                title: '${item['media_name'] ?? ''}',
               ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(4),
@@ -333,22 +333,36 @@ class _MediaThumb extends StatelessWidget {
               fit: StackFit.expand,
               children: [
                 if (!video && url != null)
-                  Image(
-                    image: ResizeImage(mediaImage(url), width: size),
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => const Center(
-                      child: AppIcon(
-                        Icons.broken_image_outlined,
-                        color: T.muted,
+                  Hero(
+                    tag: tag,
+                    flightShuttleBuilder: (f, a, d, from, to) => mediaFlight(
+                      f,
+                      a,
+                      d,
+                      from,
+                      to,
+                      MessageMedia('image', url, ''),
+                    ),
+                    child: Image(
+                      image: ResizeImage(mediaImage(url), width: size),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => const Center(
+                        child: AppIcon(
+                          Icons.broken_image_outlined,
+                          color: T.muted,
+                        ),
                       ),
                     ),
                   )
                 else
-                  const Center(
-                    child: AppIcon(
-                      Icons.videocam_outlined,
-                      size: 28,
-                      color: T.muted,
+                  Hero(
+                    tag: tag,
+                    child: const Center(
+                      child: AppIcon(
+                        Icons.videocam_outlined,
+                        size: 28,
+                        color: T.muted,
+                      ),
                     ),
                   ),
                 if (video)
