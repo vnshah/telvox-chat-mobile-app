@@ -1050,68 +1050,48 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
     await quick(contact, choice);
   }
 
-  /// WhatsApp's row swipes: right marks it read, left closes or reopens it.
-  /// The row never vanishes on its own; the quiet reload moves it.
+  /// WhatsApp's row swipe: right marks an unread chat read. The row never
+  /// vanishes on its own; the quiet reload moves it. There is no left swipe:
+  /// closing or reopening is in the long-press sheet and the chat's details.
   Widget swipeable(Json contact, Widget row) {
     final unread = (number(contact['unread_message_count']) ?? 0) > 0;
-    final closed = number(contact['conversation_status']) == 0;
-    Widget background(bool start, IconData icon, String label, Color colour) =>
-        ColoredBox(
-          color: colour,
-          child: Align(
-            alignment: start ? Alignment.centerLeft : Alignment.centerRight,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, color: Colors.white),
-                  const SizedBox(width: 8),
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
+    if (!unread) return row;
     return Dismissible(
       key: ValueKey('swipe-${contact['id']}'),
-      direction: unread
-          ? DismissDirection.horizontal
-          : DismissDirection.endToStart,
-      dismissThresholds: const {
-        DismissDirection.startToEnd: 0.3,
-        DismissDirection.endToStart: 0.3,
-      },
-      background: background(
-        true,
-        Icons.mark_chat_read_outlined,
-        'Read',
-        T.brass,
+      direction: DismissDirection.startToEnd,
+      dismissThresholds: const {DismissDirection.startToEnd: 0.3},
+      background: const ColoredBox(
+        color: T.brass,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.mark_chat_read_outlined, color: Colors.white),
+                SizedBox(width: 8),
+                Text(
+                  'Read',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
-      secondaryBackground: background(
-        false,
-        closed ? Icons.replay : Icons.task_alt,
-        closed ? 'Reopen' : 'Close',
-        closed ? T.bronze : T.green,
-      ),
-      confirmDismiss: (direction) async {
-        await quick(
-          contact,
-          direction == DismissDirection.startToEnd ? 'read' : 'status',
-        );
+      confirmDismiss: (_) async {
+        await quick(contact, 'read');
         return false;
       },
       child: row,
     );
   }
 
-  /// One quick change to a chat, from the long-press sheet or a swipe.
+  /// One quick change to a chat, from the long-press sheet or the read swipe.
   Future<void> quick(Json contact, String choice) async {
     final id = number(contact['id']);
     if (id == null) return;

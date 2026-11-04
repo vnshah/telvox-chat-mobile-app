@@ -78,7 +78,7 @@ void main() {
     session.dispose();
   });
 
-  testWidgets('swiping a row marks it read or closes it, and keeps it', (
+  testWidgets('swiping right marks a row read; swiping left does nothing', (
     tester,
   ) async {
     final calls = <String>[];
@@ -109,8 +109,11 @@ void main() {
       const Duration(milliseconds: 300),
     );
     await settle(tester);
-    expect(calls, contains('inbox/conversation/close'));
-    expect(find.text('Conversation closed.'), findsOneWidget);
+    // Closing is in the long-press sheet and the chat's details, not a swipe.
+    expect(calls, isNot(contains('inbox/conversation/close')));
+    expect(calls, isNot(contains('inbox/conversation/reopen')));
+    expect(find.text('Conversation closed.'), findsNothing);
+    expect(find.text('Ravi'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();
     session.dispose();
