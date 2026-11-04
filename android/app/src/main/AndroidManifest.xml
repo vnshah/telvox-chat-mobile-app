@@ -17,6 +17,13 @@
     <!-- The incoming-call library asks to run its call service as a camera
          service too; calls here are voice only. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" tools:node="remove" />
+    <!-- A library asks to read shared storage; Android 13 and later replaced
+         that permission with the photo picker the app uses, so it is only
+         asked for where it still means something. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"
+        tools:node="replace" />
     <application
         android:label="Telvox Chat"
         android:name="${applicationName}"

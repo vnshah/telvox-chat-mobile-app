@@ -76,6 +76,10 @@
 	<string>Send your current location to a customer in a chat.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Telvox Chat uses the microphone for voice notes you record and for WhatsApp calls with customers.</string>
+	<!-- Only standard HTTPS and the system's own encryption: exempt from
+	     export documentation, so App Store Connect does not ask each upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# Builds the release APK the way every shipped build must be built.
+# Builds the app the way every shipped build must be built.
+#
+#   tool/build_release.sh          an APK for testing on phones (arm64)
+#   tool/build_release.sh store    an App Bundle (.aab) to upload to Play
+#
+# Each build is numbered with the count of commits on this branch, so every
+# upload has a higher number than the last, as the stores require; the
+# version name (1.0.0) comes from pubspec.yaml. BUILD_NUMBER=... overrides.
 #
 # Firebase (push notifications) and the API origin are compiled in from
 # config/development.json (git-ignored; see config/development.example.json).
@@ -20,11 +27,27 @@ for key in API_BASE_URL FIREBASE_API_KEY FIREBASE_APP_ID FIREBASE_MESSAGING_SEND
     exit 1
   fi
 done
-[[ -f android/key.properties ]] || echo "Note: no android/key.properties; signing with this machine's debug key." >&2
+target=apk
+if [[ ${1:-} == store ]]; then
+  target=store
+  shift
+fi
+if [[ ! -f android/key.properties ]]; then
+  if [[ $target == store ]]; then
+    echo "No android/key.properties: a store build must be signed with the release key. Not building." >&2
+    exit 1
+  fi
+  echo "Note: no android/key.properties; signing with this machine's debug key." >&2
+fi
+build_number=${BUILD_NUMBER:-$(git rev-list --count HEAD)}
 
 defines=(--dart-define-from-file="$config")
 if [[ -f android/maps.properties ]]; then
   defines+=(--dart-define=GOOGLE_MAPS=true)
 fi
 
-flutter build apk --release --target-platform android-arm64 "${defines[@]}" "$@"
+if [[ $target == store ]]; then
+  flutter build appbundle --release --build-number="$build_number" "${defines[@]}" "$@"
+else
+  flutter build apk --release --target-platform android-arm64 --build-number="$build_number" "${defines[@]}" "$@"
+fi

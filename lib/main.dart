@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -6,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import 'core/config/app_config.dart';
 import 'mobile/conversation_sync.dart';
+import 'mobile/crash_reports.dart';
 import 'mobile/app.dart';
 
 void main() {
@@ -29,4 +32,6 @@ void main() {
     ], await rootBundle.loadString('assets/fonts/Roboto-OFL.txt'));
   });
   runApp(const MobileApplication());
+  // After the first frame is on its way: crash reports never delay start-up.
+  unawaited(startCrashReports());
 }

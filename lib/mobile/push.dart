@@ -1,13 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../core/config/app_config.dart';
 import 'api.dart';
 import 'call_push.dart';
+import 'crash_reports.dart';
 import 'notification_sound.dart';
 
 /// What a push carries, whichever way it reached the app.
@@ -173,16 +173,7 @@ class FirebasePushTransport implements PushTransport {
 
   @override
   Future<bool> start() async {
-    if (Firebase.apps.isEmpty) {
-      await Firebase.initializeApp(
-        options: FirebaseOptions(
-          apiKey: AppConfig.firebasePlatformApiKey,
-          appId: AppConfig.firebasePlatformAppId,
-          messagingSenderId: AppConfig.firebaseSenderId,
-          projectId: AppConfig.firebaseProjectId,
-        ),
-      );
-    }
+    await startFirebase();
     final settings = await FirebaseMessaging.instance.requestPermission();
     if (settings.authorizationStatus == AuthorizationStatus.denied) {
       return false;

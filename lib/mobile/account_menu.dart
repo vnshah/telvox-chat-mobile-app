@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
@@ -53,11 +54,152 @@ class AccountMenu extends StatelessWidget {
           label: 'Notification sound',
           onPressed: () => chooseNotificationSound(context, session),
         ),
+        (label: 'Privacy policy', onPressed: () => openPrivacyPolicy(context)),
+        (
+          label: 'Delete account',
+          onPressed: () => requestAccountDeletion(context, session),
+        ),
         (label: 'Sign out', onPressed: onSignOut),
       ],
     );
   }
 }
+
+/// Where the privacy policy is published; the stores link the same page.
+const privacyPolicyUrl = 'https://telvox.dev/privacy';
+
+/// Opens the privacy policy in the phone's browser.
+Future<void> openPrivacyPolicy(BuildContext context) async {
+  var opened = false;
+  try {
+    opened = await launchUrl(
+      Uri.parse(privacyPolicyUrl),
+      mode: LaunchMode.externalApplication,
+    );
+  } catch (_) {}
+  if (!opened && context.mounted) {
+    mobileNotice(context, 'No app could open $privacyPolicyUrl.');
+  }
+}
+
+/// Asks for this account to be deleted, as both stores require an app to
+/// offer. The request goes to the Telvox team, who delete the account and
+/// its personal data; until then the account keeps working. Asked once: a
+/// second time says when it was asked.
+Future<void> requestAccountDeletion(
+  BuildContext context,
+  MobileSession session,
+) async {
+  final asked = DateTime.tryParse(
+    '${session.user?['deletion_requested_at'] ?? ''}',
+  );
+  if (asked != null) {
+    await _tell(
+      context,
+      'Deletion requested',
+      'You asked for this account to be deleted on ${_day(asked)}. '
+          'It will be deleted with its personal data, and signed out on '
+          'every phone. Until then you can keep working.',
+    );
+    return;
+  }
+  final confirmed = await _confirmDeletion(context);
+  if (!confirmed || !context.mounted) return;
+  try {
+    final answer = await session.api.post('me/deletion-request');
+    session.user = {
+      ...?session.user,
+      'deletion_requested_at':
+          answer['requested_at'] ?? DateTime.now().toUtc().toIso8601String(),
+    };
+    if (!context.mounted) return;
+    await _tell(
+      context,
+      'Request sent',
+      'The Telvox team will delete your account and its personal data, '
+          'and sign it out on every phone. Until then you can keep working.',
+    );
+  } catch (e) {
+    if (context.mounted) mobileNotice(context, e);
+  }
+}
+
+String _day(DateTime at) {
+  final d = at.toLocal();
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${two(d.day)}/${two(d.month)}/${d.year}';
+}
+
+const _deletionQuestion = 'Delete your account?';
+const _deletionBody =
+    'This asks the Telvox team to delete your account and its personal '
+    'data. Your business’s chats and contacts are not deleted. '
+    'This cannot be undone once the account is deleted.';
+
+Future<bool> _confirmDeletion(BuildContext context) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (dialog) => isCupertino(context)
+          ? CupertinoAlertDialog(
+              title: const Text(_deletionQuestion),
+              content: const Text(_deletionBody),
+              actions: [
+                CupertinoDialogAction(
+                  onPressed: () => Navigator.pop(dialog, false),
+                  child: const Text('Cancel'),
+                ),
+                CupertinoDialogAction(
+                  key: const ValueKey('delete-account-confirm'),
+                  isDestructiveAction: true,
+                  onPressed: () => Navigator.pop(dialog, true),
+                  child: const Text('Request deletion'),
+                ),
+              ],
+            )
+          : AlertDialog(
+              title: const Text(_deletionQuestion),
+              content: const Text(_deletionBody),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialog, false),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  key: const ValueKey('delete-account-confirm'),
+                  style: TextButton.styleFrom(foregroundColor: T.danger),
+                  onPressed: () => Navigator.pop(dialog, true),
+                  child: const Text('Request deletion'),
+                ),
+              ],
+            ),
+    ) ??
+    false;
+
+Future<void> _tell(BuildContext context, String title, String body) =>
+    showDialog<void>(
+      context: context,
+      builder: (dialog) => isCupertino(context)
+          ? CupertinoAlertDialog(
+              title: Text(title),
+              content: Text(body),
+              actions: [
+                CupertinoDialogAction(
+                  onPressed: () => Navigator.pop(dialog),
+                  child: const Text('OK'),
+                ),
+              ],
+            )
+          : AlertDialog(
+              title: Text(title),
+              content: Text(body),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialog),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+    );
 
 /// Lets the user pick the sound new messages make, the way the phone's own
 /// settings do: Android's radio dialog with Cancel and OK, or an iOS list

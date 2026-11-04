@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Crash reports (Firebase Crashlytics) without Google's google-services
+         Gradle plugin: the app takes its Firebase settings from
+         config/development.json instead, so no build ID is stamped in. The
+         reports are just as complete; Crashlytics is told not to require it. -->
+    <bool name="com.crashlytics.RequireBuildId">false</bool>
+</resources>

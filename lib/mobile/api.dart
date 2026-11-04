@@ -591,10 +591,18 @@ class MobileSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Signs this phone out. The server is told first, while the token is
+  /// still known; but the phone forgets the account even when the server
+  /// cannot be reached (offline, or already signed out there), so signing
+  /// out always works. A token the server never heard about expires there.
   Future<void> logout() async {
     await push.disable();
-    await api.post('auth/logout');
-    await store.delete(storageKey);
+    try {
+      await api.post('auth/logout').timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // Offline or refused: this phone still signs out.
+    }
+    await store.delete(storageKey).catchError((_) {});
     await store.delete(_openChatsKey).catchError((_) {});
     _expired();
     error = null;
