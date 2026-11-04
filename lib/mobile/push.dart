@@ -62,6 +62,9 @@ class PushService {
 
   /// Safe to call on every sign-in and number switch; work happens once.
   Future<void> enable() async {
+    // iPhone calls ring through Apple's VoIP push, which needs neither
+    // Firebase nor permission to show notifications.
+    unawaited(session.callPush.registerVoip());
     final transport = _transport;
     if (transport == null || !session.signedIn) return;
     if (!_started) {
@@ -145,6 +148,7 @@ class PushService {
   Future<void> disable() async {
     _registered = null;
     _token = null;
+    session.callPush.forgetVoip();
     try {
       await _transport?.forget();
     } catch (_) {

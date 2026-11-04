@@ -154,6 +154,7 @@ class CallPushBridge {
   CallPushBridge(this.session);
   final MobileSession session;
   StreamSubscription<CallEvent?>? _events;
+  String? _voipSent;
 
   void start() {
     try {
@@ -178,8 +179,35 @@ class CallPushBridge {
     }
   }
 
+  /// An iPhone rings for a call while the app is closed only through a VoIP
+  /// push, which Apple sends to a token of its own (PushKit, registered in
+  /// AppDelegate). The server gets it on sign-in and number switch, and
+  /// again whenever iOS changes it; it then rings this phone that way.
+  Future<void> registerVoip() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS || !session.signedIn) {
+      return;
+    }
+    try {
+      final token = await FlutterCallkitIncoming.getDevicePushTokenVoIP();
+      if (token == null || token.isEmpty || token == _voipSent) return;
+      await session.api.request(
+        'me/voip-token',
+        method: 'PUT',
+        data: {'token': token},
+      );
+      _voipSent = token;
+    } catch (_) {
+      // Retried on the next sign-in, number switch or token change.
+    }
+  }
+
+  /// Signing out: the server forgets the token with the device.
+  void forgetVoip() => _voipSent = null;
+
   void _event(CallEvent? event) {
     switch (event) {
+      case CallEventActionDidUpdateDevicePushTokenVoip():
+        unawaited(registerVoip());
       case CallEventActionCallAccept(:final callKitParams):
         final extra = callKitParams.extra;
         if (extra != null) {

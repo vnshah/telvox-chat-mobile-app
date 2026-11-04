@@ -80,9 +80,14 @@
 	     export documentation, so App Store Connect does not ask each upload. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- remote-notification: new-message pushes. voip: Apple's call pushes,
+	     which ring a closed app (PushKit + CallKit, see AppDelegate). audio:
+	     the WhatsApp call keeps talking when the phone locks or the app goes
+	     to the background. -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
+		<string>voip</string>
 		<string>audio</string>
 	</array>
 	<key>AppGroupId</key>
