@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'offline_bar.dart' show OfflineNote;
 import 'message_content.dart' show MessageContent, readableText;
 import 'models.dart';
 
@@ -64,6 +65,11 @@ class _CallHistoryPageState extends State<CallHistoryPage> {
       body: list == null
           ? error == null
                 ? const Center(child: CircularProgressIndicator())
+                : isOffline(error)
+                ? OfflineNote(() {
+                    setState(() => error = null);
+                    load();
+                  })
                 : _Message(
                     icon: Icons.error_outline,
                     text: error!,

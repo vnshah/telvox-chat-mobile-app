@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 /// Whether the phone can reach the Telvox server: true online, false offline.
 ///
@@ -148,4 +148,17 @@ class ConnectionMonitor extends ValueNotifier<bool> {
     _again?.cancel();
     super.dispose();
   }
+}
+
+/// The [ConnectionMonitor], for screens below the offline bar: a screen
+/// with nothing to show offline loads itself once back online.
+class ConnectionScope extends InheritedNotifier<ConnectionMonitor> {
+  const ConnectionScope({
+    super.key,
+    required ConnectionMonitor connection,
+    required super.child,
+  }) : super(notifier: connection);
+
+  static ConnectionMonitor? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<ConnectionScope>()?.notifier;
 }

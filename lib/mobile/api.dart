@@ -41,6 +41,17 @@ String newRequestId() {
   return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
 }
 
+/// What a request that got no answer says. Never shown as an error: the
+/// offline bar already says the phone is offline.
+const unreachableMessage =
+    'Could not reach the server. Check your connection and try again.';
+
+/// Whether [error] (an [ApiFailure] or its text) is only "no network".
+bool isOffline(Object? error) =>
+    error != null &&
+    ((error is ApiFailure && error.unreachable) ||
+        '$error' == unreachableMessage);
+
 class ApiFailure implements Exception {
   const ApiFailure(
     this.message, {
@@ -166,7 +177,7 @@ class MobileApi {
     } on DioException catch (_) {
       onUnreachable?.call();
       throw const ApiFailure(
-        'Could not reach the server. Check your connection and try again.',
+        unreachableMessage,
         uncertain: true,
         unreachable: true,
       );

@@ -14,6 +14,7 @@ import 'call_push.dart';
 import 'calls.dart';
 import 'chat.dart';
 import 'models.dart';
+import 'offline_bar.dart' show OfflineNote;
 import 'realtime.dart';
 import 'list_sync.dart';
 import 'message_content.dart';
@@ -21,6 +22,8 @@ import 'send_policy.dart' show flag;
 import 'tickets.dart';
 
 void mobileNotice(BuildContext context, Object message) {
+  // No network is not news: the offline bar already says it.
+  if (isOffline(message)) return;
   ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text('$message')));
 }
@@ -104,19 +107,24 @@ class LoadingBar extends StatelessWidget {
   );
 }
 
-Widget failure(String message, VoidCallback retry) => Center(
-  child: Padding(
-    padding: const EdgeInsets.all(24),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(message, textAlign: TextAlign.center),
-        const SizedBox(height: 12),
-        AppButton.outlined(onPressed: retry, child: const Text('Try again')),
-      ],
-    ),
-  ),
-);
+Widget failure(String message, VoidCallback retry) => isOffline(message)
+    ? OfflineNote(retry)
+    : Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(message, textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              AppButton.outlined(
+                onPressed: retry,
+                child: const Text('Try again'),
+              ),
+            ],
+          ),
+        ),
+      );
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen(this.session, {super.key});
@@ -131,6 +139,12 @@ class _LoginScreenState extends State<LoginScreen> {
       code = TextEditingController();
   bool busy = false, hidden = true, recovery = false;
   String? error, method;
+
+  /// The sign-in's error, if any; "no network" is the offline bar's.
+  String? get shownError => [
+    error,
+    widget.session.error,
+  ].where((e) => e != null && !isOffline(e)).firstOrNull;
   @override
   void dispose() {
     email.dispose();
@@ -340,11 +354,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: const Text('Send verification code'),
                       ),
                   ],
-                  if (error != null || widget.session.error != null)
+                  if (shownError != null)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       child: Text(
-                        error ?? widget.session.error!,
+                        shownError!,
                         style: const TextStyle(color: T.danger),
                       ),
                     ),
@@ -1497,7 +1511,8 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
         ),
       ),
       LoadingBar(busy),
-      if (error != null && items.isNotEmpty)
+      // Offline, the phone's copy stays as it is; the bar says why.
+      if (error != null && items.isNotEmpty && !isOffline(error))
         Padding(
           padding: const EdgeInsets.all(8),
           child: Text(error!, style: const TextStyle(color: T.danger)),
@@ -1702,7 +1717,7 @@ class _QuickAddContactState extends State<QuickAddContact> {
                 ),
               ],
             ),
-            if (error != null)
+            if (error != null && !isOffline(error))
               Padding(
                 padding: const EdgeInsets.only(top: 10),
                 child: Text(

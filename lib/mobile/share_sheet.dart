@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart' show XFile;
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'offline_bar.dart' show OfflineNote;
 import 'chat.dart' show LiveChat;
 import 'conversation_window.dart';
 import 'media.dart';
@@ -180,7 +181,9 @@ class _ShareTargetsPageState extends State<ShareTargetsPage> {
                   ),
                 if (loading) const LinearProgressIndicator(minHeight: 2),
                 Expanded(
-                  child: error != null
+                  child: isOffline(error)
+                      ? OfflineNote(load)
+                      : error != null
                       ? EmptyView(
                           title: 'Chats did not load',
                           description: error!,

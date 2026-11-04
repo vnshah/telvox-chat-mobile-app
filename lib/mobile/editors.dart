@@ -127,7 +127,7 @@ class _ActionEditorState extends State<ActionEditor> {
               ),
             ),
           ),
-        if (error != null)
+        if (error != null && !isOffline(error))
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(error!, style: const TextStyle(color: T.danger)),
@@ -611,7 +611,7 @@ class _ChoiceSheetState extends State<ChoiceSheet> {
                     onChanged: (v) => setState(() => query = v),
                   ),
                 ),
-              if (error != null)
+              if (error != null && !isOffline(error))
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
                   child: Text(error!, style: const TextStyle(color: T.danger)),

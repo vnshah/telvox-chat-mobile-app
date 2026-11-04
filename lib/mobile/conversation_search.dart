@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'offline_bar.dart' show OfflineNote;
 import 'message_content.dart' show readableText;
 import 'models.dart';
 
@@ -131,6 +132,7 @@ class _ConversationSearchPageState extends State<ConversationSearchPage> {
         'Type at least $searchMinLength letters to search this chat.',
       );
     }
+    if (isOffline(error)) return OfflineNote(search);
     if (error != null) {
       return EmptyView(
         title: 'Search did not finish',

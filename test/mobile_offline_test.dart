@@ -8,6 +8,8 @@ import 'package:telvox_chat_mobile_app/mobile/api.dart';
 import 'package:telvox_chat_mobile_app/mobile/app.dart';
 import 'package:telvox_chat_mobile_app/mobile/connection.dart';
 import 'package:telvox_chat_mobile_app/mobile/realtime.dart';
+import 'package:telvox_chat_mobile_app/mobile/screens.dart';
+import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
 import 'mobile_api_test.dart' show MemoryStore, answer, fakeApi;
 import 'mobile_realtime_test.dart' show FakeSocket, realtimeConfig;
@@ -365,4 +367,96 @@ void main() {
       session.dispose();
     },
   );
+
+  group('no network is not shown as an error', () {
+    testWidgets('a notice about it is skipped; other notices show', (
+      tester,
+    ) async {
+      late BuildContext context;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (c) {
+                context = c;
+                return const SizedBox();
+              },
+            ),
+          ),
+        ),
+      );
+      mobileNotice(
+        context,
+        const ApiFailure(unreachableMessage, unreachable: true),
+      );
+      await tester.pump();
+      expect(find.byType(SnackBar), findsNothing);
+
+      mobileNotice(context, 'This contact’s messaging window has expired.');
+      await tester.pump();
+      expect(find.byType(SnackBar), findsOneWidget);
+    });
+
+    testWidgets('nothing to show offline: a quiet note that loads itself', (
+      tester,
+    ) async {
+      final net = FakeNetwork()..reachable = false;
+      final monitor = net.monitor();
+      await tester.runAsync(monitor.start);
+      var retried = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: T.themeFor(TargetPlatform.android),
+          home: Scaffold(
+            body: ConnectionScope(
+              connection: monitor,
+              child: failure(unreachableMessage, () => retried++),
+            ),
+          ),
+        ),
+      );
+      expect(find.byKey(const ValueKey('offline-note')), findsOneWidget);
+      expect(find.text('You’re offline'), findsOneWidget);
+      expect(find.textContaining('Could not reach'), findsNothing);
+
+      // Back online: it loads by itself.
+      net.reachable = true;
+      await tester.runAsync(monitor.check);
+      await tester.pump();
+      await tester.pump();
+      expect(retried, 1);
+
+      // Any other failure is still shown as it is.
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: failure('Something else went wrong.', () {})),
+        ),
+      );
+      expect(find.text('Something else went wrong.'), findsOneWidget);
+      monitor.dispose();
+    });
+
+    testWidgets('the inbox opened offline says so quietly, not in red', (
+      tester,
+    ) async {
+      final session = MobileSession(
+        fakeApi(
+          (r, h) => h.reject(
+            DioException.connectionError(requestOptions: r, reason: 'offline'),
+          ),
+        )..wabaId = 7,
+        MemoryStore(),
+      )..user = {'id': 1};
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: T.themeFor(TargetPlatform.android),
+          home: Scaffold(body: LiveList(session, kind: 0)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Could not reach'), findsNothing);
+      expect(find.byKey(const ValueKey('offline-note')), findsOneWidget);
+      session.dispose();
+    });
+  });
 }

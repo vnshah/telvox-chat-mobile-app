@@ -283,7 +283,8 @@ class _TemplateSendState extends State<TemplateSend> {
                     ],
                   ),
                 ),
-                if (error != null) Notice(error!, danger: true),
+                if (error != null && !isOffline(error))
+                  Notice(error!, danger: true),
               ],
             ),
       bottomNavigationBar: ready == null

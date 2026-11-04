@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'offline_bar.dart' show OfflineNote;
 import 'editors.dart' show confirmAction;
 import 'message_content.dart' show readableText;
 import 'models.dart' show MobileClock;
@@ -136,6 +137,8 @@ class _NotesPageState extends State<NotesPage> {
               padding: EdgeInsets.all(40),
               child: Center(child: CircularProgressIndicator.adaptive()),
             )
+          else if (notes.isEmpty && isOffline(error))
+            OfflineNote(load)
           else if (notes.isEmpty && error != null)
             EmptyView(
               title: 'Notes did not load',

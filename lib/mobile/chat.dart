@@ -1642,7 +1642,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           children: [
             RealtimeNotice(widget.session.realtime),
             LoadingBar(showLoading),
-            if (error != null)
+            if (error != null && !isOffline(error))
               MaterialBanner(
                 content: Text(error!),
                 actions: [

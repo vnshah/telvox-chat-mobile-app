@@ -73,7 +73,10 @@ class _OfflineBarState extends State<OfflineBar> {
           child: MediaQuery.removePadding(
             context: context,
             removeTop: shown,
-            child: widget.child,
+            child: ConnectionScope(
+              connection: widget.connection,
+              child: widget.child,
+            ),
           ),
         ),
       ],
@@ -150,4 +153,62 @@ class _OfflineBarState extends State<OfflineBar> {
       ),
     );
   }
+}
+
+/// In place of an error when there is nothing on the phone to show and no
+/// network: a quiet note, not red text (the offline bar says why). It loads
+/// by itself once the network is back; Try again still asks at once.
+class OfflineNote extends StatefulWidget {
+  const OfflineNote(this.retry, {super.key});
+  final VoidCallback retry;
+
+  @override
+  State<OfflineNote> createState() => _OfflineNoteState();
+}
+
+class _OfflineNoteState extends State<OfflineNote> {
+  bool? _wasOnline;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final online = ConnectionScope.of(context)?.online;
+    if (online == true && _wasOnline == false) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.retry();
+      });
+    }
+    _wasOnline = online;
+  }
+
+  @override
+  Widget build(BuildContext context) => Center(
+    key: const ValueKey('offline-note'),
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.cloud_off_outlined, size: 40, color: T.muted),
+          const SizedBox(height: 12),
+          const Text(
+            'You’re offline',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: T.ink,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'This will load when you’re back online.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: T.muted),
+          ),
+          const SizedBox(height: 8),
+          TextButton(onPressed: widget.retry, child: const Text('Try again')),
+        ],
+      ),
+    ),
+  );
 }

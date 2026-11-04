@@ -553,7 +553,7 @@ class _CreateTicketPageState extends State<CreateTicketPage> {
                 ),
               ),
               if (searching) const LinearProgressIndicator(),
-              if (error != null)
+              if (error != null && !isOffline(error))
                 Text(error!, style: const TextStyle(color: T.danger)),
               Expanded(
                 child: ListView(
