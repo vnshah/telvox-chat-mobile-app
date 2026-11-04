@@ -142,16 +142,12 @@ instead. Regenerate the archive only if a non-Git transfer is required.
 
 ## 4. Runtime architecture and source map
 
-### Two application paths
+### One application
 
-`lib/main.dart` selects the application through `AppConfig.preview`:
-
-- Default / `UI_PREVIEW=false`: `MobileApplication` from `lib/mobile/app.dart`.
-- `UI_PREVIEW=true`: `TelvoxApp` from `lib/app/app.dart`, the older preview router.
-
-Do not accidentally work only in preview files and claim the live experience is
-fixed. Shared theme, bubbles and controls are reused, but live screen state and
-requests live in `lib/mobile/`.
+`lib/main.dart` starts `MobileApplication` from `lib/mobile/app.dart`. Screens,
+state and requests live in `lib/mobile/`; `lib/ui/` holds the shared theme,
+bubbles and controls. (The older sample-data design preview, `UI_PREVIEW`, was
+removed on 4 November 2026.)
 
 ### Main implementation files
 
@@ -175,10 +171,9 @@ requests live in `lib/mobile/`.
 | `lib/mobile/editors.dart` | Reusable validated mutation editor and confirmation dialog |
 | `lib/ui/theme.dart` | Telvox colors, typography, reusable UI pieces, Material/Cupertino themes |
 | `lib/ui/platform.dart` | Platform-aware controls used throughout the project |
-| `lib/ui/chat_message.dart` | Shared bubble/tail/receipt/reaction/menu layout; supports real rich content |
-| `lib/ui/conversation.dart` | Preview chat plus reused wallpaper/swipe-reply behavior |
-| `lib/ui/data.dart` | Preview models/fixtures; shared lightweight Message presentation model |
-| `lib/app/app.dart` | Preview routes, not the live API navigation |
+| `lib/ui/chat_message.dart` | Shared bubble/tail/receipt/menu layout; supports real rich content |
+| `lib/ui/conversation.dart` | Swipe-to-reply and shared chat pieces |
+| `lib/ui/data.dart` | The lightweight `Message` model bubbles are drawn from |
 | `mockups/telvox-theme-comparison.html` | Earlier theme comparison/reference, not runtime UI |
 
 ### State and navigation
@@ -205,7 +200,6 @@ configured URL already ends in that prefix. Do not hardcode origins in screens.
 | --- | --- | --- |
 | `APP_ENV` | `development` | Environment label |
 | `API_BASE_URL` | `https://chat.telvox.dev` | Whole-app API origin override |
-| `UI_PREVIEW` | `false` | Opt into sample-data design preview |
 | `DISPLAY_TIMEZONE` | `Asia/Kolkata` | IANA display timezone |
 | `DATABASE_UTC_OFFSET_MINUTES` | `330` | Assumption for naive server timestamps; confirm with backend |
 
@@ -248,7 +242,6 @@ current Forge host. Inspect the real files and this verified environment record.
 | `html` | Decode/strip log markup for readable history |
 | `file_selector` | System file picker; selected instead of file_picker due to dependency conflicts |
 | `video_player`, `url_launcher` | Video/audio playback and external document opening |
-| `flutter_riverpod`, `go_router` | Existing app/preview state and routing foundations |
 | `firebase_core`, `firebase_messaging`, `flutter_local_notifications` | Installed groundwork; real push integration deferred |
 | `flutter_test`, `flutter_lints` | Regression tests and analysis |
 | `cupertino_icons` | iOS-style icon assets |
@@ -499,8 +492,8 @@ network delay. Do not automatically enable production signing or publish it.
   closed composer, slow-network optimistic send and chat layouts.
 - `test/mobile_screens_test.dart`: 15 integrated page variants across Android/iOS
   small-phone layouts plus gallery filter regression.
-- `test/widget_test.dart`, `test/platform_test.dart`, `test/chat_layout_test.dart`:
-  existing preview/shared-control/bubble/platform regressions.
+- `test/chat_layout_test.dart`: bubble fit, receipts clear of text, emoji
+  sizing and swipe-to-reply.
 - `test/support/ui.dart`: fonts and screenshot helpers.
 
 The 60-test result was from 29 October. It was **not rerun for this handoff-only
@@ -634,8 +627,7 @@ Run targeted tests during edits; run broader regressions when shared rendering o
 session/navigation changes warrant them. Do not run the old Mac SDK against the
 pinned manifest and “fix” the resulting version errors by downgrading the project.
 
-Debug API build defaults to the development origin. Preview requires an explicit
-`--dart-define=UI_PREVIEW=true`; label preview binaries clearly to avoid confusion.
+Debug API build defaults to the development origin.
 
 ### Copy the APK back
 

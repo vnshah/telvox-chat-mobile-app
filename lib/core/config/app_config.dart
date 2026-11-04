@@ -40,10 +40,6 @@ abstract final class AppConfig {
       firebasePlatformAppId != '' &&
       firebaseSenderId != '' &&
       firebaseProjectId != '';
-  static const preview = bool.fromEnvironment(
-    'UI_PREVIEW',
-    defaultValue: false,
-  );
   static const displayTimezone = String.fromEnvironment(
     'DISPLAY_TIMEZONE',
     defaultValue: 'Asia/Kolkata',

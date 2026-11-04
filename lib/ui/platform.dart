@@ -1,19 +1,8 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 bool isCupertino(BuildContext context) =>
     Theme.of(context).platform == TargetPlatform.iOS;
-
-/// Only the screen-review library overrides this; normal use follows the device.
-final platformPreviewProvider =
-    NotifierProvider<PlatformPreview, TargetPlatform?>(PlatformPreview.new);
-
-class PlatformPreview extends Notifier<TargetPlatform?> {
-  @override
-  TargetPlatform? build() => null;
-  void select(TargetPlatform? platform) => state = platform;
-}
 
 class AppIcon extends StatelessWidget {
   const AppIcon(
@@ -364,26 +353,6 @@ class AppIconButton extends StatelessWidget {
   }
 }
 
-class AppFab extends StatelessWidget {
-  const AppFab({
-    super.key,
-    required this.onPressed,
-    required this.child,
-    required this.tooltip,
-  });
-  final VoidCallback onPressed;
-  final Widget child;
-  final String tooltip;
-  @override
-  Widget build(BuildContext context) => isCupertino(context)
-      ? const SizedBox.shrink()
-      : FloatingActionButton(
-          onPressed: onPressed,
-          tooltip: tooltip,
-          child: child,
-        );
-}
-
 class AppChoiceChip extends StatelessWidget {
   const AppChoiceChip({
     super.key,
@@ -438,42 +407,6 @@ class AppChoiceChip extends StatelessWidget {
       ),
     );
   }
-}
-
-class AppFilterChip extends StatelessWidget {
-  const AppFilterChip({
-    super.key,
-    required this.label,
-    required this.selected,
-    required this.onSelected,
-    this.labelStyle,
-  });
-  final Widget label;
-  final bool selected;
-  final ValueChanged<bool> onSelected;
-  final TextStyle? labelStyle;
-  @override
-  Widget build(BuildContext context) => isCupertino(context)
-      ? AppChoiceChip(
-          label: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (selected) ...[
-                const Icon(CupertinoIcons.check_mark, size: 13),
-                const SizedBox(width: 5),
-              ],
-              label,
-            ],
-          ),
-          selected: selected,
-          onSelected: onSelected,
-        )
-      : FilterChip(
-          label: label,
-          selected: selected,
-          onSelected: onSelected,
-          labelStyle: labelStyle,
-        );
 }
 
 class PlatformFilters extends StatelessWidget {
@@ -783,150 +716,6 @@ class _AppTextFormFieldState extends State<AppTextFormField> {
   }
 }
 
-class AppDropdownField<T> extends StatelessWidget {
-  const AppDropdownField({
-    super.key,
-    this.initialValue,
-    required this.items,
-    required this.onChanged,
-    this.decoration = const InputDecoration(),
-    this.isExpanded = false,
-  });
-  final T? initialValue;
-  final List<DropdownMenuItem<T>> items;
-  final ValueChanged<T?> onChanged;
-  final InputDecoration decoration;
-  final bool isExpanded;
-  @override
-  Widget build(BuildContext context) {
-    if (!isCupertino(context)) {
-      return DropdownButtonFormField<T>(
-        initialValue: initialValue,
-        items: items,
-        onChanged: onChanged,
-        decoration: decoration,
-        isExpanded: isExpanded,
-      );
-    }
-    return FormField<T>(
-      initialValue: initialValue,
-      builder: (field) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (decoration.labelText != null) ...[
-            Text(
-              decoration.labelText!,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(height: 7),
-          ],
-          CupertinoButton(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            color: const Color(0xFFF2F2F5),
-            borderRadius: BorderRadius.circular(9),
-            onPressed: () async {
-              FocusManager.instance.primaryFocus?.unfocus();
-              final value = await showCupertinoModalPopup<T>(
-                context: context,
-                builder: (popup) => CupertinoActionSheet(
-                  title: Text(decoration.labelText ?? 'Choose an option'),
-                  actions: [
-                    for (final item in items)
-                      CupertinoActionSheetAction(
-                        onPressed: () => Navigator.pop(popup, item.value),
-                        child: item.child,
-                      ),
-                  ],
-                  cancelButton: CupertinoActionSheetAction(
-                    onPressed: () => Navigator.pop(popup),
-                    child: const Text('Cancel'),
-                  ),
-                ),
-              );
-              if (value != null && field.mounted) {
-                field.didChange(value);
-                onChanged(value);
-              }
-            },
-            child: Row(
-              children: [
-                Expanded(
-                  child: DefaultTextStyle.merge(
-                    style: Theme.of(context).textTheme.bodyLarge,
-                    child:
-                        items
-                            .where((item) => item.value == field.value)
-                            .firstOrNull
-                            ?.child ??
-                        Text(decoration.hintText ?? 'Choose'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const Icon(CupertinoIcons.chevron_down, size: 17),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class AppMenuButton<T> extends StatelessWidget {
-  const AppMenuButton({
-    super.key,
-    required this.itemBuilder,
-    required this.onSelected,
-    this.tooltip,
-    this.icon,
-    this.iconColor,
-  });
-  final PopupMenuItemBuilder<T> itemBuilder;
-  final ValueChanged<T> onSelected;
-  final String? tooltip;
-  final Widget? icon;
-  final Color? iconColor;
-  @override
-  Widget build(BuildContext context) {
-    if (!isCupertino(context)) {
-      return PopupMenuButton<T>(
-        itemBuilder: itemBuilder,
-        onSelected: onSelected,
-        tooltip: tooltip,
-        icon: icon,
-        iconColor: iconColor,
-      );
-    }
-    return AppIconButton(
-      tooltip: tooltip,
-      icon: icon ?? Icon(CupertinoIcons.ellipsis, color: iconColor),
-      onPressed: () async {
-        FocusManager.instance.primaryFocus?.unfocus();
-        final entries = itemBuilder(context)
-            .whereType<PopupMenuItem<T>>()
-            .toList();
-        final value = await showCupertinoModalPopup<T>(
-          context: context,
-          builder: (popup) => CupertinoActionSheet(
-            actions: [
-              for (final item in entries)
-                CupertinoActionSheetAction(
-                  onPressed: () => Navigator.pop(popup, item.value),
-                  child: item.child ?? const SizedBox(),
-                ),
-            ],
-            cancelButton: CupertinoActionSheetAction(
-              onPressed: () => Navigator.pop(popup),
-              child: const Text('Cancel'),
-            ),
-          ),
-        );
-        if (value != null && context.mounted) onSelected(value);
-      },
-    );
-  }
-}
-
 /// One row of an [OverflowMenu].
 typedef OverflowItem = ({String label, VoidCallback onPressed});
 
@@ -1098,42 +887,6 @@ class AppSwitchTile extends StatelessWidget {
         );
 }
 
-class AppCheckboxTile extends StatelessWidget {
-  const AppCheckboxTile({
-    super.key,
-    required this.value,
-    required this.onChanged,
-    required this.title,
-    this.contentPadding,
-    this.controlAffinity = ListTileControlAffinity.platform,
-  });
-  final bool? value;
-  final ValueChanged<bool?> onChanged;
-  final Widget title;
-  final EdgeInsetsGeometry? contentPadding;
-  final ListTileControlAffinity controlAffinity;
-  @override
-  Widget build(BuildContext context) => isCupertino(context)
-      ? AppListTile(
-          title: title,
-          contentPadding: contentPadding,
-          onTap: () => onChanged(value != true),
-          trailing: CupertinoCheckbox(
-            value: value,
-            tristate: value == null,
-            onChanged: onChanged,
-            activeColor: CupertinoTheme.of(context).primaryColor,
-          ),
-        )
-      : CheckboxListTile(
-          value: value,
-          onChanged: onChanged,
-          title: title,
-          contentPadding: contentPadding,
-          controlAffinity: controlAffinity,
-        );
-}
-
 PreferredSizeWidget platformAppBar(
   BuildContext context, {
   required Widget title,
@@ -1162,61 +915,5 @@ PreferredSizeWidget platformAppBar(
     trailing: actions == null
         ? null
         : Row(mainAxisSize: MainAxisSize.min, children: actions),
-  );
-}
-
-Future<DateTime?> showAppDatePicker({
-  required BuildContext context,
-  required DateTime initialDate,
-  required DateTime firstDate,
-  required DateTime lastDate,
-}) {
-  if (!isCupertino(context)) {
-    return showDatePicker(
-      context: context,
-      initialDate: initialDate,
-      firstDate: firstDate,
-      lastDate: lastDate,
-    );
-  }
-  FocusManager.instance.primaryFocus?.unfocus();
-  var selected = initialDate;
-  return showCupertinoModalPopup<DateTime>(
-    context: context,
-    builder: (popup) => Material(
-      color: CupertinoColors.systemBackground,
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 300,
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  CupertinoButton(
-                    onPressed: () => Navigator.pop(popup),
-                    child: const Text('Cancel'),
-                  ),
-                  CupertinoButton(
-                    onPressed: () => Navigator.pop(popup, selected),
-                    child: const Text('Done'),
-                  ),
-                ],
-              ),
-              Expanded(
-                child: CupertinoDatePicker(
-                  mode: CupertinoDatePickerMode.date,
-                  initialDateTime: initialDate,
-                  minimumDate: firstDate,
-                  maximumDate: lastDate,
-                  onDateTimeChanged: (date) => selected = date,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ),
   );
 }
