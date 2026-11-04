@@ -109,270 +109,6 @@ class _MessageText extends StatelessWidget {
   }
 }
 
-typedef MessageAction = (String value, String label, IconData icon);
-
-Future<String?> showMessageActions({
-  required BuildContext context,
-  required Message message,
-  required Rect? anchor,
-  required bool first,
-  required bool starred,
-  required String reaction,
-  required List<MessageAction> actions,
-}) => showGeneralDialog<String>(
-  context: context,
-  barrierDismissible: true,
-  barrierLabel: 'Dismiss message actions',
-  barrierColor: T.ink.withValues(alpha: .24),
-  transitionDuration: MediaQuery.disableAnimationsOf(context)
-      ? Duration.zero
-      : const Duration(milliseconds: 130),
-  transitionBuilder: (_, animation, _, child) =>
-      FadeTransition(opacity: animation, child: child),
-  pageBuilder: (dialog, _, _) => SafeArea(
-    child: Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(dialog).bottom),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final origin = Offset(0, MediaQuery.paddingOf(dialog).top);
-          final localAnchor =
-              (anchor ?? Rect.fromLTWH(16, constraints.maxHeight / 3, 220, 60))
-                  .shift(-origin);
-          return CustomMultiChildLayout(
-            delegate: _MessageActionsLayout(
-              anchor: localAnchor,
-              out: message.out,
-            ),
-            children: [
-              LayoutId(
-                id: 'reactions',
-                child: Material(
-                  key: const ValueKey('message-reaction-picker'),
-                  color: Colors.white,
-                  elevation: 5,
-                  shadowColor: T.ink.withValues(alpha: .18),
-                  borderRadius: BorderRadius.circular(32),
-                  child: Padding(
-                    padding: const EdgeInsets.all(5),
-                    child: Row(
-                      children: [
-                        for (final emoji in [
-                          '👍',
-                          '🤍',
-                          '😊',
-                          '😂',
-                          '😮',
-                          '🙏',
-                        ])
-                          Expanded(
-                            child: Tooltip(
-                              message: 'React with $emoji',
-                              child: Semantics(
-                                selected: reaction == emoji,
-                                button: true,
-                                child: InkResponse(
-                                  onTap: () =>
-                                      Navigator.pop(dialog, 'emoji:$emoji'),
-                                  radius: 22,
-                                  child: Container(
-                                    height: 44,
-                                    alignment: Alignment.center,
-                                    decoration: BoxDecoration(
-                                      color: reaction == emoji
-                                          ? T.selected
-                                          : null,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: Text(
-                                      emoji,
-                                      textScaler: TextScaler.noScaling,
-                                      style: const TextStyle(fontSize: 24),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        Expanded(
-                          child: AppIconButton(
-                            tooltip: 'More reactions',
-                            padding: EdgeInsets.zero,
-                            onPressed: () =>
-                                Navigator.pop(dialog, 'more-reactions'),
-                            icon: const AppIcon(
-                              Icons.add,
-                              size: 23,
-                              color: T.secondary,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              LayoutId(
-                id: 'preview',
-                child: SingleChildScrollView(
-                  key: const ValueKey('selected-message-preview'),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 1,
-                    ),
-                    child: Material(
-                      type: MaterialType.transparency,
-                      child: MessageBubble(
-                        message: message,
-                        first: first,
-                        starred: starred,
-                        maxWidth: math.min(
-                          localAnchor.width,
-                          math.max(1, constraints.maxWidth - 38),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              LayoutId(
-                id: 'actions',
-                child: Material(
-                  key: const ValueKey('message-action-menu'),
-                  color: Colors.white,
-                  elevation: 5,
-                  shadowColor: T.ink.withValues(alpha: .18),
-                  borderRadius: BorderRadius.circular(
-                    isCupertino(context) ? 14 : 16,
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (
-                          var index = 0;
-                          index < actions.length;
-                          index++
-                        ) ...[
-                          if (index > 0 &&
-                              (isCupertino(context) ||
-                                  actions[index].$1 == 'delete'))
-                            const Divider(height: 1, thickness: .5),
-                          _MessageActionTile(
-                            action: actions[index],
-                            onTap: () =>
-                                Navigator.pop(dialog, actions[index].$1),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    ),
-  ),
-);
-
-class _MessageActionTile extends StatelessWidget {
-  const _MessageActionTile({required this.action, required this.onTap});
-  final MessageAction action;
-  final VoidCallback onTap;
-  @override
-  Widget build(BuildContext context) {
-    final apple = isCupertino(context);
-    final color = action.$1 == 'delete' ? T.danger : T.ink;
-    final icon = AppIcon(action.$3, size: 20, color: color);
-    return InkWell(
-      onTap: onTap,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 44),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Row(
-            children: [
-              if (!apple) ...[icon, const SizedBox(width: 14)],
-              Expanded(
-                child: Text(
-                  action.$2,
-                  style: TextStyle(fontSize: 14, color: color),
-                ),
-              ),
-              if (apple) ...[const SizedBox(width: 14), icon],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Fit all three surfaces into the available viewport. A very long selected
-/// message scrolls independently so its actions remain reachable above a keyboard.
-class _MessageActionsLayout extends MultiChildLayoutDelegate {
-  _MessageActionsLayout({required this.anchor, required this.out});
-  final Rect anchor;
-  final bool out;
-  @override
-  void performLayout(Size size) {
-    final width = math.max(0.0, size.width - 24);
-    final height = math.max(0.0, size.height - 24);
-    final reactions = layoutChild(
-      'reactions',
-      BoxConstraints(
-        minWidth: math.min(width, 320),
-        maxWidth: math.min(width, 320),
-        maxHeight: math.min(56, height),
-      ),
-    );
-    final actions = layoutChild(
-      'actions',
-      BoxConstraints(
-        minWidth: math.min(width, 250),
-        maxWidth: math.min(width, 250),
-        maxHeight: math.max(
-          0,
-          math.min(height * .54, height - reactions.height - 56),
-        ),
-      ),
-    );
-    final preview = layoutChild(
-      'preview',
-      BoxConstraints(
-        minWidth: math.min(width, anchor.width + 14),
-        maxWidth: math.min(width, anchor.width + 14),
-        maxHeight: math.max(0, height - reactions.height - actions.height - 16),
-      ),
-    );
-    final totalHeight = reactions.height + preview.height + actions.height + 16;
-    final top = (anchor.top - reactions.height - 8)
-        .clamp(12.0, math.max(12.0, size.height - totalHeight - 12))
-        .toDouble();
-    double left(double childWidth, {bool preview = false}) =>
-        (out
-                ? anchor.right + (preview ? 7 : 0) - childWidth
-                : anchor.left - (preview ? 7 : 0))
-            .clamp(12.0, math.max(12.0, size.width - childWidth - 12));
-    positionChild('reactions', Offset(left(reactions.width), top));
-    positionChild(
-      'preview',
-      Offset(left(preview.width, preview: true), top + reactions.height + 8),
-    );
-    positionChild(
-      'actions',
-      Offset(left(actions.width), top + reactions.height + preview.height + 16),
-    );
-  }
-
-  @override
-  bool shouldRelayout(_MessageActionsLayout oldDelegate) =>
-      anchor != oldDelegate.anchor || out != oldDelegate.out;
-}
-
 /// The time and delivery ticks in a bubble's corner. Public so content that
 /// lays out its own last line (a voice note, a call) can place it there, as
 /// WhatsApp does, instead of on a row of its own.
@@ -641,14 +377,25 @@ class MessageBubble extends StatelessWidget {
                     child: AppIcon(Icons.location_on, color: T.green, size: 32),
                   ),
                 ),
-              if (contentAfter != null) ...[
-                if (m.text.isNotEmpty)
-                  Text(
-                    m.text,
-                    style: const TextStyle(fontSize: 15, height: 1.3),
+              if (contentAfter != null)
+                // Framed tight around a photo, the words keep their margin.
+                Padding(
+                  padding: tight
+                      ? const EdgeInsets.fromLTRB(6, 5, 5, 0)
+                      : EdgeInsets.zero,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (m.text.isNotEmpty)
+                        Text(
+                          m.text,
+                          style: const TextStyle(fontSize: 15, height: 1.3),
+                        ),
+                      contentAfter!,
+                    ],
                   ),
-                contentAfter!,
-              ],
+                ),
               if (showStamp || !metadataOnly) body,
             ],
           ),

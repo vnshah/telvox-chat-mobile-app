@@ -19,6 +19,17 @@ class MessageContent {
   final Json row;
   String text = '';
   final buttons = <String>[];
+
+  /// What each button does, by its label: `reply`, `url`, `phone`, `copy`,
+  /// `flow` or `list`, so it shows WhatsApp's icon.
+  final buttonKinds = <String, String>{};
+
+  /// A template's or interactive message's footer: WhatsApp shows it small
+  /// and grey under the body.
+  String footer = '';
+
+  /// The customer's answers to a WhatsApp form (a flow), in [fields].
+  bool formResponse = false;
   final media = <Json>[];
   final fields = <String, String>{};
   VoiceCall? voiceCall;
@@ -91,8 +102,19 @@ class MessageContent {
     if (type == 'buttons') {
       for (final b in rows(c['buttons'])) {
         final label = readableText(b['text']);
-        if (label.isNotEmpty) buttons.add(label);
+        if (label.isEmpty) continue;
+        buttons.add(label);
+        buttonKinds[label] = switch ('${b['type']}'.toUpperCase()) {
+          'URL' => 'url',
+          'PHONE_NUMBER' => 'phone',
+          'COPY_CODE' || 'OTP' => 'copy',
+          'FLOW' => 'flow',
+          'CATALOG' || 'MPM' => 'list',
+          _ => 'reply',
+        };
       }
+    } else if (type == 'footer') {
+      footer = readableText(c['text']);
     } else if (type == 'carousel') {
       for (final card in rows(c['cards'])) {
         for (final part in rows(card['components'])) {
@@ -206,12 +228,13 @@ class MessageContent {
       final nfm = object(incoming['nfm_reply']);
       if (nfm.isNotEmpty) {
         text = 'Form response';
+        formResponse = true;
         form(nfm['response_json']);
       }
       final c = object(p['component'] ?? p['interactive']);
       line(object(c['header'])['text']);
       line(object(c['body'])['text']);
-      line(object(c['footer'])['text']);
+      footer = readableText(object(c['footer'])['text']);
       for (final kind in ['image', 'video', 'document']) {
         attachment(kind, object(c['header'])[kind]);
       }
@@ -232,13 +255,23 @@ class MessageContent {
       }
       for (final b in rows(action['buttons'])) {
         final label = readableText(object(b['reply'])['title'] ?? b['title']);
-        if (label.isNotEmpty) buttons.add(label);
+        if (label.isEmpty) continue;
+        buttons.add(label);
+        buttonKinds[label] = 'reply';
       }
       final params = object(action['parameters']);
       final cta = readableText(
         params['flow_cta'] ?? params['display_text'] ?? action['button'],
       );
-      if (cta.isNotEmpty) buttons.add(cta);
+      if (cta.isNotEmpty) {
+        buttons.add(cta);
+        buttonKinds[cta] =
+            params['flow_cta'] != null || action['name'] == 'flow'
+            ? 'flow'
+            : params['url'] != null || action['name'] == 'cta_url'
+            ? 'url'
+            : 'list';
+      }
       if (type.contains('Order')) {
         final order = object(params['order']);
         line(order['status'] == null ? null : 'Order ${order['status']}');
@@ -256,6 +289,7 @@ class MessageContent {
       }
       if (text.isEmpty && body is Map && !body.containsKey('component')) {
         text = 'Form response';
+        formResponse = true;
         form(body);
       }
       if (text.isEmpty) text = readableText(row['message_body']);

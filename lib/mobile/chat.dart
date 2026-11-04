@@ -9,7 +9,6 @@ import 'package:image_picker/image_picker.dart' show XFile;
 
 import '../ui/theme.dart';
 import '../ui/data.dart' show Message;
-import '../ui/chat_message.dart';
 import '../ui/conversation.dart' show ChatWallpaper;
 import 'call_history.dart';
 import 'camera.dart';
@@ -66,6 +65,17 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   List<ApiMessage> messages = [];
   final pending = <PendingSend>[];
   ApiMessage? reply;
+
+  /// The message long-pressed, as WhatsApp selects one: the top bar turns
+  /// into its actions, its row turns green and its reactions float above it.
+  ApiMessage? selected;
+
+  /// Where the selected bubble is on screen, for the reactions above it.
+  Rect? selectedAt;
+
+  /// The reactions show until the chat scrolls.
+  bool reacting = false;
+  final bodyKey = GlobalKey();
   Attachment? attachment;
   bool picking = false;
   Json? detail, ticket;
@@ -232,6 +242,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     scroll.addListener(() {
+      // Scrolling away from a selected message puts its reactions away.
+      if (reacting) setState(() => reacting = false);
       scrolledUp.value = newerMore || scroll.offset > 400;
       if (scroll.offset < 40 && !newerMore) unseen.value = 0;
       // Not while scrolling to a jumped-to message: only the reader's own
@@ -1113,90 +1125,230 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   }
 
   Message presentation(ApiMessage m) => messagePresentation(m);
-  Future<void> actions(ApiMessage m, BuildContext bubbleContext) async {
+
+  /// A long press selects the message, as WhatsApp does.
+  void select(ApiMessage m, BuildContext bubbleContext) {
     final box = bubbleContext.findRenderObject() as RenderBox?;
-    var choice = await showMessageActions(
+    HapticFeedback.selectionClick();
+    setState(() {
+      selected = m;
+      selectedAt = box == null || !box.hasSize
+          ? null
+          : box.localToGlobal(Offset.zero) & box.size;
+      reacting = true;
+    });
+  }
+
+  void unselect() => setState(() {
+    selected = null;
+    reacting = false;
+  });
+
+  /// While a message is selected, a tap on another selects that one, and a
+  /// tap on the same one lets it go.
+  void tapWhileSelecting(ApiMessage m, BuildContext rowContext) {
+    if (rowKey(m) == rowKey(selected!)) {
+      unselect();
+    } else {
+      select(m, rowContext);
+      setState(() => reacting = false);
+    }
+  }
+
+  bool canReply(ApiMessage m) => policy.canSend && m.wamid.isNotEmpty;
+  bool canReact(ApiMessage m) => m.wamid.isNotEmpty;
+  bool hasInfo(ApiMessage m) => m.outgoing && m.wamid.isNotEmpty;
+
+  Future<void> selectedAction(String action) async {
+    final m = selected;
+    if (m == null) return;
+    unselect();
+    switch (action) {
+      case 'reply':
+        setState(() => reply = m);
+      case 'copy':
+        await Clipboard.setData(ClipboardData(text: m.text));
+      case 'info':
+        await showMessageInfo(context, m);
+    }
+  }
+
+  Future<void> moreReactions(ApiMessage m) async {
+    setState(() => reacting = false);
+    final emoji = await showModalBottomSheet<String>(
       context: context,
-      message: presentation(m),
-      anchor: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
-      first: true,
-      starred: false,
-      reaction: '',
-      actions: [
-        if (policy.canSend && m.wamid.isNotEmpty)
-          ('reply', 'Reply', Icons.reply),
-        ('copy', 'Copy', Icons.copy),
-        // WhatsApp's message info: when your message was sent, delivered, read.
-        if (m.outgoing && m.wamid.isNotEmpty)
-          ('info', 'Info', Icons.info_outline),
-      ],
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Wrap(
+            spacing: 8,
+            children: [
+              for (final emoji in [
+                '❤️',
+                '🎉',
+                '👏',
+                '✅',
+                '🙂',
+                '😢',
+                '🔥',
+                '👌',
+                '💯',
+                '🤔',
+                '🙌',
+                '💚',
+              ])
+                AppButton.text(
+                  onPressed: () => Navigator.pop(context, emoji),
+                  child: Text(emoji, style: const TextStyle(fontSize: 28)),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
-    if (!mounted || choice == null) return;
-    if (choice == 'more-reactions') {
-      choice = await showModalBottomSheet<String>(
-        context: context,
-        showDragHandle: true,
-        builder: (context) => SafeArea(
+    if (!mounted) return;
+    unselect();
+    if (emoji != null) await react(m, emoji);
+  }
+
+  /// Reacts to [m] with [emoji]; the same reaction again takes it away.
+  Future<void> react(ApiMessage m, String emoji) async {
+    if (!canReact(m)) return;
+    if (!policy.canSend) {
+      mobileNotice(context, policy.reason!);
+      return;
+    }
+    final same = m.reactions.any(
+      (r) => r['emoji'] == emoji && r['can_remove'] == true,
+    );
+    try {
+      await widget.session.api.request(
+        'inbox/reactions',
+        method: same ? 'DELETE' : 'POST',
+        data: {'message_id': m.wamid, 'phone': phone, 'emoji': emoji},
+      );
+      await load(quiet: true);
+    } catch (e) {
+      if (mounted) mobileNotice(context, e);
+    }
+  }
+
+  /// WhatsApp's top bar while a message is selected: how many, then what
+  /// can be done with it.
+  AppBar selectionBar(ApiMessage m) => AppBar(
+    key: const ValueKey('selection-bar'),
+    shape: const Border(bottom: BorderSide(color: T.hairline)),
+    leading: IconButton(
+      key: const ValueKey('selection-close'),
+      tooltip: 'Cancel',
+      icon: const Icon(Icons.close),
+      onPressed: unselect,
+    ),
+    title: const Text('1'),
+    actions: [
+      if (canReply(m))
+        IconButton(
+          key: const ValueKey('selection-reply'),
+          tooltip: 'Reply',
+          icon: const Icon(Icons.reply_rounded),
+          onPressed: () => selectedAction('reply'),
+        ),
+      IconButton(
+        key: const ValueKey('selection-copy'),
+        tooltip: 'Copy',
+        icon: const Icon(Icons.copy_rounded),
+        onPressed: () => selectedAction('copy'),
+      ),
+      if (hasInfo(m))
+        IconButton(
+          key: const ValueKey('selection-info'),
+          tooltip: 'Info',
+          icon: const Icon(Icons.info_outline_rounded),
+          onPressed: () => selectedAction('info'),
+        ),
+      const SizedBox(width: 4),
+    ],
+  );
+
+  /// The reactions, floating just above the selected bubble.
+  Widget reactionBar(BuildContext context) {
+    final m = selected!, at = selectedAt;
+    final body = bodyKey.currentContext?.findRenderObject() as RenderBox?;
+    if (at == null || body == null || !body.hasSize) {
+      return const SizedBox.shrink();
+    }
+    final top = body.globalToLocal(at.topLeft).dy - 64;
+    final mine = {
+      for (final r in m.reactions)
+        if (r['can_remove'] == true) '${r['emoji']}',
+    };
+    return Positioned(
+      left: 12,
+      right: 12,
+      top: top.clamp(8.0, body.size.height - 80),
+      child: Align(
+        alignment: m.outgoing ? Alignment.centerRight : Alignment.centerLeft,
+        child: Material(
+          key: const ValueKey('message-reaction-picker'),
+          color: Colors.white,
+          elevation: 5,
+          shadowColor: T.ink.withValues(alpha: .18),
+          borderRadius: BorderRadius.circular(32),
           child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Wrap(
-              spacing: 8,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                for (final emoji in [
-                  '❤️',
-                  '🎉',
-                  '👏',
-                  '✅',
-                  '🙂',
-                  '😢',
-                  '🔥',
-                  '👌',
-                  '💯',
-                  '🤔',
-                  '🙌',
-                  '💚',
-                ])
-                  AppButton.text(
-                    onPressed: () => Navigator.pop(context, 'emoji:$emoji'),
-                    child: Text(emoji, style: const TextStyle(fontSize: 28)),
+                for (final emoji in ['👍', '❤️', '😂', '😮', '😢', '🙏'])
+                  Tooltip(
+                    message: 'React with $emoji',
+                    child: InkResponse(
+                      radius: 24,
+                      onTap: () {
+                        unselect();
+                        react(m, emoji);
+                      },
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: mine.contains(emoji)
+                              ? T.greenWash
+                              : Colors.transparent,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          emoji,
+                          style: const TextStyle(fontSize: 26),
+                        ),
+                      ),
+                    ),
                   ),
+                Tooltip(
+                  message: 'More reactions',
+                  child: InkResponse(
+                    radius: 22,
+                    onTap: () => moreReactions(m),
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      margin: const EdgeInsets.only(left: 2),
+                      decoration: const BoxDecoration(
+                        color: T.surfaceHigh,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.add, color: T.secondary),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
         ),
-      );
-      if (!mounted || choice == null) return;
-    }
-    if (!mounted) return;
-    if (choice == 'reply') setState(() => reply = m);
-    if (choice == 'copy') {
-      await Clipboard.setData(ClipboardData(text: m.text));
-    }
-    if (choice == 'info' && mounted) {
-      await showMessageInfo(context, m);
-      return;
-    }
-    if (!mounted) return;
-    if (choice.startsWith('emoji:') && m.wamid.isNotEmpty) {
-      if (!policy.canSend) {
-        mobileNotice(context, policy.reason!);
-        return;
-      }
-      final emoji = choice.substring(6);
-      final same = m.reactions.any(
-        (r) => r['emoji'] == emoji && r['can_remove'] == true,
-      );
-      try {
-        await widget.session.api.request(
-          'inbox/reactions',
-          method: same ? 'DELETE' : 'POST',
-          data: {'message_id': m.wamid, 'phone': phone, 'emoji': emoji},
-        );
-        await load(quiet: true);
-      } catch (e) {
-        if (mounted) mobileNotice(context, e);
-      }
-    }
+      ),
+    );
   }
 
   Future<void> reopen() async {
@@ -1326,14 +1478,23 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              // Shaped as a saved row is (see below), so it is updated in place.
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 400),
-                color: Colors.transparent,
-                child: messageRow(
-                  pendingMessage(p),
-                  previous,
-                  interactive: false,
+              // Shaped exactly as a saved row is (see below), so it is
+              // updated in place when the server's row replaces it.
+              Builder(
+                builder: (_) => GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  child: AbsorbPointer(
+                    absorbing: false,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      color: Colors.transparent,
+                      child: messageRow(
+                        pendingMessage(p),
+                        previous,
+                        interactive: false,
+                      ),
+                    ),
+                  ),
                 ),
               ),
               // Photos, videos and documents show their own upload ring.
@@ -1367,15 +1528,35 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // A jumped-to message glows for a moment, as on WhatsApp.
-            AnimatedContainer(
-              key: lit ? highlightKey : null,
-              duration: const Duration(milliseconds: 400),
-              color: lit ? T.brass.withValues(alpha: .18) : Colors.transparent,
-              child: messageRow(
-                m,
-                position == 0 ? null : messages[position - 1],
-              ),
+            // A jumped-to message glows for a moment, as on WhatsApp; a
+            // selected one stays green across the row while selected.
+            Builder(
+              builder: (rowContext) {
+                final chosen = selected != null && rowKey(selected!) == key;
+                final row = AnimatedContainer(
+                  key: lit ? highlightKey : null,
+                  duration: const Duration(milliseconds: 150),
+                  color: chosen
+                      ? T.green.withValues(alpha: .16)
+                      : lit
+                      ? T.brass.withValues(alpha: .18)
+                      : Colors.transparent,
+                  child: messageRow(
+                    m,
+                    position == 0 ? null : messages[position - 1],
+                  ),
+                );
+                // Always this shape, selecting or not, so selecting never
+                // rebuilds a bubble (nor reloads its photo).
+                final selecting = selected != null && !m.log;
+                return GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: selecting
+                      ? () => tapWhileSelecting(m, rowContext)
+                      : null,
+                  child: AbsorbPointer(absorbing: selecting, child: row),
+                );
+              },
             ),
           ],
         ),
@@ -1520,7 +1701,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           onReply: interactive && policy.canSend && m.wamid.isNotEmpty
               ? () => setState(() => reply = m)
               : null,
-          onActions: interactive ? (anchor) => actions(m, anchor) : null,
+          onActions: interactive ? (anchor) => select(m, anchor) : null,
           onCallBack: callable
               ? () => startCall(context, widget.session, callContact)
               : null,
@@ -1544,246 +1725,281 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     final swap = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
         : const Duration(milliseconds: 220);
-    return Scaffold(
-      appBar: AppBar(
-        shape: const Border(bottom: BorderSide(color: T.hairline)),
-        titleSpacing: 0,
-        // Tapping the name opens contact details, as on WhatsApp and the web inbox.
-        title: InkWell(
-          onTap: openContact,
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              children: [
-                Expanded(
-                  // The green dot: WhatsApp's conversation window is open.
-                  child: ConversationWindow(
-                    expiresAt: rememberedWindow,
-                    builder: (context, open) => Row(
+    final chosen = selected;
+    // Back lets a selected message go before it leaves the chat.
+    return PopScope(
+      canPop: chosen == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && selected != null) unselect();
+      },
+      child: Scaffold(
+        appBar: chosen != null
+            ? selectionBar(chosen)
+            : AppBar(
+                shape: const Border(bottom: BorderSide(color: T.hairline)),
+                titleSpacing: 0,
+                // Tapping the name opens contact details, as on WhatsApp and the web inbox.
+                title: InkWell(
+                  onTap: openContact,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
                       children: [
-                        Avatar(
-                          name,
-                          size: 36,
-                          seed: widget.contact['id'],
-                          online: open,
-                        ),
-                        const SizedBox(width: 10),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              WindowStatus(
-                                permission.expiresAt,
-                                known: detail != null,
-                                prefix: widget.ticketId != null
-                                    ? 'Ticket conversation'
-                                    : formatPhone(
-                                        widget.contact['display_wa_id'] ??
-                                            phone,
+                          // The green dot: WhatsApp's conversation window is open.
+                          child: ConversationWindow(
+                            expiresAt: rememberedWindow,
+                            builder: (context, open) => Row(
+                              children: [
+                                Avatar(
+                                  name,
+                                  size: 36,
+                                  seed: widget.contact['id'],
+                                  online: open,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                              ),
-                            ],
+                                      WindowStatus(
+                                        permission.expiresAt,
+                                        known: detail != null,
+                                        prefix: widget.ticketId != null
+                                            ? 'Ticket conversation'
+                                            : formatPhone(
+                                                widget.contact['display_wa_id'] ??
+                                                    phone,
+                                              ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ],
                     ),
                   ),
                 ),
-              ],
-            ),
-          ),
-        ),
-        // Updates are live, so no refresh button. iOS puts contact details
-        // behind an info button; Android behind the overflow menu.
-        actions: [
-          if (widget.ticketId == null)
-            AppIconButton(
-              tooltip: 'Search chat',
-              onPressed: searchChat,
-              icon: const AppIcon(Icons.search),
-            ),
-          if (widget.ticketId == null)
-            CallButton(session: widget.session, contact: callContact),
-          if (isCupertino(context))
-            AppIconButton(
-              tooltip: 'Contact details',
-              onPressed: openContact,
-              icon: const Icon(CupertinoIcons.info_circle),
-            )
-          else
-            OverflowMenu(
-              items: [
-                (label: 'Contact details', onPressed: openContact),
-                if (callEligibility(widget.session.config, callContact).shown)
-                  (
-                    label: 'Call history',
-                    onPressed: () => openPage(
-                      context,
-                      CallHistoryPage(widget.session, callContact),
-                    ),
-                  ),
-                if (permission.canTemplate)
-                  (label: 'Send template', onPressed: templates),
-              ],
-            ),
-        ],
-      ),
-      // The wallpaper runs behind the composer too, so the input floats on
-      // the conversation the way WhatsApp's does.
-      body: CustomPaint(
-        painter: const ChatWallpaper(),
-        child: Column(
-          children: [
-            RealtimeNotice(widget.session.realtime),
-            LoadingBar(showLoading),
-            if (error != null && !isOffline(error))
-              MaterialBanner(
-                content: Text(error!),
+                // Updates are live, so no refresh button. iOS puts contact details
+                // behind an info button; Android behind the overflow menu.
                 actions: [
-                  AppButton.text(
-                    onPressed: () {
-                      load();
-                      details();
-                    },
-                    child: const Text('Retry'),
-                  ),
-                ],
-              ),
-            Expanded(
-              child: messages.isEmpty && pending.isEmpty && !showLoading
-                  ? const Center(child: Text('No messages yet.'))
-                  : Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        ListView.builder(
-                          controller: scroll,
-                          reverse: true,
-                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                          // Every row is built for the frame that scrolls to
-                          // a jumped-to message, so it can be found.
-                          scrollCacheExtent: reaching
-                              ? const ScrollCacheExtent.pixels(1e6)
-                              : null,
-                          itemCount: messages.length + pending.length + 1,
-                          itemBuilder: (_, index) => historyItem(
-                            messages.length + pending.length - index,
-                          ),
-                          findChildIndexCallback: indexOfKey,
-                        ),
-                        Positioned(
-                          right: 12,
-                          bottom: 12,
-                          child: ValueListenableBuilder(
-                            valueListenable: scrolledUp,
-                            builder: (context, up, _) => AnimatedScale(
-                              scale: up ? 1 : 0,
-                              duration: const Duration(milliseconds: 150),
-                              child: ValueListenableBuilder(
-                                valueListenable: unseen,
-                                builder: (context, count, button) => Badge(
-                                  key: const ValueKey('unseen'),
-                                  isLabelVisible: count > 0,
-                                  label: Text('$count'),
-                                  backgroundColor: T.green,
-                                  child: button,
-                                ),
-                                child: AppIconButton.filledTonal(
-                                  tooltip: 'Scroll to latest',
-                                  onPressed: up ? jumpToLatest : null,
-                                  icon: const Icon(Icons.keyboard_arrow_down),
-                                ),
-                              ),
+                  if (widget.ticketId == null)
+                    AppIconButton(
+                      tooltip: 'Search chat',
+                      onPressed: searchChat,
+                      icon: const AppIcon(Icons.search),
+                    ),
+                  if (widget.ticketId == null)
+                    CallButton(session: widget.session, contact: callContact),
+                  if (isCupertino(context))
+                    AppIconButton(
+                      tooltip: 'Contact details',
+                      onPressed: openContact,
+                      icon: const Icon(CupertinoIcons.info_circle),
+                    )
+                  else
+                    OverflowMenu(
+                      items: [
+                        (label: 'Contact details', onPressed: openContact),
+                        if (callEligibility(
+                          widget.session.config,
+                          callContact,
+                        ).shown)
+                          (
+                            label: 'Call history',
+                            onPressed: () => openPage(
+                              context,
+                              CallHistoryPage(widget.session, callContact),
                             ),
                           ),
-                        ),
+                        if (permission.canTemplate)
+                          (label: 'Send template', onPressed: templates),
                       ],
                     ),
-            ),
-            // While permissions load, keep the composer's shape but disabled,
-            // so the bottom of the screen does not swap layouts a moment later.
-            // When it does change (the chat turns out closed, or the window
-            // shuts), the composer and the card cross-fade and the bar eases
-            // to its new height instead of jumping in one frame.
-            AnimatedSize(
-              duration: swap,
-              curve: Curves.easeOutCubic,
-              alignment: Alignment.bottomCenter,
-              child: AnimatedSwitcher(
-                duration: swap,
-                child: !permission.canSend && detail != null
-                    ? SafeArea(
-                        key: const ValueKey('composer-card'),
-                        top: false,
-                        child: _ComposerCard(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Text(
-                                permission.reason!,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  color: T.secondary,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              if (closed)
-                                AppButton.outlined(
-                                  onPressed: reopening ? null : reopen,
-                                  child: Text(
-                                    reopening
-                                        ? 'Reopening…'
-                                        : 'Reopen conversation',
-                                  ),
-                                ),
-                              if (permission.canTemplate)
-                                AppButton.filled(
-                                  onPressed: templates,
-                                  child: const Text('Send template'),
-                                ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : Column(
-                        key: const ValueKey('composer'),
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          LoadingBar(picking),
-                          SafeArea(
-                            top: false,
-                            child: ChatComposer(
-                              controller: composer,
-                              enabled: permission.canSend,
-                              busy: picking,
-                              replyAuthor: reply == null
-                                  ? null
-                                  : quoteAuthor(reply!),
-                              replyText: reply?.text,
-                              onCancelReply: () => setState(() => reply = null),
-                              attachment: attachment,
-                              onCancelAttachment: () =>
-                                  setState(() => attachment = null),
-                              onSend: send,
-                              onAttach: () =>
-                                  attachMenu(permission.canTemplate),
-                              onQuickReplies: quickReplies,
-                              onCamera: camera,
-                              onVoiceNote: sendVoiceNote,
-                              onTyping: typing,
-                            ),
+                ],
+              ),
+        // The wallpaper runs behind the composer too, so the input floats on
+        // the conversation the way WhatsApp's does.
+        body: Stack(
+          key: bodyKey,
+          children: [
+            Positioned.fill(
+              child: CustomPaint(
+                painter: const ChatWallpaper(),
+                child: Column(
+                  children: [
+                    RealtimeNotice(widget.session.realtime),
+                    LoadingBar(showLoading),
+                    if (error != null && !isOffline(error))
+                      MaterialBanner(
+                        content: Text(error!),
+                        actions: [
+                          AppButton.text(
+                            onPressed: () {
+                              load();
+                              details();
+                            },
+                            child: const Text('Retry'),
                           ),
                         ],
                       ),
+                    Expanded(
+                      child: messages.isEmpty && pending.isEmpty && !showLoading
+                          ? const Center(child: Text('No messages yet.'))
+                          : Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                ListView.builder(
+                                  controller: scroll,
+                                  reverse: true,
+                                  padding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    0,
+                                    12,
+                                    8,
+                                  ),
+                                  // Every row is built for the frame that scrolls to
+                                  // a jumped-to message, so it can be found.
+                                  scrollCacheExtent: reaching
+                                      ? const ScrollCacheExtent.pixels(1e6)
+                                      : null,
+                                  itemCount:
+                                      messages.length + pending.length + 1,
+                                  itemBuilder: (_, index) => historyItem(
+                                    messages.length + pending.length - index,
+                                  ),
+                                  findChildIndexCallback: indexOfKey,
+                                ),
+                                Positioned(
+                                  right: 12,
+                                  bottom: 12,
+                                  child: ValueListenableBuilder(
+                                    valueListenable: scrolledUp,
+                                    builder: (context, up, _) => AnimatedScale(
+                                      scale: up ? 1 : 0,
+                                      duration: const Duration(
+                                        milliseconds: 150,
+                                      ),
+                                      child: ValueListenableBuilder(
+                                        valueListenable: unseen,
+                                        builder: (context, count, button) =>
+                                            Badge(
+                                              key: const ValueKey('unseen'),
+                                              isLabelVisible: count > 0,
+                                              label: Text('$count'),
+                                              backgroundColor: T.green,
+                                              child: button,
+                                            ),
+                                        child: AppIconButton.filledTonal(
+                                          tooltip: 'Scroll to latest',
+                                          onPressed: up ? jumpToLatest : null,
+                                          icon: const Icon(
+                                            Icons.keyboard_arrow_down,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
+                    // While permissions load, keep the composer's shape but disabled,
+                    // so the bottom of the screen does not swap layouts a moment later.
+                    // When it does change (the chat turns out closed, or the window
+                    // shuts), the composer and the card cross-fade and the bar eases
+                    // to its new height instead of jumping in one frame.
+                    AnimatedSize(
+                      duration: swap,
+                      curve: Curves.easeOutCubic,
+                      alignment: Alignment.bottomCenter,
+                      child: AnimatedSwitcher(
+                        duration: swap,
+                        child: !permission.canSend && detail != null
+                            ? SafeArea(
+                                key: const ValueKey('composer-card'),
+                                top: false,
+                                child: _ComposerCard(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Text(
+                                        permission.reason!,
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          color: T.secondary,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      if (closed)
+                                        AppButton.outlined(
+                                          onPressed: reopening ? null : reopen,
+                                          child: Text(
+                                            reopening
+                                                ? 'Reopening…'
+                                                : 'Reopen conversation',
+                                          ),
+                                        ),
+                                      if (permission.canTemplate)
+                                        AppButton.filled(
+                                          onPressed: templates,
+                                          child: const Text('Send template'),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            : Column(
+                                key: const ValueKey('composer'),
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  LoadingBar(picking),
+                                  SafeArea(
+                                    top: false,
+                                    child: ChatComposer(
+                                      controller: composer,
+                                      enabled: permission.canSend,
+                                      busy: picking,
+                                      replyAuthor: reply == null
+                                          ? null
+                                          : quoteAuthor(reply!),
+                                      replyText: reply?.text,
+                                      onCancelReply: () =>
+                                          setState(() => reply = null),
+                                      attachment: attachment,
+                                      onCancelAttachment: () =>
+                                          setState(() => attachment = null),
+                                      onSend: send,
+                                      onAttach: () =>
+                                          attachMenu(permission.canTemplate),
+                                      onQuickReplies: quickReplies,
+                                      onCamera: camera,
+                                      onVoiceNote: sendVoiceNote,
+                                      onTyping: typing,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
+            if (chosen != null && reacting) reactionBar(context),
           ],
         ),
       ),

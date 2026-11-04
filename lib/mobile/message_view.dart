@@ -36,11 +36,19 @@ Message messagePresentation(ApiMessage m, {String? contactName}) => Message(
   deliveryStatus: m.status,
 );
 
-/// The icon WhatsApp puts beside a request's own button.
-IconData? buttonIcon(String label) => switch (label) {
+/// The icon WhatsApp puts before a message's button, by what it does.
+IconData? buttonIcon(String label, [String? kind]) => switch (label) {
   'Send location' => Icons.location_on_outlined,
   'Provide address' => Icons.home_outlined,
-  _ => null,
+  _ => switch (kind) {
+    'reply' => Icons.reply_rounded,
+    'url' => Icons.open_in_new_rounded,
+    'phone' => Icons.call_outlined,
+    'copy' => Icons.content_copy_rounded,
+    'flow' => Icons.assignment_outlined,
+    'list' => Icons.format_list_bulleted_rounded,
+    _ => null,
+  },
 };
 
 class LiveMessageView extends StatelessWidget {
@@ -258,70 +266,17 @@ class LiveMessageView extends StatelessWidget {
                             stamp: Message('', time: presentation.time),
                           ),
                         )
-                      : MessageBubble(
-                          message: presentation,
+                      : _GenericBubble(
+                          content: c,
+                          message: m,
+                          presentation: presentation,
                           first: first,
-                          maxWidth: MediaQuery.sizeOf(context).width * .82,
-                          contentBefore: c.media.isEmpty
-                              ? null
-                              : SizedBox(
-                                  width: 250,
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      for (final media in c.media)
-                                        if (mediaUri(
-                                              media['media_path'] ??
-                                                  media['link'] ??
-                                                  media['url'],
-                                              apiBase,
-                                            )
-                                            case final Uri url)
-                                          Material(
-                                            color: Colors.transparent,
-                                            child: MediaTile(
-                                              MessageMedia(
-                                                '${media['type']}',
-                                                url,
-                                                '${media['filename'] ?? media['media_name'] ?? media['type']}',
-                                              ),
-                                            ),
-                                          ),
-                                    ],
-                                  ),
-                                ),
-                          // WhatsApp hangs a message's buttons under its time.
-                          footer: c.buttons.isEmpty
-                              ? null
-                              : BubbleButtons([
-                                  for (final b in c.buttons) (buttonIcon(b), b),
-                                ]),
-                          contentAfter: c.fields.isEmpty
-                              ? null
-                              : ConstrainedBox(
-                                  constraints: const BoxConstraints(
-                                    maxWidth: 250,
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      for (final f in c.fields.entries)
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                            top: 5,
-                                          ),
-                                          child: Text(
-                                            '${f.key}: ${f.value}',
-                                            style: const TextStyle(
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
+                          apiBase: apiBase,
+                          title: m.outgoing
+                              ? 'You'
+                              : (contactName?.trim().isNotEmpty ?? false)
+                              ? contactName!.trim()
+                              : 'Customer',
                         )),
       ),
     );
@@ -1497,3 +1452,376 @@ class CallPermissionCard extends StatelessWidget {
     ),
   );
 }
+
+/// Any other message as WhatsApp frames it: a template's or interactive
+/// message's header photo or video filling the bubble, the body, a small
+/// grey footer, and the buttons, each with its icon. A form response is a
+/// compact card instead (see [FormResponseCard]).
+class _GenericBubble extends StatelessWidget {
+  const _GenericBubble({
+    required this.content,
+    required this.message,
+    required this.presentation,
+    required this.first,
+    required this.apiBase,
+    required this.title,
+  });
+  final MessageContent content;
+  final ApiMessage message;
+  final Message presentation;
+  final bool first;
+  final String apiBase, title;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = content;
+    final maxWidth = MediaQuery.sizeOf(context).width * .82;
+    if (c.formResponse && c.fields.isNotEmpty) {
+      return FormResponseCard(
+        fields: c.fields,
+        message: presentation,
+        first: first,
+        maxWidth: maxWidth,
+      );
+    }
+    MessageMedia? header;
+    final others = <MessageMedia>[];
+    for (final media in c.media) {
+      final url = mediaUri(
+        media['media_path'] ?? media['link'] ?? media['url'],
+        apiBase,
+      );
+      if (url == null) continue;
+      final item = MessageMedia(
+        '${media['type']}',
+        url,
+        '${media['filename'] ?? media['media_name'] ?? media['type']}',
+      );
+      if (header == null && (item.type == 'image' || item.type == 'video')) {
+        header = item;
+      } else {
+        others.add(item);
+      }
+    }
+    // The bubble's full width less its thin frame, as WhatsApp fills it.
+    final width = maxWidth - 6;
+    return MessageBubble(
+      message: presentation,
+      first: first,
+      maxWidth: maxWidth,
+      tight: header != null,
+      contentBefore: header == null && others.isEmpty
+          ? null
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (header != null)
+                  HeaderMedia(
+                    header,
+                    width: width,
+                    heroTag:
+                        'media-${message.tempId.isNotEmpty ? message.tempId : message.id}',
+                    title: title,
+                    caption: c.text,
+                  ),
+                if (others.isNotEmpty)
+                  SizedBox(
+                    width: 250,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final media in others)
+                          Material(
+                            color: Colors.transparent,
+                            child: MediaTile(media),
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+      // WhatsApp hangs a message's buttons under its time.
+      footer: c.buttons.isEmpty
+          ? null
+          : BubbleButtons([
+              for (final b in c.buttons) (buttonIcon(b, c.buttonKinds[b]), b),
+            ]),
+      contentAfter: c.footer.isEmpty && c.fields.isEmpty
+          ? null
+          : ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 250),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (c.footer.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        c.footer,
+                        key: const ValueKey('message-footer'),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          height: 1.3,
+                          color: T.muted,
+                        ),
+                      ),
+                    ),
+                  for (final f in c.fields.entries)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 5),
+                      child: Text(
+                        '${f.key}: ${f.value}',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+    );
+  }
+}
+
+/// A template's or interactive message's header photo or video, filling the
+/// bubble's width at the photo's own shape, as WhatsApp frames it. Tap to
+/// open it full screen.
+class HeaderMedia extends StatefulWidget {
+  const HeaderMedia(
+    this.media, {
+    super.key,
+    required this.width,
+    required this.heroTag,
+    this.title = '',
+    this.caption = '',
+  });
+  final MessageMedia media;
+  final double width;
+  final Object heroTag;
+  final String title, caption;
+
+  @override
+  State<HeaderMedia> createState() => _HeaderMediaState();
+}
+
+class _HeaderMediaState extends State<HeaderMedia> {
+  /// Width over height; a landscape card until the photo says otherwise.
+  double aspect = 1.6;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.media.type == 'image') {
+      imageAspect(mediaImage(widget.media.url)).then((a) {
+        if (mounted && a != null) setState(() => aspect = a.clamp(.8, 2.0));
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final video = widget.media.type == 'video';
+    final height = widget.width / aspect;
+    return GestureDetector(
+      onTap: () => openMediaPreview(
+        context,
+        widget.media,
+        heroTag: widget.heroTag,
+        title: widget.title,
+        caption: widget.caption,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6.5),
+        child: SizedBox(
+          key: const ValueKey('header-media'),
+          width: widget.width,
+          height: height,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Hero(
+                tag: widget.heroTag,
+                flightShuttleBuilder: (f, a, d, from, to) =>
+                    mediaFlight(f, a, d, from, to, widget.media),
+                child: video
+                    ? const ColoredBox(color: Color(0xFF1F2C34))
+                    : Image(
+                        image: mediaImage(widget.media.url),
+                        fit: BoxFit.cover,
+                        gaplessPlayback: true,
+                        semanticLabel: 'Photo',
+                        errorBuilder: (_, _, _) => const ColoredBox(
+                          color: T.wash,
+                          child: Icon(
+                            Icons.broken_image_outlined,
+                            color: T.muted,
+                          ),
+                        ),
+                      ),
+              ),
+              if (video)
+                Center(
+                  child: Container(
+                    width: 52,
+                    height: 52,
+                    decoration: const BoxDecoration(
+                      color: Colors.black45,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow_rounded,
+                      color: Colors.white,
+                      size: 34,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A customer's answers to a WhatsApp form, as WhatsApp shows them: a
+/// compact card ("Form response · Response received") with View response
+/// under it, which opens the answers.
+class FormResponseCard extends StatelessWidget {
+  const FormResponseCard({
+    super.key,
+    required this.fields,
+    required this.message,
+    required this.first,
+    required this.maxWidth,
+  });
+  final Map<String, String> fields;
+  final Message message;
+  final bool first;
+  final double maxWidth;
+
+  @override
+  Widget build(BuildContext context) => MessageBubble(
+    // The card says what it is; the answers open from the button.
+    message: Message(
+      '',
+      out: message.out,
+      time: message.time,
+      read: message.read,
+      deliveryStatus: message.deliveryStatus,
+    ),
+    first: first,
+    maxWidth: maxWidth,
+    contentBefore: Container(
+      key: const ValueKey('form-response-card'),
+      width: 240,
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .04),
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.description_outlined,
+              color: T.secondary,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Form response',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: T.ink,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  message.out ? 'Response sent' : 'Response received',
+                  style: const TextStyle(fontSize: 13, color: T.muted),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+    footer: Material(
+      color: Colors.transparent,
+      child: InkWell(
+        key: const ValueKey('view-form-response'),
+        onTap: () => showFormResponse(context, fields),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 42),
+          alignment: Alignment.center,
+          decoration: const BoxDecoration(
+            border: Border(top: BorderSide(color: T.edge)),
+          ),
+          child: const Text(
+            'View response',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: T.green,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// The answers of a form response, one question to a row.
+Future<void> showFormResponse(
+  BuildContext context,
+  Map<String, String> fields,
+) => showModalBottomSheet<void>(
+  context: context,
+  showDragHandle: true,
+  isScrollControlled: true,
+  backgroundColor: Colors.white,
+  builder: (sheet) => SafeArea(
+    child: ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(sheet).height * .8,
+      ),
+      child: ListView(
+        key: const ValueKey('form-response-sheet'),
+        shrinkWrap: true,
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        children: [
+          const Text(
+            'Form response',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: T.ink,
+            ),
+          ),
+          const SizedBox(height: 12),
+          for (final f in fields.entries) ...[
+            Text(f.key, style: const TextStyle(fontSize: 13, color: T.muted)),
+            const SizedBox(height: 2),
+            SelectableText(
+              f.value,
+              style: const TextStyle(fontSize: 16, color: T.ink),
+            ),
+            const Divider(height: 22),
+          ],
+        ],
+      ),
+    ),
+  ),
+);
