@@ -9,6 +9,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../core/config/app_config.dart';
 import 'call_push.dart';
 import 'calls.dart';
+import 'connection.dart';
 import 'conversation_sync.dart';
 import 'local_cache.dart';
 import 'notification_sound.dart';
@@ -45,11 +46,15 @@ class ApiFailure implements Exception {
     this.code,
     this.httpStatus,
     this.uncertain = false,
+    this.unreachable = false,
   });
   final String message;
   final String? code;
   final int? httpStatus;
   final bool uncertain;
+
+  /// The server could not be reached at all: no network, or no answer.
+  final bool unreachable;
   @override
   String toString() => message;
 }
@@ -92,6 +97,9 @@ class MobileApi {
   String? token;
   int? wabaId;
   VoidCallback? onUnauthorized;
+
+  /// A request got no answer from the server (see [ConnectionMonitor]).
+  VoidCallback? onUnreachable;
   Future<dynamic> request(
     String path, {
     String method = 'GET',
@@ -155,9 +163,11 @@ class MobileApi {
       }
       return response.data;
     } on DioException catch (_) {
+      onUnreachable?.call();
       throw const ApiFailure(
         'Could not reach the server. Check your connection and try again.',
         uncertain: true,
+        unreachable: true,
       );
     }
   }
@@ -181,9 +191,28 @@ class MobileSession extends ChangeNotifier {
     this.pushTransport,
     this.callMedia,
     LocalCache? cache,
-  }) : cache = cache ?? MemoryLocalCache() {
+    ConnectionMonitor? connection,
+  }) : cache = cache ?? MemoryLocalCache(),
+       connection = connection ?? ConnectionMonitor.always() {
     api.onUnauthorized = _expired;
+    api.onUnreachable = this.connection.unreachable;
+    this.connection.addListener(_connectionChanged);
   }
+
+  /// Whether the server can be reached; the app covers itself while not.
+  final ConnectionMonitor connection;
+
+  /// The app opened without a network: the saved sign-in is kept, and the
+  /// session finishes loading once the server can be reached again, rather
+  /// than falling back to the sign-in screen.
+  bool awaitingNetwork = false;
+
+  void _connectionChanged() {
+    if (connection.online && awaitingNetwork && !restoring) {
+      unawaited(restore());
+    }
+  }
+
   final MobileApi api;
   final SessionStore store;
 
@@ -302,7 +331,21 @@ class MobileSession extends ChangeNotifier {
   final PushTransport? pushTransport;
 
   /// Live updates for the selected number; started by the signed-in home.
-  late final realtime = Realtime(this, connector: realtimeConnector);
+  late final realtime = Realtime(this, connector: realtimeConnector)
+    ..addListener(_realtimeChanged);
+
+  /// The live connection is the first to notice internet gone while the
+  /// phone still shows a network (Wi-Fi up, router dead): its drop checks
+  /// the connection, and its return checks again so the app comes back.
+  RealtimeState? _realtimeWas;
+  void _realtimeChanged() {
+    final now = realtime.state;
+    if (now == _realtimeWas) return;
+    _realtimeWas = now;
+    if (now == RealtimeState.reconnecting || now == RealtimeState.connected) {
+      unawaited(connection.check());
+    }
+  }
 
   /// Push registration and taps; enabled by the signed-in home.
   late final push = PushService(this, transport: pushTransport);
@@ -430,6 +473,7 @@ class MobileSession extends ChangeNotifier {
 
   Future<void> restore() async {
     restoring = true;
+    awaitingNetwork = false;
     error = null;
     notifyListeners();
     try {
@@ -445,6 +489,15 @@ class MobileSession extends ChangeNotifier {
         final selected =
             number(user?['bound_waba_user_id']) ?? number(saved['waba_id']);
         if (selected != null) await selectNumber(selected);
+      }
+    } on ApiFailure catch (e) {
+      if (e.unreachable && api.token != null) {
+        awaitingNetwork = true;
+        user = null;
+        api.wabaId = null;
+        config = null;
+      } else {
+        error = '$e';
       }
     } catch (e) {
       error = '$e';
@@ -646,6 +699,8 @@ class MobileSession extends ChangeNotifier {
   @override
   void dispose() {
     api.onUnauthorized = null;
+    api.onUnreachable = null;
+    connection.removeListener(_connectionChanged);
     conversationActivity.dispose();
     notificationSound.dispose();
     realtime.dispose();

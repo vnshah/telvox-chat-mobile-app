@@ -3,11 +3,14 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PredictiveBackEvent;
 
 import '../ui/theme.dart';
 import 'api.dart';
 import 'calls.dart';
+import 'connection.dart';
 import 'local_cache.dart';
+import 'offline_screen.dart';
 import 'screens.dart';
 import 'share_intake.dart';
 import 'share_sheet.dart';
@@ -19,12 +22,21 @@ class MobileApplication extends StatefulWidget {
   State<MobileApplication> createState() => _MobileApplicationState();
 }
 
-class _MobileApplicationState extends State<MobileApplication> {
+class _MobileApplicationState extends State<MobileApplication>
+    with WidgetsBindingObserver {
   late final session =
       widget.session ??
       (() {
         final store = SecureSessionStore();
-        return MobileSession(MobileApi(), store, cache: SqlLocalCache(store));
+        final api = MobileApi();
+        return MobileSession(
+          api,
+          store,
+          cache: SqlLocalCache(store),
+          connection: ConnectionMonitor.platform(
+            Uri.parse(api.dio.options.baseUrl),
+          ),
+        );
       })();
 
   /// Files shared from another app, held until there is a number to send
@@ -34,6 +46,9 @@ class _MobileApplicationState extends State<MobileApplication> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    session.connection.addListener(_connectionChanged);
+    unawaited(session.connection.start());
     unawaited(session.restore());
     session.callPush.start();
     shares.pending.addListener(_offerShare);
@@ -43,12 +58,44 @@ class _MobileApplicationState extends State<MobileApplication> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    session.connection.removeListener(_connectionChanged);
+    if (widget.session == null) session.connection.dispose();
     shares.pending.removeListener(_offerShare);
     session.removeListener(_offerShare);
     shares.dispose();
     if (widget.session == null) session.dispose();
     super.dispose();
   }
+
+  /// Going offline puts the keyboard away: the offline screen covers the
+  /// field, whose text stays as it was.
+  void _connectionChanged() {
+    if (!session.connection.online) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        session.connection.resume();
+      case AppLifecycleState.paused || AppLifecycleState.hidden:
+        session.connection.pause();
+      default:
+        break;
+    }
+  }
+
+  // While offline, back does nothing: nothing may change unseen beneath the
+  // offline screen. These run before the app's navigator hears of it.
+  @override
+  Future<bool> didPopRoute() async => !session.connection.online;
+
+  @override
+  bool handleStartBackGesture(PredictiveBackEvent backEvent) =>
+      !session.connection.online;
 
   void _offerShare() {
     if (shares.pending.value == null || !session.ready) return;
@@ -88,9 +135,20 @@ class _MobileApplicationState extends State<MobileApplication> {
     theme: T.themeFor(defaultTargetPlatform),
     builder: (_, child) => CupertinoTheme(
       data: T.cupertino,
-      child: OngoingCallBar(session.calls, child: child!),
+      child: ValueListenableBuilder(
+        valueListenable: session.connection,
+        builder: (context, online, app) => Stack(
+          fit: StackFit.expand,
+          children: [
+            // Kept alive beneath, unseen and untouchable while offline.
+            ExcludeSemantics(excluding: !online, child: app),
+            if (!online) OfflineScreen(session.connection),
+          ],
+        ),
+        child: OngoingCallBar(session.calls, child: child!),
+      ),
     ),
-    home: session.restoring
+    home: session.restoring || session.awaitingNetwork
         ? const Scaffold(body: Center(child: CircularProgressIndicator()))
         : session.ready
         ? LiveHome(session)
