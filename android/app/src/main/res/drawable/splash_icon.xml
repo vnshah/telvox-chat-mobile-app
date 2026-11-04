@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp" android:height="288dp"
+    android:viewportWidth="288" android:viewportHeight="288">
+    <!-- The launcher icon's mark in Telvox green on white, 96dp wide at the
+         centre of the launch screen. lib/mobile/boot_screen.dart draws the same
+         mark at the same size, so the hand-over to the app is not seen. -->
+    <group android:scaleX="0.196319" android:scaleY="0.196319"
+        android:translateX="43.583" android:translateY="47.804">
+        <path android:fillColor="@android:color/transparent"
+            android:strokeColor="#176B46" android:strokeWidth="52"
+            android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M359 283 H664 C700 283 730 313 730 349 V543 C730 580 700 610 664 610 H468 L359 697 V610 C323 610 293 580 293 543 V349 C293 313 323 283 359 283 Z"/>
+        <path android:fillColor="@android:color/transparent"
+            android:strokeColor="#176B46" android:strokeWidth="52"
+            android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M403 453 L446 495 L515 419 M477 476 L518 517 L596 432"/>
+    </group>
+</vector>

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'boot_screen.dart';
 import 'calls.dart';
 import 'connection.dart';
 import 'local_cache.dart';
@@ -126,7 +127,7 @@ class _MobileApplicationState extends State<MobileApplication>
     ),
     // Opened offline with no account kept yet: it loads once back online.
     home: session.restoring || (session.awaitingNetwork && !session.signedIn)
-        ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+        ? const BootScreen()
         : session.ready
         ? LiveHome(session)
         : session.signedIn
