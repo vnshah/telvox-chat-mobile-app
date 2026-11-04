@@ -10,6 +10,7 @@ import 'package:video_player/video_player.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'media_cache.dart';
 
 class Attachment {
   const Attachment(this.file, this.kind, this.size, this.mime);
@@ -174,14 +175,23 @@ MessageMedia? sentMedia(String tempId, String type) {
   return MessageMedia(file.kind, Uri.file(file.file.path), file.name);
 }
 
-/// The picture behind a media link: the phone's file, or the server's copy.
+/// The picture behind a media link: the phone's own file, or the server's,
+/// downloaded once and kept on the phone (see [MediaCache]).
 ImageProvider mediaImage(Uri url) => url.scheme == 'file'
     ? FileImage(File(url.toFilePath()))
-    : NetworkImage(url.toString());
+    : CachedMediaImage(url);
 
-VideoPlayerController mediaPlayer(Uri url) => url.scheme == 'file'
-    ? VideoPlayerController.file(File(url.toFilePath()))
-    : VideoPlayerController.networkUrl(url);
+/// A video or voice note: the phone's copy when there is one; otherwise it
+/// streams from the server while a copy is kept for next time.
+VideoPlayerController mediaPlayer(Uri url) {
+  if (url.scheme == 'file') {
+    return VideoPlayerController.file(File(url.toFilePath()));
+  }
+  final kept = MediaCache.instance.ready(url);
+  if (kept != null) return VideoPlayerController.file(kept);
+  MediaCache.instance.keep(url);
+  return VideoPlayerController.networkUrl(url);
+}
 
 /// "245 KB", "3.1 MB", as WhatsApp sizes a document.
 String fileSize(int bytes) => bytes < 1024
@@ -237,8 +247,8 @@ class MediaTile extends StatelessWidget {
         if (media.type == 'image' || media.type == 'sticker')
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image.network(
-              media.url.toString(),
+            child: Image(
+              image: mediaImage(media.url),
               width: 250,
               height: 180,
               fit: BoxFit.cover,

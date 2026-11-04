@@ -399,8 +399,8 @@ class StickerView extends StatelessWidget {
     child: Stack(
       children: [
         Positioned.fill(
-          child: Image.network(
-            url.toString(),
+          child: Image(
+            image: mediaImage(url),
             fit: BoxFit.contain,
             semanticLabel: 'Sticker',
             errorBuilder: (_, _, _) => const Center(

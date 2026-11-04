@@ -10,6 +10,7 @@ import 'api.dart';
 import 'calls.dart';
 import 'connection.dart';
 import 'local_cache.dart';
+import 'media_cache.dart';
 import 'offline_screen.dart';
 import 'screens.dart';
 import 'share_intake.dart';
@@ -49,6 +50,8 @@ class _MobileApplicationState extends State<MobileApplication>
     WidgetsBinding.instance.addObserver(this);
     session.connection.addListener(_connectionChanged);
     unawaited(session.connection.start());
+    // Media already on the phone opens from it at once.
+    unawaited(MediaCache.instance.load().catchError((_) {}));
     unawaited(session.restore());
     session.callPush.start();
     shares.pending.addListener(_offerShare);

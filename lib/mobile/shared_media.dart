@@ -333,10 +333,9 @@ class _MediaThumb extends StatelessWidget {
               fit: StackFit.expand,
               children: [
                 if (!video && url != null)
-                  Image.network(
-                    url.toString(),
+                  Image(
+                    image: ResizeImage(mediaImage(url), width: size),
                     fit: BoxFit.cover,
-                    cacheWidth: size,
                     errorBuilder: (_, _, _) => const Center(
                       child: AppIcon(
                         Icons.broken_image_outlined,

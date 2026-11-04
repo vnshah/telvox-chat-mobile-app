@@ -12,6 +12,7 @@ import 'calls.dart';
 import 'connection.dart';
 import 'conversation_sync.dart';
 import 'local_cache.dart';
+import 'media_cache.dart';
 import 'notification_sound.dart';
 import 'push.dart';
 import 'realtime.dart';
@@ -664,8 +665,10 @@ class MobileSession extends ChangeNotifier {
   void _expired() {
     realtime.stop();
     viewCache.clear();
-    // A session that ended, was revoked or signed out leaves no chats behind.
+    // A session that ended, was revoked or signed out leaves no chats behind,
+    // and no media either.
     _wipeCache();
+    unawaited(MediaCache.instance.wipe());
     generation++;
     api.token = null;
     api.wabaId = null;
