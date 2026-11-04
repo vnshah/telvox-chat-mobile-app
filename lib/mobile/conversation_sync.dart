@@ -6,7 +6,6 @@ import 'api.dart';
 import 'call_push.dart';
 import 'local_cache.dart';
 import 'models.dart';
-import 'perf_log.dart';
 
 /// Keeps the phone's copy of the busiest chats current before they are
 /// opened, as WhatsApp's own database is: when the inbox list loads (start,
@@ -81,7 +80,6 @@ class ConversationSync {
   /// by cursor), from the earliest point any of them left off: new messages
   /// saved whole, ticks and reactions patched onto the saved rows.
   Future<void> _catchUp(int waba, Map<int, Json> behind) async {
-    final clock = Stopwatch()..start();
     var since = behind.values
         .map((c) => '${c['sync']}')
         .reduce(
@@ -152,17 +150,6 @@ class ConversationSync {
         _synced[key] = DateTime.now();
       } catch (_) {}
     }
-    PerfLog.add(
-      PerfEntry(
-        'sync',
-        '${behind.length} chats',
-        clock.elapsedMilliseconds,
-        detail:
-            '$pages request${pages == 1 ? '' : 's'}, '
-            '${created.values.fold(0, (n, l) => n + l.length)} new, '
-            '${changed.values.fold(0, (n, l) => n + l.length)} changed',
-      ),
-    );
   }
 
   /// A message carried in a push: saved to its chat's copy at once, with no
@@ -216,7 +203,6 @@ class ConversationSync {
   /// The chat's newest page, saved over the phone's copy of that stretch;
   /// what this run holds in memory is dropped so the chat reads the copy.
   Future<void> _sync(int id, String key) async {
-    final clock = Stopwatch()..start();
     try {
       final result = await InboxRepository(session.api).messages(id);
       final page = rows(result['data']);
@@ -234,14 +220,6 @@ class ConversationSync {
         ..remove(key)
         ..remove('cursor:$key');
       _synced[key] = DateTime.now();
-      PerfLog.add(
-        PerfEntry(
-          'sync',
-          'contact $id',
-          clock.elapsedMilliseconds,
-          detail: '${page.length} rows',
-        ),
-      );
     } catch (_) {
       // Offline or refused: the chat syncs itself when opened.
     }

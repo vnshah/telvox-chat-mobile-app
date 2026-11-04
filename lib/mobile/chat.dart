@@ -31,7 +31,6 @@ import 'editors.dart' show EditField, showEditorSheet;
 import 'location.dart';
 import 'maps.dart';
 import 'send_policy.dart';
-import 'perf_log.dart';
 import 'realtime.dart';
 
 /// Photos, videos and the phone's position; tests replace them.
@@ -107,19 +106,6 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   /// so the copy is checked against the server each time the chat opens.
   bool verifyNext = false;
 
-  /// From opening the chat: how long until the phone's copy shows, and until
-  /// the server's answer is in (see the Performance log).
-  final openedFor = Stopwatch()..start();
-  bool _reportedCurrent = false;
-  String get perfLabel => 'contact ${widget.contact['id']}';
-
-  /// Marks the chat up to date once, the first time the server has answered.
-  void reportCurrent([String note = '']) {
-    if (_reportedCurrent) return;
-    _reportedCurrent = true;
-    PerfLog.chat('current', perfLabel, openedFor, note);
-  }
-
   /// True while the list shows a page around a found or quoted message and
   /// newer messages lie beyond it, not yet loaded. Scrolling down pages them
   /// in until the list meets the live chat again.
@@ -151,7 +137,6 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   /// Renders from this run's memory or the phone's copy at once, then asks
   /// the server only for what changed since the saved cursor.
   Future<void> openConversation() async {
-    PerfLog.chat('open', perfLabel, openedFor);
     final memory = widget.session.viewCache[cacheKey] as List<ApiMessage>?;
     var saved = memory == null
         ? null
@@ -169,14 +154,6 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       if (saved != null && saved.messages.isNotEmpty) {
         setState(() => messages = saved!.messages.map(ApiMessage.new).toList());
       }
-    }
-    if (messages.isNotEmpty) {
-      PerfLog.chat(
-        'shown',
-        perfLabel,
-        openedFor,
-        '${messages.length} from ${memory != null ? 'memory' : 'phone'}',
-      );
     }
     final c = saved?.cursor ?? const <String, dynamic>{};
     final syncedAt = DateTime.tryParse('${c['synced_at'] ?? ''}');
@@ -634,7 +611,6 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   /// shown, and paging back fetches from the page's own oldest message, so
   /// gaps further back fill in as they are reached. The healed copy is saved.
   void heal(List<ApiMessage> page, Json meta) {
-    reportCurrent('checked ${page.length}');
     if (page.isEmpty) {
       remember();
       return;
@@ -737,7 +713,6 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       // Many refreshes change nothing (tickets re-send the latest page);
       // rebuilding and re-sorting every bubble then is pure jank.
       final replace = replaceNext && !older;
-      if (!older && !verify) reportCurrent('${incoming.length} rows');
       if (verify) {
         heal(incoming, meta);
         return;
