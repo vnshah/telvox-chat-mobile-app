@@ -441,6 +441,7 @@ class MobileSession extends ChangeNotifier {
       if (api.token != null) {
         user = await api.get('me');
         await _openCache();
+        business = picksBusiness ? _business(saved['business']) : null;
         final selected =
             number(user?['bound_waba_user_id']) ?? number(saved['waba_id']);
         if (selected != null) await selectNumber(selected);
@@ -528,6 +529,7 @@ class MobileSession extends ChangeNotifier {
     api.token = result['token'];
     challenge = null;
     api.wabaId = null;
+    business = null;
     config = null;
     await _persist();
     user = await api.get('me');
@@ -542,8 +544,40 @@ class MobileSession extends ChangeNotifier {
 
   Future<void> _persist() => store.write(
     storageKey,
-    jsonEncode({'token': api.token, 'waba_id': api.wabaId}),
+    jsonEncode({
+      'token': api.token,
+      'waba_id': api.wabaId,
+      'business': ?business,
+    }),
   );
+
+  /// The one business this account belongs to: a business owner's own, or
+  /// the business of its manager or sub-user. Null for an admin or reseller,
+  /// who work across businesses and pick one first. The server holds the
+  /// account to it: another business's numbers are refused.
+  int? get ownBusinessId => number(user?['business_user_id']);
+
+  /// Whether this account picks a business before a number: admins, super
+  /// admins and resellers. Everyone else goes straight to their numbers.
+  bool get picksBusiness => canSwitchNumber && ownBusinessId == null;
+
+  /// The business an admin or reseller is working in (`id`, `name`), kept
+  /// across number switches and restarts so switching number stays within
+  /// it. Null for everyone else: their business is [ownBusinessId].
+  Json? business;
+
+  static Json? _business(Object? saved) {
+    final b = object(saved);
+    final id = number(b['id']);
+    return id == null ? null : {'id': id, 'name': '${b['name'] ?? ''}'};
+  }
+
+  /// An admin or reseller chose [picked] and is about to choose its number.
+  void chooseBusiness(Json? picked) {
+    if (!picksBusiness) return;
+    business = _business(picked);
+  }
+
   Future<void> selectNumber(int id) async {
     generation++;
     api.wabaId = id;
@@ -583,6 +617,7 @@ class MobileSession extends ChangeNotifier {
     api.token = null;
     api.wabaId = null;
     user = null;
+    business = null;
     config = null;
     challenge = null;
     error = 'Your session ended. Please sign in again.';

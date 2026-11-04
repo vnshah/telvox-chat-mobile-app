@@ -369,6 +369,11 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
+/// Where an account picks what it works on. An admin, super admin or
+/// reseller works across businesses: business first, then one of its
+/// WhatsApp numbers. Everyone else belongs to one business and only picks
+/// among its numbers; the business list never shows. A number's own login,
+/// manager or sub-user tied to one number never sees this at all.
 class NumberPicker extends StatefulWidget {
   const NumberPicker(this.session, {super.key});
   final MobileSession session;
@@ -380,9 +385,17 @@ class _NumberPickerState extends State<NumberPicker> {
   List<Json> items = [];
   bool busy = true;
   String? error;
-  Json? business;
+
+  /// The business whose numbers show: switching number stays within the
+  /// business already chosen.
+  late Json? business = widget.session.picksBusiness
+      ? widget.session.business
+      : null;
   int page = 1;
   bool more = false;
+
+  bool get choosingBusiness => widget.session.picksBusiness && business == null;
+
   @override
   void initState() {
     super.initState();
@@ -394,23 +407,34 @@ class _NumberPickerState extends State<NumberPicker> {
       busy = true;
       error = null;
     });
+    final session = widget.session;
     try {
-      final bound = number(widget.session.user?['bound_waba_user_id']);
+      final bound = number(session.user?['bound_waba_user_id']);
       if (bound != null) {
-        await widget.session.selectNumber(bound);
+        await session.selectNumber(bound);
         return;
       }
-      final result = await widget.session.api.get(
-        business == null ? 'businesses' : 'numbers',
-        query: business == null
-            ? {'page': page}
-            : {'business_user_id': business!['id']},
-      );
+      final result = choosingBusiness
+          ? await session.api.get('businesses', query: {'page': page})
+          // Without a business named, the server lists the account's own.
+          : await session.api.get(
+              'numbers',
+              query: session.picksBusiness
+                  ? {'business_user_id': business!['id']}
+                  : null,
+            );
       if (!mounted) return;
       setState(() {
         items = [if (append) ...items, ...rows(result['data'])];
-        more = result['next_page_url'] != null;
+        more = choosingBusiness && result['next_page_url'] != null;
       });
+    } on ApiFailure catch (e) {
+      // A remembered business this account may no longer use: choose again.
+      if (e.httpStatus == 403 && session.picksBusiness && business != null) {
+        _changeBusiness();
+        return;
+      }
+      if (mounted) setState(() => error = '$e');
     } catch (e) {
       if (mounted) setState(() => error = '$e');
     } finally {
@@ -418,93 +442,124 @@ class _NumberPickerState extends State<NumberPicker> {
     }
   }
 
+  void _changeBusiness() {
+    widget.session.chooseBusiness(null);
+    setState(() {
+      business = null;
+      page = 1;
+    });
+    load();
+  }
+
+  Future<void> _pick(Json item) async {
+    if (choosingBusiness) {
+      widget.session.chooseBusiness(item);
+      setState(() {
+        business = widget.session.business;
+        page = 1;
+      });
+      await load();
+      return;
+    }
+    setState(() => busy = true);
+    try {
+      await widget.session.selectNumber(number(item['id'])!);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          error = '$e';
+          busy = false;
+        });
+      }
+    }
+  }
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: Text(
-        business == null ? 'Choose business' : 'Choose WhatsApp number',
-      ),
-      leading: business == null
-          ? null
-          : BackButton(
-              onPressed: () {
-                setState(() {
-                  business = null;
-                  page = 1;
-                });
-                load();
-              },
+  Widget build(BuildContext context) {
+    final businessName = '${business?['name'] ?? ''}';
+    return Scaffold(
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              choosingBusiness ? 'Choose business' : 'Choose WhatsApp number',
             ),
-      actions: [
-        AppIconButton(
-          tooltip: 'Sign out',
-          onPressed: () async {
-            try {
-              await widget.session.logout();
-            } catch (e) {
-              if (context.mounted) mobileNotice(context, e);
-            }
-          },
-          icon: const Icon(Icons.logout),
+            if (!choosingBusiness && businessName.isNotEmpty)
+              Text(
+                businessName,
+                key: const ValueKey('picker-business'),
+                style: const TextStyle(fontSize: 13, color: T.muted),
+              ),
+          ],
         ),
-      ],
-    ),
-    body: busy
-        ? const Center(child: CircularProgressIndicator())
-        : error != null
-        ? failure(error!, load)
-        : ListView(
-            children: [
-              if (items.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text(
-                    'No available businesses or numbers for this account.',
-                  ),
-                ),
-              for (final item in items)
-                AppListTile(
-                  leading: Avatar('${item['name'] ?? ''}', size: 40),
-                  title: Text(
-                    '${item['name'] ?? item['company_name'] ?? 'Business'}',
-                  ),
-                  subtitle: business == null
-                      ? null
-                      : Text('${item['phone'] ?? ''}'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    if (business == null) {
-                      setState(() {
-                        business = item;
-                        page = 1;
-                      });
-                      await load();
-                    } else {
-                      setState(() => busy = true);
-                      try {
-                        await widget.session.selectNumber(number(item['id'])!);
-                      } catch (e) {
-                        if (mounted) {
-                          setState(() {
-                            error = '$e';
-                            busy = false;
-                          });
-                        }
-                      }
-                    }
-                  },
-                ),
-              if (more)
-                AppButton.text(
-                  onPressed: () {
-                    page++;
-                    load(append: true);
-                  },
-                  child: const Text('Load more'),
-                ),
-            ],
+        // Only an account that picks a business can go back to the list.
+        leading: widget.session.picksBusiness && business != null
+            ? BackButton(
+                key: const ValueKey('picker-change-business'),
+                onPressed: _changeBusiness,
+              )
+            : null,
+        automaticallyImplyLeading: false,
+        actions: [
+          AppIconButton(
+            tooltip: 'Sign out',
+            onPressed: () async {
+              try {
+                await widget.session.logout();
+              } catch (e) {
+                if (context.mounted) mobileNotice(context, e);
+              }
+            },
+            icon: const Icon(Icons.logout),
           ),
-  );
+        ],
+      ),
+      body: busy
+          ? const Center(child: CircularProgressIndicator())
+          : error != null
+          ? failure(error!, load)
+          : ListView(
+              children: [
+                if (items.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      choosingBusiness
+                          ? 'No businesses are available to this account.'
+                          : 'No WhatsApp numbers are available to this '
+                                'account in this business.',
+                    ),
+                  ),
+                for (final item in items)
+                  AppListTile(
+                    key: ValueKey(
+                      '${choosingBusiness ? 'business' : 'number'}-'
+                      '${item['id']}',
+                    ),
+                    leading: Avatar('${item['name'] ?? ''}', size: 40),
+                    title: Text(
+                      '${item['name'] ?? item['company_name'] ?? 'Business'}',
+                    ),
+                    subtitle: choosingBusiness
+                        ? null
+                        : Text('${item['phone'] ?? ''}'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _pick(item),
+                  ),
+                if (more)
+                  AppButton.text(
+                    onPressed: () {
+                      page++;
+                      load(append: true);
+                    },
+                    child: const Text('Load more'),
+                  ),
+              ],
+            ),
+    );
+  }
 }
 
 class LiveHome extends StatefulWidget {
