@@ -75,100 +75,171 @@ enum AttachChoice {
   templates,
 }
 
+/// One choice of the attach sheet: a rounded tile in a soft colour.
+typedef _AttachItem = ({
+  AttachChoice choice,
+  IconData icon,
+  String label,
+  Color tint,
+  Color ink,
+});
+
+/// The attach sheet: a sheet with a handle and the choices as a grid of
+/// rounded tiles, each in its own soft colour (location in the app's
+/// green), what people send most first. Template shows only where a template may be sent.
 Future<AttachChoice?> showAttachSheet(
   BuildContext context, {
   required bool templates,
-}) => showModalBottomSheet<AttachChoice>(
-  context: context,
-  backgroundColor: Colors.transparent,
-  builder: (context) {
-    Widget item(AttachChoice choice, IconData icon, String label, Color c) =>
-        InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: () => Navigator.pop(context, choice),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 54,
-                  height: 54,
-                  decoration: BoxDecoration(color: c, shape: BoxShape.circle),
-                  child: Icon(icon, color: Colors.white, size: 26),
-                ),
-                const SizedBox(height: 7),
-                Text(
-                  label,
-                  style: const TextStyle(fontSize: 12.5, color: T.secondary),
-                ),
-              ],
-            ),
-          ),
-        );
-    return SafeArea(
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-        padding: const EdgeInsets.fromLTRB(12, 18, 12, 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: GridView.count(
-          crossAxisCount: 4,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          childAspectRatio: 1.1,
+}) {
+  final items = <_AttachItem>[
+    (
+      choice: AttachChoice.camera,
+      icon: Icons.photo_camera_outlined,
+      label: 'Camera',
+      tint: Color(0xFFFCE4EA),
+      ink: Color(0xFFD13E63),
+    ),
+    (
+      choice: AttachChoice.gallery,
+      icon: Icons.photo_library_outlined,
+      label: 'Gallery',
+      tint: Color(0xFFEEE6FB),
+      ink: Color(0xFF7B52D6),
+    ),
+    (
+      choice: AttachChoice.document,
+      icon: Icons.description_outlined,
+      label: 'Document',
+      tint: Color(0xFFE3EEFB),
+      ink: Color(0xFF2F72C7),
+    ),
+    (
+      choice: AttachChoice.location,
+      icon: Icons.location_on_outlined,
+      label: 'Location',
+      tint: T.greenWash,
+      ink: T.green,
+    ),
+    (
+      choice: AttachChoice.audio,
+      icon: Icons.headphones_outlined,
+      label: 'Audio',
+      tint: Color(0xFFFDEFD9),
+      ink: Color(0xFFD9822B),
+    ),
+    (
+      choice: AttachChoice.quickReplies,
+      icon: Icons.bolt_outlined,
+      label: 'Quick replies',
+      tint: Color(0xFFDDF3F0),
+      ink: Color(0xFF16958A),
+    ),
+    if (templates)
+      (
+        choice: AttachChoice.templates,
+        icon: Icons.article_outlined,
+        label: 'Template',
+        tint: Color(0xFFE6E8FA),
+        ink: Color(0xFF4B55C2),
+      ),
+  ];
+  return showModalBottomSheet<AttachChoice>(
+    context: context,
+    backgroundColor: Colors.white,
+    showDragHandle: true,
+    useSafeArea: true,
+    // Sized to its tiles, not to a share of the screen; scrolls only if
+    // very large text makes it taller than the screen.
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (context) => SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            item(
-              AttachChoice.document,
-              Icons.insert_drive_file,
-              'Document',
-              const Color(0xFF7F66FF),
-            ),
-            item(
-              AttachChoice.gallery,
-              Icons.photo,
-              'Gallery',
-              const Color(0xFFC861FA),
-            ),
-            item(
-              AttachChoice.camera,
-              Icons.photo_camera,
-              'Camera',
-              const Color(0xFFFF2E74),
-            ),
-            item(
-              AttachChoice.location,
-              Icons.location_on,
-              'Location',
-              const Color(0xFF1FA855),
-            ),
-            item(
-              AttachChoice.audio,
-              Icons.headphones,
-              'Audio',
-              const Color(0xFFFF7F21),
-            ),
-            item(
-              AttachChoice.quickReplies,
-              Icons.bolt,
-              'Quick replies',
-              const Color(0xFF02A698),
-            ),
-            if (templates)
-              item(
-                AttachChoice.templates,
-                Icons.article,
-                'Template',
-                const Color(0xFF009DE2),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(6, 0, 6, 12),
+              child: Text(
+                'Share',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  color: T.ink,
+                ),
               ),
+            ),
+            // Four to a row on a phone; tiles keep their size on wider
+            // screens rather than stretching.
+            LayoutBuilder(
+              builder: (context, box) {
+                final width = (box.maxWidth / 4).clamp(72.0, 96.0);
+                return Wrap(
+                  runSpacing: 6,
+                  children: [
+                    for (final item in items)
+                      SizedBox(
+                        width: width,
+                        child: _AttachTile(
+                          item,
+                          onTap: () => Navigator.pop(context, item.choice),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
           ],
         ),
       ),
-    );
-  },
-);
+    ),
+  );
+}
+
+class _AttachTile extends StatelessWidget {
+  const _AttachTile(this.item, {required this.onTap});
+  final _AttachItem item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: item.label,
+    excludeSemantics: true,
+    child: InkWell(
+      key: ValueKey('attach-${item.choice.name}'),
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 6),
+          Ink(
+            width: 58,
+            height: 58,
+            decoration: BoxDecoration(
+              color: item.tint,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Icon(item.icon, color: item.ink, size: 27),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            item.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12.5, color: T.ink),
+          ),
+          const SizedBox(height: 6),
+        ],
+      ),
+    ),
+  );
+}
 
 /// The WhatsApp composer: a white pill holding the reply or attachment being
 /// prepared, the text field and the attach clip, beside a round button that
