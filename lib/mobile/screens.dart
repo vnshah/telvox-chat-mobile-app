@@ -779,10 +779,6 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
               child: const Text('Privacy Policy'),
             ),
             CupertinoActionSheetAction(
-              onPressed: () => Navigator.pop(popup, 'delete'),
-              child: const Text('Delete Account'),
-            ),
-            CupertinoActionSheetAction(
               isDestructiveAction: true,
               onPressed: () => Navigator.pop(popup, 'signout'),
               child: const Text('Sign Out'),
@@ -800,8 +796,6 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
           await chooseNotificationSound(context, widget.session);
         case 'privacy':
           await openPrivacyPolicy(context);
-        case 'delete':
-          await requestAccountDeletion(context, widget.session);
         case 'signout':
           await signOut();
       }
