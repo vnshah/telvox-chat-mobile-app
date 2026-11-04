@@ -89,6 +89,20 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- The calls library declares its call service as camera too, for
+             video calls; calls here are voice only. Declared as what it is,
+             so the store asks only about phone-call foreground services. -->
+        <service
+            android:name="com.hiennv.flutter_callkit_incoming.CallkitNotificationService"
+            android:foregroundServiceType="phoneCall|microphone"
+            tools:replace="android:foregroundServiceType" />
+        <!-- The location library's service only runs for background
+             tracking, which the app never does (it sends a location once,
+             while open); without the type it asks for no location
+             foreground service. -->
+        <service
+            android:name="com.baseflow.geolocator.GeolocatorLocationService"
+            tools:remove="android:foregroundServiceType" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
