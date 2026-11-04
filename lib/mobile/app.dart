@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show PredictiveBackEvent;
 
 import '../ui/theme.dart';
 import 'api.dart';
@@ -11,7 +10,7 @@ import 'calls.dart';
 import 'connection.dart';
 import 'local_cache.dart';
 import 'media_cache.dart';
-import 'offline_screen.dart';
+import 'offline_bar.dart';
 import 'screens.dart';
 import 'share_intake.dart';
 import 'share_sheet.dart';
@@ -48,7 +47,6 @@ class _MobileApplicationState extends State<MobileApplication>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    session.connection.addListener(_connectionChanged);
     unawaited(session.connection.start());
     // Media already on the phone opens from it at once.
     unawaited(MediaCache.instance.load().catchError((_) {}));
@@ -62,21 +60,12 @@ class _MobileApplicationState extends State<MobileApplication>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    session.connection.removeListener(_connectionChanged);
     if (widget.session == null) session.connection.dispose();
     shares.pending.removeListener(_offerShare);
     session.removeListener(_offerShare);
     shares.dispose();
     if (widget.session == null) session.dispose();
     super.dispose();
-  }
-
-  /// Going offline puts the keyboard away: the offline screen covers the
-  /// field, whose text stays as it was.
-  void _connectionChanged() {
-    if (!session.connection.online) {
-      FocusManager.instance.primaryFocus?.unfocus();
-    }
   }
 
   @override
@@ -90,15 +79,6 @@ class _MobileApplicationState extends State<MobileApplication>
         break;
     }
   }
-
-  // While offline, back does nothing: nothing may change unseen beneath the
-  // offline screen. These run before the app's navigator hears of it.
-  @override
-  Future<bool> didPopRoute() async => !session.connection.online;
-
-  @override
-  bool handleStartBackGesture(PredictiveBackEvent backEvent) =>
-      !session.connection.online;
 
   void _offerShare() {
     if (shares.pending.value == null || !session.ready) return;
@@ -138,20 +118,14 @@ class _MobileApplicationState extends State<MobileApplication>
     theme: T.themeFor(defaultTargetPlatform),
     builder: (_, child) => CupertinoTheme(
       data: T.cupertino,
-      child: ValueListenableBuilder(
-        valueListenable: session.connection,
-        builder: (context, online, app) => Stack(
-          fit: StackFit.expand,
-          children: [
-            // Kept alive beneath, unseen and untouchable while offline.
-            ExcludeSemantics(excluding: !online, child: app),
-            if (!online) OfflineScreen(session.connection),
-          ],
-        ),
+      // Offline, a bar across the top; the app stays usable beneath it.
+      child: OfflineBar(
+        session.connection,
         child: OngoingCallBar(session.calls, child: child!),
       ),
     ),
-    home: session.restoring || session.awaitingNetwork
+    // Opened offline with no account kept yet: it loads once back online.
+    home: session.restoring || (session.awaitingNetwork && !session.signedIn)
         ? const Scaffold(body: Center(child: CircularProgressIndicator()))
         : session.ready
         ? LiveHome(session)

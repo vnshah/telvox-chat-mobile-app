@@ -203,13 +203,63 @@ class MobileSession extends ChangeNotifier {
   /// Whether the server can be reached; the app covers itself while not.
   final ConnectionMonitor connection;
 
-  /// The app opened without a network: the saved sign-in is kept, and the
-  /// session finishes loading once the server can be reached again, rather
-  /// than falling back to the sign-in screen.
+  /// The app opened without a network. With the account kept from the last
+  /// time it was online, the inbox opens from the phone's copy and the
+  /// account is refreshed quietly once the server can be reached; without
+  /// it, the session finishes loading then. Never the sign-in screen.
   bool awaitingNetwork = false;
 
   void _connectionChanged() {
-    if (connection.online && awaitingNetwork && !restoring) {
+    if (!connection.online || !awaitingNetwork || restoring) return;
+    unawaited(ready ? _refreshAccount() : restore());
+  }
+
+  /// The signed-in account and its number's settings, kept (encrypted, with
+  /// the sign-in) so the app can open offline.
+  String get _accountKey =>
+      'account.${Uri.parse(api.dio.options.baseUrl).host}';
+
+  Future<void> _rememberAccount() async {
+    if (user == null || config == null || api.wabaId == null) return;
+    try {
+      await store.write(
+        _accountKey,
+        jsonEncode({'user': user, 'config': config, 'waba_id': api.wabaId}),
+      );
+    } catch (_) {
+      // Without it, opening offline waits for the network.
+    }
+  }
+
+  /// Opened offline: the account as it was last seen, for [wanted].
+  Future<bool> _openOffline(int? wanted, Json? saved) async {
+    final account = object(decoded(await store.read(_accountKey)));
+    final kept = object(account['user']), settings = object(account['config']);
+    final id = number(account['waba_id']);
+    if (kept.isEmpty || settings.isEmpty || id == null) return false;
+    if (wanted != null && wanted != id) return false;
+    user = kept;
+    business = picksBusiness ? _business(saved?['business']) : null;
+    api.wabaId = id;
+    config = settings;
+    await _openCache();
+    return true;
+  }
+
+  /// Back online after opening offline: the account and settings are fetched
+  /// again in place. The app is not rebuilt, so an open chat stays open.
+  Future<void> _refreshAccount() async {
+    try {
+      final me = await api.get('me');
+      final settings = await api.get('config');
+      user = me;
+      config = settings;
+      awaitingNetwork = false;
+      await _rememberAccount();
+      notifyListeners();
+    } on ApiFailure catch (e) {
+      if (e.unreachable) return; // Still offline: the next return retries.
+      awaitingNetwork = false;
       unawaited(restore());
     }
   }
@@ -494,9 +544,16 @@ class MobileSession extends ChangeNotifier {
     } on ApiFailure catch (e) {
       if (e.unreachable && api.token != null) {
         awaitingNetwork = true;
-        user = null;
-        api.wabaId = null;
-        config = null;
+        final saved = object(decoded(await store.read(storageKey)));
+        final opened = await _openOffline(
+          number(saved['waba_id']),
+          saved,
+        ).catchError((_) => false);
+        if (!opened) {
+          user = null;
+          api.wabaId = null;
+          config = null;
+        }
       } else {
         error = '$e';
       }
@@ -639,6 +696,7 @@ class MobileSession extends ChangeNotifier {
     try {
       config = await api.get('config');
       await _persist();
+      unawaited(_rememberAccount());
       unawaited(releaseOpenChats());
     } catch (_) {
       api.wabaId = null;
@@ -679,6 +737,7 @@ class MobileSession extends ChangeNotifier {
     error = 'Your session ended. Please sign in again.';
     // Clear the persisted bearer without delaying navigation. Errors do not expose it.
     store.delete(storageKey).catchError((_) {});
+    store.delete(_accountKey).catchError((_) {});
     notifyListeners();
   }
 

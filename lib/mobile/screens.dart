@@ -44,11 +44,15 @@ class _RealtimeNoticeState extends State<RealtimeNotice> {
   void initState() {
     super.initState();
     widget.realtime.addListener(changed);
+    widget.realtime.session.connection.addListener(changed);
     changed();
   }
 
   void changed() {
-    final down = widget.realtime.state == RealtimeState.reconnecting;
+    // Offline, the offline bar says it already.
+    final down =
+        widget.realtime.state == RealtimeState.reconnecting &&
+        widget.realtime.session.connection.online;
     if (!down) {
       grace?.cancel();
       grace = null;
@@ -66,6 +70,7 @@ class _RealtimeNoticeState extends State<RealtimeNotice> {
   void dispose() {
     grace?.cancel();
     widget.realtime.removeListener(changed);
+    widget.realtime.session.connection.removeListener(changed);
     super.dispose();
   }
 

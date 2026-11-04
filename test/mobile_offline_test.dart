@@ -119,7 +119,7 @@ void main() {
     });
   });
 
-  group('the offline screen', () {
+  group('the offline bar', () {
     late FakeNetwork net;
     late MobileSession session;
 
@@ -146,25 +146,30 @@ void main() {
       session.dispose();
     });
 
-    testWidgets('covers the app offline and lifts by itself, keeping it', (
+    testWidgets('a bar shows offline; the app stays usable beneath it', (
       tester,
     ) async {
       await app(tester);
-      expect(find.text('Sign in'), findsOneWidget);
-      await tester.enterText(find.byType(TextField).first, 'asha@telvox.dev');
+      expect(find.byKey(const ValueKey('offline-bar')), findsNothing);
 
       await network(tester, false);
-      expect(find.byKey(const ValueKey('offline-screen')), findsOneWidget);
-      expect(find.text('You’re offline'), findsOneWidget);
-      expect(find.text('Waiting for network…'), findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(find.text('No internet connection'), findsOneWidget);
+      // Nothing is covered: the screen beneath still works.
+      expect(find.text('Sign in'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).first, 'asha@telvox.dev');
+      expect(find.text('asha@telvox.dev'), findsOneWidget);
 
       await network(tester, true);
-      expect(find.byKey(const ValueKey('offline-screen')), findsNothing);
-      // What was typed is still there.
+      await tester.pumpAndSettle();
+      expect(find.text('Back online'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('offline-bar')), findsNothing);
       expect(find.text('asha@telvox.dev'), findsOneWidget);
     });
 
-    testWidgets('back does nothing beneath the offline screen', (tester) async {
+    testWidgets('back works as usual while offline', (tester) async {
       await app(tester);
       unawaited(
         session.calls.navigator!.currentState!.push(
@@ -174,30 +179,28 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-
       await network(tester, false);
-      await tester.binding.handlePopRoute();
-      await tester.pump();
-      await network(tester, true);
       await tester.pumpAndSettle();
-      expect(find.text('An open page'), findsOneWidget);
-
-      // Online, back works as before.
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       expect(find.text('An open page'), findsNothing);
+      expect(find.text('No internet connection'), findsOneWidget);
+      await network(tester, true);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
     });
 
-    testWidgets('Try again lifts it as soon as the server answers', (
-      tester,
-    ) async {
+    testWidgets('tapping the bar checks at once', (tester) async {
       await app(tester);
       await network(tester, false);
+      await tester.pumpAndSettle();
       net.reachable = true;
-      await tester.tap(find.byKey(const ValueKey('offline-retry')));
+      await tester.tap(find.byKey(const ValueKey('offline-bar')));
       await tester.pump();
       await tester.pump();
-      expect(find.byKey(const ValueKey('offline-screen')), findsNothing);
+      expect(find.text('Back online'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
     });
   });
 
@@ -285,6 +288,79 @@ void main() {
       expect(session.awaitingNetwork, isFalse);
       expect(session.ready, isTrue);
       expect(session.api.wabaId, 7);
+      session.connection.dispose();
+      session.dispose();
+    },
+  );
+
+  test(
+    'opened offline with the account kept, the inbox opens from the phone',
+    () async {
+      var reachable = true;
+      var name = 'Asha';
+      final store = MemoryStore();
+      Future<MobileSession> open(FakeNetwork net) async {
+        final session = MobileSession(
+          fakeApi((r, h) {
+            if (!reachable) {
+              return h.reject(
+                DioException.connectionError(
+                  requestOptions: r,
+                  reason: 'offline',
+                ),
+              );
+            }
+            answer(r, h, switch (r.path) {
+              'me' => {'id': 1, 'name': name, 'bound_waba_user_id': 7},
+              _ => {
+                'inbox': <String, dynamic>{'number': 'Sales'},
+              },
+            });
+          }),
+          store,
+          connection: net.monitor(),
+        );
+        await session.connection.start();
+        return session;
+      }
+
+      // Online once: signed in, the account is kept with the sign-in.
+      store.values['session.dev.example.test'] = jsonEncode({
+        'token': 'token',
+        'waba_id': 7,
+      });
+      final first = await open(FakeNetwork());
+      await first.restore();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(first.ready, isTrue);
+      first.connection.dispose();
+      first.dispose();
+
+      // Opened again with no network: straight into the inbox.
+      reachable = false;
+      final net = FakeNetwork()..reachable = false;
+      final session = await open(net);
+      await session.restore();
+      expect(session.ready, isTrue);
+      expect(session.awaitingNetwork, isTrue);
+      expect(session.user!['name'], 'Asha');
+      expect(session.api.wabaId, 7);
+      expect(object(session.config!['inbox'])['number'], 'Sales');
+
+      // Back online: refreshed in place; the app is not rebuilt.
+      final generation = session.generation;
+      name = 'Asha Mehta';
+      reachable = true;
+      net.reachable = true;
+      await session.connection.check();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(session.awaitingNetwork, isFalse);
+      expect(session.user!['name'], 'Asha Mehta');
+      expect(session.generation, generation);
+
+      // Signing out forgets the kept account too.
+      session.api.onUnauthorized!();
+      expect(store.values.keys.where((k) => k.startsWith('account.')), isEmpty);
       session.connection.dispose();
       session.dispose();
     },
