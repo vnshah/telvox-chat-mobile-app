@@ -276,15 +276,16 @@ class MessageBubble extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 2),
-                        Text(
-                          m.reply!,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: T.secondary,
-                          ),
-                        ),
+                        m.replyPreview ??
+                            Text(
+                              m.reply!,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: T.secondary,
+                              ),
+                            ),
                       ],
                     ),
                   ),

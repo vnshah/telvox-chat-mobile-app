@@ -406,6 +406,49 @@ void main() {
     expect(call('{"status":"FAILED"}', 1), 'Voice call · Failed');
   });
 
+  testWidgets('a reply is swiped from anywhere on the message row', (
+    tester,
+  ) async {
+    var replies = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: T.themeFor(TargetPlatform.android),
+        home: Scaffold(
+          body: Column(
+            children: [
+              LiveMessageView(
+                message: ApiMessage({
+                  'id': 1,
+                  'type': 2,
+                  'message_id': 'wamid.1',
+                  'message_type': 'text',
+                  'message_body': 'Hi',
+                  'created_at': '2026-10-30T13:06:03Z',
+                }),
+                apiBase: 'https://chat.example.test/api/mobile/v1/',
+                first: true,
+                onReply: () => replies++,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    // A short incoming bubble on the left: the swipe starts in the empty
+    // space to its right, on the same row.
+    final bubble = tester.getRect(find.byType(MessageBubble));
+    final row = tester.getRect(find.byType(LiveMessageView));
+    final empty = Offset((bubble.right + row.right) / 2, bubble.center.dy);
+    expect(empty.dx, greaterThan(bubble.right + 20));
+    await tester.dragFrom(empty, const Offset(120, 0));
+    await tester.pumpAndSettle();
+    expect(replies, 1);
+    // And on the bubble itself, as before.
+    await tester.drag(find.byType(MessageBubble), const Offset(120, 0));
+    await tester.pumpAndSettle();
+    expect(replies, 2);
+  });
+
   testWidgets('stickers have no bubble and calls show the call row', (
     tester,
   ) async {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../ui/file_type.dart';
 import '../ui/theme.dart';
 import 'api.dart';
 import 'media.dart';
@@ -384,42 +385,6 @@ class _MediaThumb extends StatelessWidget {
   }
 }
 
-/// A coloured square with the file's extension, as a file manager shows it.
-class _FileBadge extends StatelessWidget {
-  const _FileBadge(this.extension);
-  final String extension;
-  @override
-  Widget build(BuildContext context) {
-    final colour = switch (extension) {
-      'PDF' => const Color(0xFFB3412F),
-      'DOC' || 'DOCX' => const Color(0xFF2F5FA8),
-      'XLS' || 'XLSX' || 'CSV' => T.green,
-      'PPT' || 'PPTX' => const Color(0xFFC26A1E),
-      _ => T.brass,
-    };
-    return Container(
-      width: 40,
-      height: 40,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: colour.withValues(alpha: .12),
-        borderRadius: BorderRadius.circular(9),
-      ),
-      child: extension.isEmpty
-          ? AppIcon(Icons.description_outlined, color: colour, size: 20)
-          : Text(
-              extension.length > 4 ? extension.substring(0, 4) : extension,
-              style: TextStyle(
-                fontSize: 10.5,
-                fontWeight: FontWeight.w700,
-                letterSpacing: .3,
-                color: colour,
-              ),
-            ),
-    );
-  }
-}
-
 Future<void> _copy(BuildContext context, String text, String what) async {
   await Clipboard.setData(ClipboardData(text: text));
   if (context.mounted) mobileNotice(context, '$what copied');
@@ -450,7 +415,7 @@ class _DocumentRow extends StatelessWidget {
       ),
     );
     return _Row(
-      leading: _FileBadge(extension),
+      leading: FileTypeIcon(name),
       title: name,
       subtitle: meta,
       onTap: url == null ? null : open,

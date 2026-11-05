@@ -5,7 +5,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart' show XFile;
 
 import '../ui/theme.dart';
 import '../ui/data.dart' show Message;
@@ -19,6 +18,8 @@ import 'api.dart';
 import 'models.dart';
 import 'screens.dart';
 import 'media.dart';
+import 'media_quality.dart';
+import 'send_media.dart';
 import 'composer.dart';
 import 'local_cache.dart';
 import 'contact_actions.dart';
@@ -45,6 +46,21 @@ Future<CapturedMedia?> Function(BuildContext context) openCamera = (context) =>
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (_) => CameraScreen(onGallery: mediaPicker.galleryItem),
+      ),
+    );
+
+/// The preview of picked photos and videos, to [to]; tests replace it.
+@visibleForTesting
+Future<MediaBatch?> Function(
+  BuildContext context,
+  List<Attachment> items,
+  String to,
+)
+openSendMedia = (context, items, to) =>
+    Navigator.of(context, rootNavigator: true).push<MediaBatch>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => SendMediaPage(items, recipient: to),
       ),
     );
 
@@ -807,7 +823,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       case AttachChoice.document:
         pickAttachment(['document']);
       case AttachChoice.gallery:
-        pickMedia(() => mediaPicker.galleryItem());
+        gallery();
       case AttachChoice.camera:
         camera();
       case AttachChoice.location:
@@ -844,27 +860,51 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     deliver(item);
   }
 
-  /// A photo or video from the gallery or the camera, checked and named as
-  /// WhatsApp will accept it, then held in the composer for a caption.
-  Future<void> pickMedia(Future<XFile?> Function() pick) async {
+  /// Photos and videos from the gallery, up to 30 as WhatsApp allows, each
+  /// checked as WhatsApp will take it, then previewed with their captions
+  /// and the HD switch; they go one message each, at the quality chosen.
+  Future<void> gallery() async {
     if (!policy.canSend || picking) return;
     setState(() => picking = true);
+    final picked = <Attachment>[];
     try {
-      final file = await pick();
-      if (file == null) return;
-      final picked = await pickedAttachment(file);
-      if (mounted) {
-        setState(() {
-          attachment = picked;
-          reply = null;
-        });
+      final files = await mediaPicker.galleryItems(limit: 30);
+      final refused = <String>[];
+      for (final file in files) {
+        try {
+          picked.add(await pickedAttachment(file));
+        } on ApiFailure catch (e) {
+          refused.add(e.message);
+        }
+      }
+      if (refused.isNotEmpty && mounted) {
+        mobileNotice(
+          context,
+          picked.isEmpty
+              ? refused.first
+              : '${refused.length} of ${files.length} not added: '
+                    '${refused.first}',
+        );
       }
     } catch (e) {
       if (mounted) mobileNotice(context, e);
     } finally {
       if (mounted) setState(() => picking = false);
     }
+    if (picked.isEmpty || !mounted) return;
+    final batch = await openSendMedia(context, picked, contactName);
+    if (batch == null || !mounted) return;
+    for (final (file, caption) in batch.items) {
+      queue(
+        {'message_type': 'text', 'body': caption},
+        attachment: file,
+        quality: batch.quality,
+      );
+    }
   }
+
+  String get contactName =>
+      '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}';
 
   /// WhatsApp's camera: a photo or video, reviewed and captioned, then sent.
   Future<void> camera() async {
@@ -877,7 +917,11 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     try {
       final file = await pickedAttachment(shot.file);
       if (!mounted) return;
-      queue({'message_type': 'text', 'body': shot.caption}, attachment: file);
+      queue(
+        {'message_type': 'text', 'body': shot.caption},
+        attachment: file,
+        quality: shot.quality,
+      );
     } catch (e) {
       if (mounted) mobileNotice(context, e);
     }
@@ -981,8 +1025,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   }
 
   /// Sends a message that is not typed text, through the same pending row.
-  void queue(Json fields, {Attachment? attachment}) {
-    final item = PendingSend(attachment: attachment, {
+  void queue(
+    Json fields, {
+    Attachment? attachment,
+    MediaQuality quality = MediaQuality.standard,
+  }) {
+    final item = PendingSend(attachment: attachment, quality: quality, {
       'waba_user_id': widget.session.api.wabaId,
       'contact_id': contactId,
       'wa_id': phone,
@@ -1092,11 +1140,21 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       item.error = null;
     });
     try {
+      // A video's encoding is the first half of its ring, the upload the
+      // second; a photo compresses too quickly to show.
+      final encoding = !item.prepared && item.attachment?.kind == 'video';
+      final start = encoding ? .5 : 0.0;
+      await item.prepare(
+        progress: (done) {
+          if (mounted) setState(() => item.progress = done * .5);
+        },
+      );
+      if (!mounted) return;
       final result = await repository.send(
         item,
         progress: (sent, total) {
           if (mounted && total > 0) {
-            setState(() => item.progress = sent / total);
+            setState(() => item.progress = start + (1 - start) * sent / total);
           }
         },
       );

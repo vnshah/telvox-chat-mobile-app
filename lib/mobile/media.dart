@@ -23,6 +23,10 @@ class Attachment {
     'jpg': ('image', 'image/jpeg'),
     'jpeg': ('image', 'image/jpeg'),
     'png': ('image', 'image/png'),
+    // Sent as JPEG: a photo is re-encoded before it goes (media_quality.dart).
+    'heic': ('image', 'image/heic'),
+    'heif': ('image', 'image/heif'),
+    'webp': ('image', 'image/webp'),
     'mp4': ('video', 'video/mp4'),
     '3gp': ('video', 'video/3gpp'),
     'pdf': ('document', 'application/pdf'),
@@ -50,10 +54,19 @@ class Attachment {
       'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     ),
   };
+
+  /// The largest photo or video taken as picked: it is made to fit
+  /// WhatsApp's 5 MB and 16 MB before it is sent (see [prepareMedia]).
+  static const maxOriginalPhoto = 60 * 1024 * 1024,
+      maxOriginalVideo = 2 * 1024 * 1024 * 1024;
+
+  /// [original] is a photo or video that will be compressed before it is
+  /// sent, so only [maxOriginalPhoto] and [maxOriginalVideo] bound it.
   static Future<Attachment> fromFile(
     XFile file, {
     String? requiredKind,
     List<String>? kinds,
+    bool original = false,
   }) async {
     final format = formats[file.name.split('.').last.toLowerCase()];
     final allowed = kinds ?? [?requiredKind];
@@ -64,6 +77,15 @@ class Attachment {
       );
     }
     final size = await file.length();
+    if (original && (format.$1 == 'image' || format.$1 == 'video')) {
+      final max = format.$1 == 'image' ? maxOriginalPhoto : maxOriginalVideo;
+      if (size <= 0 || size > max) {
+        throw ApiFailure(
+          'This ${format.$1 == 'image' ? 'photo' : 'video'} is too large to send.',
+        );
+      }
+      return Attachment(file, format.$1, size, format.$2);
+    }
     final maxMb = switch (format.$1) {
       'image' => 5,
       'video' || 'audio' => 16,
@@ -414,21 +436,21 @@ abstract class MediaPicker {
 
   /// One photo or video from the gallery.
   Future<XFile?> galleryItem();
+
+  /// Up to [limit] photos and videos from the gallery, as WhatsApp lets one
+  /// pick several to send together.
+  Future<List<XFile>> galleryItems({int limit = 30});
 }
 
-/// The system gallery and camera through image_picker. Photos are re-encoded
-/// as WhatsApp sends them: at most 2560 px on the long side, JPEG quality 85,
-/// which also turns an iPhone's HEIC photo into a JPEG WhatsApp accepts.
+/// The system gallery and camera through image_picker, as the files are:
+/// they are compressed at the quality chosen when they are sent (see
+/// media_quality.dart), not here.
 class DeviceMediaPicker implements MediaPicker {
   final _picker = ImagePicker();
-  static const _maxSide = 2560.0, _quality = 85;
 
   @override
   Future<XFile?> photo({required bool camera}) => _picker.pickImage(
     source: camera ? ImageSource.camera : ImageSource.gallery,
-    maxWidth: _maxSide,
-    maxHeight: _maxSide,
-    imageQuality: _quality,
   );
 
   @override
@@ -437,41 +459,51 @@ class DeviceMediaPicker implements MediaPicker {
   );
 
   @override
-  Future<XFile?> galleryItem() => _picker.pickMedia(
-    maxWidth: _maxSide,
-    maxHeight: _maxSide,
-    imageQuality: _quality,
-  );
+  Future<XFile?> galleryItem() => _picker.pickMedia();
+
+  @override
+  Future<List<XFile>> galleryItems({int limit = 30}) =>
+      _picker.pickMultipleMedia(limit: limit);
 }
 
-/// What a picked photo or video is sent as. A re-encoded photo can keep its
-/// original name (IMG_0042.heic) on JPEG data, so the kind is read from the
-/// file itself and the name corrected; anything WhatsApp would refuse is
-/// refused here, before it is uploaded.
+/// What a picked photo or video is. A file can be named for another format
+/// than its data (IMG_0042.heic holding a JPEG), so the kind is read from
+/// the file itself and the name corrected. Photos in HEIC or WebP are taken:
+/// they go as JPEG once compressed. Anything else is refused here, before
+/// it is uploaded.
 Future<Attachment> pickedAttachment(XFile file) async {
   final head = await _head(file);
   final photo = _isJpeg(head)
       ? 'jpg'
       : _isPng(head)
       ? 'png'
+      : _isWebp(head)
+      ? 'webp'
+      : _isHeif(head)
+      ? 'heic'
       : null;
+  final ext = file.name.split('.').last.toLowerCase();
   if (photo != null) {
-    final ext = file.name.split('.').last.toLowerCase();
-    final named = photo == 'jpg' ? ext == 'jpg' || ext == 'jpeg' : ext == 'png';
+    final named = switch (photo) {
+      'jpg' => ext == 'jpg' || ext == 'jpeg',
+      'heic' => ext == 'heic' || ext == 'heif',
+      _ => ext == photo,
+    };
     return Attachment.fromFile(
       named ? file : await _renamed(file, photo),
       requiredKind: 'image',
+      original: true,
     );
   }
-  final ext = file.name.split('.').last.toLowerCase();
   if (ext == 'mp4' || ext == '3gp') {
-    return Attachment.fromFile(file, requiredKind: 'video');
+    return Attachment.fromFile(file, requiredKind: 'video', original: true);
   }
   if (_isMp4Family(head)) {
     // Camera apps name a recording .mov or nothing at all; the data is MP4.
     return Attachment.fromFile(
       await _renamed(file, 'mp4'),
       requiredKind: 'video',
+      original: true,
     );
   }
   throw const ApiFailure(
@@ -496,14 +528,35 @@ bool _isPng(Uint8List b) =>
     b[2] == 0x4E &&
     b[3] == 0x47;
 
-/// ISO media ("ftyp" box) with an MP4 or 3GP brand, not HEIC/HEIF stills.
+bool _isWebp(Uint8List b) =>
+    b.length >= 12 &&
+    String.fromCharCodes(b.sublist(0, 4)) == 'RIFF' &&
+    String.fromCharCodes(b.sublist(8, 12)) == 'WEBP';
+
+/// The ISO media brand ("ftyp" box), or null when the file has none.
+String? _brand(Uint8List b) =>
+    b.length < 12 || String.fromCharCodes(b.sublist(4, 8)) != 'ftyp'
+    ? null
+    : String.fromCharCodes(b.sublist(8, 12));
+
+/// An iPhone's (or a newer Android's) HEIC/HEIF still.
+bool _isHeif(Uint8List b) {
+  final brand = _brand(b);
+  return brand != null &&
+      (brand.startsWith('hei') ||
+          brand.startsWith('hev') ||
+          brand == 'mif1' ||
+          brand == 'msf1');
+}
+
+/// ISO media with an MP4 or 3GP brand, not HEIC/HEIF or AVIF stills.
 bool _isMp4Family(Uint8List b) {
-  if (b.length < 12 || String.fromCharCodes(b.sublist(4, 8)) != 'ftyp') {
-    return false;
-  }
-  final brand = String.fromCharCodes(b.sublist(8, 12));
-  return !brand.startsWith('hei') &&
+  final brand = _brand(b);
+  return brand != null &&
+      !brand.startsWith('hei') &&
+      !brand.startsWith('hev') &&
       !brand.startsWith('mif') &&
+      !brand.startsWith('msf') &&
       brand != 'avif';
 }
 

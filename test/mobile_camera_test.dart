@@ -8,6 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:telvox_chat_mobile_app/mobile/camera.dart';
+import 'package:telvox_chat_mobile_app/mobile/media_quality.dart';
+
+import 'fake_media.dart';
 
 /// The phone's cameras, as the camera plugin's platform side answers: a back
 /// camera with flash and zoom, and a front one without flash.
@@ -166,6 +169,8 @@ Future<void> settle(WidgetTester tester) async {
 }
 
 void main() {
+  setUp(() => mediaCompressor = FakeCompressor());
+
   late FakeCameras cameras;
 
   setUp(() => CameraPlatform.instance = cameras = FakeCameras());

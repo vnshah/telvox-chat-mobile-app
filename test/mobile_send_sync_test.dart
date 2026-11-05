@@ -242,7 +242,7 @@ void main() {
     );
     expect(find.byType(DocumentCard), findsOneWidget);
     expect(find.text('Quote-November.pdf'), findsOneWidget);
-    expect(find.text('PDF • 240 KB'), findsOneWidget);
+    expect(find.text('240 KB • PDF'), findsOneWidget);
     expect(
       find.descendant(
         of: find.byType(DocumentCard),
@@ -273,7 +273,7 @@ void main() {
       }),
     );
     expect(find.text('Quote-November.pdf'), findsOneWidget);
-    expect(find.text('PDF • 240 KB'), findsOneWidget);
+    expect(find.text('240 KB • PDF'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.byIcon(Icons.schedule), findsNothing);
   });

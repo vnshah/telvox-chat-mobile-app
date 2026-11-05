@@ -47,6 +47,7 @@ dependencies:
   firebase_crashlytics: ^6.0.1
   connectivity_plus: ^7.3.2
   path_provider: ^2.1.6
+  flutter_image_compress: ^2.5.1
   crypto: ^3.0.8
   flutter_local_notifications: ^22.3.3
   record: ^7.1.2

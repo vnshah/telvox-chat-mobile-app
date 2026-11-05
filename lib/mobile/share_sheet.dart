@@ -4,16 +4,19 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart' show XFile;
 
+import '../ui/file_type.dart';
 import '../ui/theme.dart';
 import 'api.dart';
 import 'offline_bar.dart' show OfflineNote;
 import 'chat.dart' show LiveChat;
 import 'conversation_window.dart';
 import 'media.dart';
+import 'media_quality.dart';
 import 'message_content.dart' show readableText;
 import 'message_view.dart' show VideoFirstFrame;
 import 'models.dart';
 import 'screens.dart' show openPage;
+import 'send_media.dart' show QualityButton, showQualitySheet;
 
 /// At most this many chats per share, as WhatsApp limits forwarding.
 const shareChatLimit = 10;
@@ -322,12 +325,41 @@ class _SharePreviewPageState extends State<SharePreviewPage> {
   bool sending = false;
   int sent = 0, total = 0;
 
+  /// Photos and videos go at one quality, Standard unless HD is chosen.
+  var quality = MediaQuality.standard;
+  final estimates = <SharedItem, MediaEstimate>{};
+
+  /// While photos and videos are made small enough to send, which first.
+  int? preparing;
+
   @override
   void initState() {
     super.initState();
     Future.wait(widget.files.map(checkShared)).then((checked) {
-      if (mounted) setState(() => items = checked);
+      if (!mounted) return;
+      setState(() => items = checked);
+      for (final item in checked) {
+        if (!media(item)) continue;
+        estimateMedia(item.attachment!).then((e) {
+          if (mounted) setState(() => estimates[item] = e);
+        }, onError: (_) {});
+      }
     });
+  }
+
+  bool media(SharedItem item) =>
+      item.attachment?.kind == 'image' || item.attachment?.kind == 'video';
+
+  Future<void> chooseQuality() async {
+    final shown = sendable.where(media).toList();
+    final chosen = await showQualitySheet(
+      context,
+      quality,
+      sizes: shown.every(estimates.containsKey)
+          ? MediaEstimate.total(shown.map((i) => estimates[i]!))
+          : null,
+    );
+    if (chosen != null && mounted) setState(() => quality = chosen);
   }
 
   @override
@@ -355,8 +387,24 @@ class _SharePreviewPageState extends State<SharePreviewPage> {
       sent = 0;
       total = files.length * widget.chats.length;
     });
+    // Each photo and video is compressed once, whichever chats it goes to.
+    final ready = <SharedItem, Attachment>{};
+    for (final (i, item) in files.indexed) {
+      if (mounted) setState(() => preparing = i + 1);
+      try {
+        ready[item] = await prepareMedia(item.attachment!, quality);
+      } catch (e) {
+        failed.add('${item.file.name}: $e');
+      }
+    }
+    if (mounted) setState(() => preparing = null);
     for (final chat in widget.chats) {
       for (final item in files) {
+        final attachment = ready[item];
+        if (attachment == null) {
+          if (mounted) setState(() => sent++);
+          continue;
+        }
         try {
           await repository.send(
             PendingSend({
@@ -365,7 +413,7 @@ class _SharePreviewPageState extends State<SharePreviewPage> {
               'wa_id': chat['wa_id'],
               'message_type': 'text',
               'body': item.caption.text.trim(),
-            }, attachment: item.attachment),
+            }, attachment: attachment),
           );
         } catch (e) {
           failed.add('${_name(chat)}: $e');
@@ -429,6 +477,14 @@ class _SharePreviewPageState extends State<SharePreviewPage> {
             icon: const Icon(Icons.close),
             onPressed: sending ? null : () => Navigator.pop(context),
           ),
+          actions: [
+            if (checked != null && checked.any(media))
+              QualityButton(
+                quality: quality,
+                colour: T.ink,
+                onPressed: sending ? null : chooseQuality,
+              ),
+          ],
         ),
         body: checked == null
             ? const Center(child: CircularProgressIndicator())
@@ -449,7 +505,11 @@ class _SharePreviewPageState extends State<SharePreviewPage> {
                 children: [
                   Expanded(
                     child: Text(
-                      sending ? 'Sending $sent of $total…' : 'To: $names',
+                      preparing != null
+                          ? 'Preparing $preparing of ${sendable.length}…'
+                          : sending
+                          ? 'Sending $sent of $total…'
+                          : 'To: $names',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: T.secondary),
@@ -535,11 +595,7 @@ class _SharePreviewPageState extends State<SharePreviewPage> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
-              leading: Icon(
-                a.kind == 'audio' ? Icons.audiotrack : Icons.description,
-                color: T.brass,
-                size: 32,
-              ),
+              leading: FileTypeIcon(name, size: 44),
               title: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis),
               subtitle: Text(
                 '${name.split('.').last.toUpperCase()} · ${fileSize(a.size)}',

@@ -13,9 +13,12 @@ import 'package:telvox_chat_mobile_app/mobile/chat.dart';
 import 'package:telvox_chat_mobile_app/mobile/location.dart';
 import 'package:telvox_chat_mobile_app/mobile/maps.dart';
 import 'package:telvox_chat_mobile_app/mobile/media.dart';
+import 'package:telvox_chat_mobile_app/mobile/media_quality.dart';
 import 'package:telvox_chat_mobile_app/mobile/message_view.dart';
+import 'package:telvox_chat_mobile_app/mobile/send_media.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
+import 'fake_media.dart';
 import 'mobile_api_test.dart' show fakeApi, answer, MemoryStore;
 
 /// A file in the temp folder with [bytes], named as a camera would name it.
@@ -68,6 +71,12 @@ class FakeMediaPicker implements MediaPicker {
     asked.add('gallery');
     return file;
   }
+
+  @override
+  Future<List<XFile>> galleryItems({int limit = 30}) async {
+    asked.add('gallery $limit');
+    return [?file];
+  }
 }
 
 class FakePlaces implements PlaceLookup {
@@ -97,6 +106,8 @@ class FakeLocation implements LocationSource {
 }
 
 void main() {
+  setUp(() => mediaCompressor = FakeCompressor());
+
   group('photos and videos are sent as WhatsApp accepts them', () {
     test('a re-encoded photo named .heic goes as a JPEG', () async {
       final a = await pickedAttachment(temp('IMG_0042.heic', jpeg));
@@ -112,31 +123,41 @@ void main() {
       expect(video.name, endsWith('.mp4'));
     });
 
-    test('a photo still in HEIC is refused before it is uploaded', () async {
+    test('a photo still in HEIC or WebP is taken, to go as JPEG', () async {
+      final heic = await pickedAttachment(temp('still.heic', iso('heic')));
+      expect((heic.kind, heic.mime), ('image', 'image/heic'));
+      final webp = await pickedAttachment(
+        temp('sticker.png', [
+          ...'RIFF'.codeUnits,
+          0,
+          0,
+          0,
+          0,
+          ...'WEBP'.codeUnits,
+        ]),
+      );
+      expect((webp.kind, webp.mime), ('image', 'image/webp'));
+      expect(webp.name, endsWith('.webp'));
+    });
+
+    test('a video over 16 MB is taken: it is compressed to fit', () async {
+      final big = temp('long.mp4', [
+        ...iso('isom'),
+        ...Uint8List(16 * 1024 * 1024 + 1),
+      ]);
+      expect((await pickedAttachment(big)).kind, 'video');
+    });
+
+    test('a file that is no photo or video says to send a document', () async {
       await expectLater(
-        pickedAttachment(temp('still.heic', iso('heic'))),
+        pickedAttachment(
+          temp('notes.bin', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+        ),
         throwsA(
           isA<ApiFailure>().having(
             (e) => e.message,
             'message',
             contains('Send it as a document'),
-          ),
-        ),
-      );
-    });
-
-    test('a video over 16 MB says how to fix it', () async {
-      final big = temp('long.mp4', [
-        ...iso('isom'),
-        ...Uint8List(16 * 1024 * 1024 + 1),
-      ]);
-      await expectLater(
-        pickedAttachment(big),
-        throwsA(
-          isA<ApiFailure>().having(
-            (e) => e.message,
-            'message',
-            contains('16 MB'),
           ),
         ),
       );
@@ -374,6 +395,46 @@ void main() {
       await tester.enterText(find.byType(TextField), 'Typing');
       await tester.pump();
       expect(find.byTooltip('Camera'), findsNothing);
+      await close(tester);
+    });
+
+    testWidgets('gallery picks are previewed, then each goes at the quality', (
+      tester,
+    ) async {
+      final codec = FakeCompressor();
+      mediaCompressor = codec;
+      final picker = FakeMediaPicker(temp('gallery.jpg', jpeg));
+      final (picking, previewing) = (mediaPicker, openSendMedia);
+      addTearDown(() {
+        mediaPicker = picking;
+        openSendMedia = previewing;
+      });
+      mediaPicker = picker;
+      List<Attachment>? previewed;
+      openSendMedia = (_, items, to) async {
+        previewed = items;
+        return MediaBatch([
+          for (final a in items) (a, 'From the gallery'),
+        ], MediaQuality.hd);
+      };
+      await openChat(tester);
+      await tester.tap(find.byTooltip('Attach'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Gallery'));
+      // Picked, checked, compressed and sent on the real event loop.
+      for (var i = 0; i < 20 && sends.isEmpty; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(picker.asked, ['gallery 30']);
+      expect(previewed!.single.kind, 'image');
+      final fields = Map.fromEntries((sends.single.data as FormData).fields);
+      expect(fields['message_type'], 'image');
+      expect(fields['body'], 'From the gallery');
+      // Compressed at HD, the first step HD tries.
+      expect(codec.calls, ['photo 4096 90']);
       await close(tester);
     });
 

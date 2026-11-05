@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import 'media.dart';
+import 'media_quality.dart';
 import 'message_content.dart';
 
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -210,10 +211,31 @@ class PendingSend {
     this.attachment,
     this.quote,
     this.voice = false,
+    this.quality = MediaQuality.standard,
   }) : key = key ?? newRequestId(),
        createdAt = DateTime.now().toUtc().toIso8601String();
   final Json body;
-  final Attachment? attachment;
+
+  /// The file as picked, then as it will be sent once [prepare]d.
+  Attachment? attachment;
+
+  /// How a photo or video goes: Standard or HD, as the sender chose.
+  final MediaQuality quality;
+
+  /// Whether [attachment] has been compressed for sending, once.
+  bool prepared = false;
+
+  /// A photo or video made to fit WhatsApp at [quality], once: a retry after
+  /// a failed upload sends what was already made. [progress] follows a
+  /// video's encoding, 0 to 1.
+  Future<void> prepare({void Function(double done)? progress}) async {
+    final file = attachment;
+    if (prepared || file == null || voice) return;
+    if (file.kind == 'image' || file.kind == 'video') {
+      attachment = await prepareMedia(file, quality, progress: progress);
+    }
+    prepared = true;
+  }
 
   /// A recorded voice note, drawn with its waveform while it sends.
   final bool voice;

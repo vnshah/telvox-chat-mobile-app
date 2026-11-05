@@ -271,7 +271,8 @@ void main() {
       await tester.tap(segment('Documents'));
       await tester.pumpAndSettle();
       expect(find.text('invoice-oct.pdf'), findsOneWidget);
-      expect(find.text('PDF'), findsOneWidget);
+      // The document's kind shows as its page, in PDF red.
+      expect(find.byKey(const ValueKey('file-type-icon')), findsOneWidget);
       expect(find.textContaining('PDF · 1.2 MB · 31 Oct 2026'), findsOneWidget);
       await tester.tap(segment('Links'));
       await tester.pumpAndSettle();

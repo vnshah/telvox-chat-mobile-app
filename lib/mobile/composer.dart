@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 
+import '../ui/file_type.dart';
 import '../ui/theme.dart';
 import 'media.dart';
 import 'voice_recording.dart';
@@ -553,7 +554,8 @@ class _ChatComposerState extends State<ChatComposer>
           'image' => Icons.photo,
           'video' => Icons.videocam,
           'audio' => Icons.headphones,
-          _ => Icons.insert_drive_file,
+          // A document shows its page instead (below).
+          _ => null,
         },
         thumbnail: a.kind == 'image' && a.file.path.isNotEmpty
             ? Image.file(
@@ -562,6 +564,12 @@ class _ChatComposerState extends State<ChatComposer>
                 height: 44,
                 fit: BoxFit.cover,
                 errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              )
+            // A document shows its page, in its kind's colour.
+            : a.kind == 'document'
+            ? Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Center(child: FileTypeIcon(a.name, size: 38)),
               )
             : null,
         onClose: widget.onCancelAttachment,

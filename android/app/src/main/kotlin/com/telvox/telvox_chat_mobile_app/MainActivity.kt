@@ -11,6 +11,7 @@ import android.os.PowerManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import androidx.media3.common.util.UnstableApi
 
 /**
  * Call audio the WebRTC package does not cover:
@@ -25,9 +26,17 @@ class MainActivity : FlutterActivity() {
     private var tone: ToneGenerator? = null
     private var proximity: PowerManager.WakeLock? = null
     private var preview: Ringtone? = null
+    private var videos: VideoCompressor? = null
 
+    @UnstableApi
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // Photos and videos made small enough for WhatsApp before they send.
+        val videoChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "telvox/video")
+        val compressor = VideoCompressor(this, videoChannel).also { videos = it }
+        videoChannel.setMethodCallHandler { call, result ->
+            compressor.handle(call.method, call.arguments as? Map<*, *> ?: emptyMap<Any, Any>(), result)
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "telvox/call_audio")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -112,7 +121,9 @@ class MainActivity : FlutterActivity() {
         proximity = null
     }
 
+    @UnstableApi
     override fun onDestroy() {
+        videos?.dispose()
         stopPreview()
         stopRingback()
         releaseProximity()

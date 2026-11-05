@@ -93,6 +93,57 @@ class FakePlayers extends VideoPlayerPlatform {
 double mean(List<double> v) => v.reduce((a, b) => a + b) / v.length;
 
 void main() {
+  testWidgets('a reply to a voice note quotes it with its length, not its id', (
+    tester,
+  ) async {
+    VoiceNoteFile.fetch = (_) async => fixture;
+    const url = 'https://chat.telvox.dev/storage/1/2/audio/quoted-note.ogg';
+    final expected = VoiceWaveform.read(fixture)!.duration;
+    final reply = ApiMessage({
+      'id': 5,
+      'type': 1,
+      'message_type': 'text',
+      'message_body': 'Got it, thanks',
+      'contextual_message': '1290380475521734',
+      'contextual_message_type': 'audio',
+      'contextual_message_json': jsonEncode({
+        'type': 'audio',
+        'media_path': 'storage/1/2/audio/quoted-note.ogg',
+        'media_mime_type': 'audio/ogg; codecs=opus',
+      }),
+      'created_at': '2026-11-05T08:00:00Z',
+    });
+    await tester.runAsync(() => VoiceNoteFile.of(Uri.parse(url)));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: T.themeFor(TargetPlatform.android),
+        home: Scaffold(
+          body: LiveMessageView(
+            message: reply,
+            apiBase: 'https://chat.telvox.dev/api/mobile/v1/',
+            first: true,
+          ),
+        ),
+      ),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pump();
+    expect(find.textContaining('1290380475521734'), findsNothing);
+    expect(find.byKey(const ValueKey('quoted-audio')), findsOneWidget);
+    expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+    final clock =
+        '${expected.inMinutes}:${(expected.inSeconds % 60).toString().padLeft(2, '0')}';
+    expect(find.text(clock), findsOneWidget);
+    // Without the file, the quote still reads as a voice message.
+    expect(
+      ApiMessage({'message_type': 'audio', 'message_body': '1290380475521734'})
+          .text,
+      'Voice message',
+    );
+  });
+
   test(
     'the waveform follows the voice note and its length is read from the file',
     () {

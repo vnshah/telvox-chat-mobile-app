@@ -53,7 +53,14 @@ class MessageContent {
             media.first['media_name'] ?? media.first['filename'],
           ).ifEmpty('Document'),
         }
-      : 'Message';
+      : switch ('${row['message_type']}') {
+          'image' => 'Photo',
+          'video' => 'Video',
+          'audio' => 'Voice message',
+          'sticker' => 'Sticker',
+          'document' => 'Document',
+          _ => 'Message',
+        };
 
   /// What kind of message this is, so lists can show its icon instead of an
   /// emoji: call, missed_call, image, video, audio, document, sticker,
@@ -304,11 +311,14 @@ class MessageContent {
       // Outgoing rows nest the file under its type; inbound rows store it flat.
       attachment(type, p[type] ?? (p['media_path'] != null ? p : null));
       line(object(p[type])['caption']);
+      // WhatsApp gives audio no caption: its body is only the media's id.
+      // Elsewhere the body is a caption unless it is a placeholder or an id.
       if (text.isEmpty &&
+          type != 'audio' &&
           !RegExp(
-            r'attached|^image$|^video$|^document$|^audio$',
+            r'attached|^image$|^video$|^document$|^audio$|^\d{6,}$',
             caseSensitive: false,
-          ).hasMatch('${row['message_body']}')) {
+          ).hasMatch('${row['message_body']}'.trim())) {
         line(row['message_body']);
       }
       return;

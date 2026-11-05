@@ -9,6 +9,7 @@ import 'package:video_player/video_player.dart';
 import '../ui/theme.dart';
 import '../ui/data.dart' show Message;
 import '../ui/chat_message.dart';
+import '../ui/file_type.dart';
 import '../ui/conversation.dart' show SwipeReply;
 import 'api.dart';
 import 'maps.dart';
@@ -19,22 +20,125 @@ import 'message_content.dart';
 import 'voice_waveform.dart';
 
 /// [contactName] names the quoted author: a customer usually quotes the
-/// business, and an agent quotes the customer.
-Message messagePresentation(ApiMessage m, {String? contactName}) => Message(
-  m.content.text,
-  out: m.outgoing,
-  time: const MobileClock().time(m.json['created_at']),
-  reply: m.json['contextual_message'] == null
+/// business, and an agent quotes the customer. With [apiBase], a quoted
+/// voice note shows as one, with its length.
+Message messagePresentation(
+  ApiMessage m, {
+  String? contactName,
+  String? apiBase,
+}) {
+  final quoted = m.json['contextual_message'] == null
       ? null
-      : MessageContent({
+      : {
           'message_type': m.json['contextual_message_type'] ?? 'text',
           'message_body': m.json['contextual_message'],
           'message_body_json': m.json['contextual_message_json'],
-        }).summary,
-  replyAuthor: m.outgoing ? (contactName ?? 'Customer') : 'You',
-  read: m.status == 3,
-  deliveryStatus: m.status,
-);
+        };
+  final quotedAudio = quoted == null || apiBase == null
+      ? null
+      : quoted['message_type'] == 'audio'
+      ? MessageMedia.fromMessage(quoted, apiBase)
+      : null;
+  return Message(
+    m.content.text,
+    out: m.outgoing,
+    time: const MobileClock().time(m.json['created_at']),
+    reply: quoted == null ? null : MessageContent(quoted).summary,
+    replyAuthor: m.outgoing ? (contactName ?? 'Customer') : 'You',
+    replyPreview: quotedAudio == null ? null : QuotedAudio(quotedAudio.url),
+    read: m.status == 3,
+    deliveryStatus: m.status,
+  );
+}
+
+/// A quoted voice note or audio file as WhatsApp shows it: the mic, its
+/// shape and its length, read from the file (shared with its own bubble),
+/// in place of words.
+class QuotedAudio extends StatelessWidget {
+  const QuotedAudio(this.url, {super.key});
+  final Uri url;
+
+  static final _lengths = <String, Future<(VoiceWaveform?, Duration?)>>{};
+
+  /// The file's waveform and length; a file that is not a voice note is
+  /// measured by the player. Null parts where it cannot be read.
+  static Future<(VoiceWaveform?, Duration?)> _measure(Uri url) =>
+      _lengths[url.toString()] ??= () async {
+        try {
+          final note = await VoiceNoteFile.of(url);
+          final wave = note.waveform;
+          if (wave != null) return (wave, wave.duration);
+          final player = VideoPlayerController.file(note.file);
+          try {
+            await player.initialize();
+            return (null, player.value.duration);
+          } finally {
+            await player.dispose();
+          }
+        } catch (_) {
+          _lengths.remove(url.toString());
+          return (null, null);
+        }
+      }();
+
+  static String _clock(Duration d) =>
+      '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
+
+  @override
+  Widget build(BuildContext context) =>
+      FutureBuilder<(VoiceWaveform?, Duration?)>(
+        future: _measure(url),
+        builder: (context, snapshot) {
+          final (wave, length) = snapshot.data ?? (null, null);
+          final bars = wave?.bars;
+          return Row(
+            key: const ValueKey('quoted-audio'),
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.mic_rounded, size: 16, color: T.unread),
+              const SizedBox(width: 4),
+              if (bars != null)
+                SizedBox(
+                  height: 14,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      for (final b in bars.take(24))
+                        Container(
+                          width: 2,
+                          height: 2 + 12 * b,
+                          margin: const EdgeInsets.only(right: 1.5),
+                          decoration: BoxDecoration(
+                            color: T.secondary.withValues(alpha: .55),
+                            borderRadius: BorderRadius.circular(1),
+                          ),
+                        ),
+                    ],
+                  ),
+                )
+              else
+                const Text(
+                  'Voice message',
+                  style: TextStyle(fontSize: 12, color: T.secondary),
+                ),
+              if (length != null && length > Duration.zero) ...[
+                const SizedBox(width: 6),
+                Text(
+                  _clock(length),
+                  key: const ValueKey('quoted-audio-length'),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: T.secondary,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
+      );
+}
 
 /// The icon WhatsApp puts before a message's button, by what it does.
 IconData? buttonIcon(String label, [String? kind]) => switch (label) {
@@ -109,7 +213,11 @@ class LiveMessageView extends StatelessWidget {
     final sender = m.outgoing && first
         ? readableText(m.json['sender_name'])
         : '';
-    final presentation = messagePresentation(m, contactName: contactName);
+    final presentation = messagePresentation(
+      m,
+      contactName: contactName,
+      apiBase: apiBase,
+    );
     final media = c.media.isEmpty ? null : c.media.first;
     final mediaUrl = media == null
         ? null
@@ -280,74 +388,81 @@ class LiveMessageView extends StatelessWidget {
                         )),
       ),
     );
-    bubble = SwipeReply(onReply: onReply, child: bubble);
     bubble = ReplyTap(onTap: onQuoteTap, child: bubble);
-    return Padding(
-      padding: EdgeInsets.only(
-        top: first ? 7 : 1,
-        bottom: m.reactions.isEmpty ? 1 : 4,
-      ),
-      child: Align(
-        alignment: m.outgoing ? Alignment.centerRight : Alignment.centerLeft,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: m.outgoing
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
-          children: [
-            // Which agent sent it, once per group, as the web inbox shows.
-            if (sender.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(right: 6, bottom: 2),
-                child: Text(
-                  sender,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: T.green,
+    // The whole row answers a swipe, not just the bubble: a reply starts
+    // from anywhere across the message's line, as on WhatsApp.
+    return SwipeReply(
+      onReply: onReply,
+      child: Padding(
+        padding: EdgeInsets.only(
+          top: first ? 7 : 1,
+          bottom: m.reactions.isEmpty ? 1 : 4,
+        ),
+        child: Align(
+          alignment: m.outgoing ? Alignment.centerRight : Alignment.centerLeft,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: m.outgoing
+                ? CrossAxisAlignment.end
+                : CrossAxisAlignment.start,
+            children: [
+              // Which agent sent it, once per group, as the web inbox shows.
+              if (sender.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6, bottom: 2),
+                  child: Text(
+                    sender,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: T.green,
+                    ),
                   ),
                 ),
-              ),
-            bubble,
-            if (m.status == 4 || m.status == 5)
-              Padding(
-                padding: const EdgeInsets.only(top: 3),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: MediaQuery.sizeOf(context).width * .8,
+              bubble,
+              if (m.status == 4 || m.status == 5)
+                Padding(
+                  padding: const EdgeInsets.only(top: 3),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: MediaQuery.sizeOf(context).width * .8,
+                    ),
+                    child: Text(
+                      readableText(m.json['failed_reason']).isEmpty
+                          ? 'Message failed to send'
+                          : readableText(m.json['failed_reason']),
+                      style: const TextStyle(fontSize: 11, color: T.danger),
+                    ),
+                  ),
+                ),
+              if (m.reactions.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(top: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: T.edge),
+                    boxShadow: [
+                      BoxShadow(
+                        color: T.ink.withValues(alpha: .1),
+                        offset: const Offset(0, 1),
+                        blurRadius: 2,
+                      ),
+                    ],
                   ),
                   child: Text(
-                    readableText(m.json['failed_reason']).isEmpty
-                        ? 'Message failed to send'
-                        : readableText(m.json['failed_reason']),
-                    style: const TextStyle(fontSize: 11, color: T.danger),
+                    m.reactions.map((r) => r['emoji'] ?? '').join(' '),
+                    style: const TextStyle(fontSize: 14),
                   ),
                 ),
-              ),
-            if (m.reactions.isNotEmpty)
-              Container(
-                margin: const EdgeInsets.only(top: 2),
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: T.edge),
-                  boxShadow: [
-                    BoxShadow(
-                      color: T.ink.withValues(alpha: .1),
-                      offset: const Offset(0, 1),
-                      blurRadius: 2,
-                    ),
-                  ],
-                ),
-                child: Text(
-                  m.reactions.map((r) => r['emoji'] ?? '').join(' '),
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -803,16 +918,6 @@ class DocumentCard extends StatelessWidget {
   final double? progress;
   @override
   Widget build(BuildContext context) {
-    final extension = media.name.contains('.')
-        ? media.name.split('.').last.toUpperCase()
-        : 'FILE';
-    final colour = switch (extension) {
-      'PDF' => const Color(0xFFE5483D),
-      'DOC' || 'DOCX' => const Color(0xFF2B79D6),
-      'XLS' || 'XLSX' || 'CSV' => const Color(0xFF1E9E5A),
-      'PPT' || 'PPTX' => const Color(0xFFE8792C),
-      _ => const Color(0xFF8696A0),
-    };
     return GestureDetector(
       onTap: progress != null
           ? null
@@ -825,31 +930,14 @@ class DocumentCard extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 3),
         padding: const EdgeInsets.all(9),
         decoration: BoxDecoration(
-          color: outgoing
-              ? Colors.black.withValues(alpha: .05)
-              : Colors.white.withValues(alpha: .7),
+          // A faint grey card inside the bubble, as WhatsApp sets it off.
+          color: Colors.black.withValues(alpha: outgoing ? .05 : .04),
           borderRadius: BorderRadius.circular(7),
         ),
         child: Row(
           children: [
-            Container(
-              width: 30,
-              height: 38,
-              alignment: Alignment.bottomCenter,
-              padding: const EdgeInsets.only(bottom: 5),
-              decoration: BoxDecoration(
-                color: colour,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                extension.length > 4 ? extension.substring(0, 4) : extension,
-                style: const TextStyle(
-                  fontSize: 8,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
-              ),
-            ),
+            // The document's page, in its kind's colour.
+            FileTypeIcon(media.name, size: 36),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
@@ -867,7 +955,11 @@ class DocumentCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    [extension, if (size.isNotEmpty) size].join(' • '),
+                    // Size first, then the kind by name: "Microsoft Word".
+                    [
+                      if (size.isNotEmpty) size,
+                      FileType.nameOf(media.name),
+                    ].join(' • '),
                     style: const TextStyle(fontSize: 11.5, color: T.muted),
                   ),
                 ],

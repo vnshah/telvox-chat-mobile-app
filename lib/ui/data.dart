@@ -1,3 +1,5 @@
+import 'package:flutter/widgets.dart';
+
 class Message {
   const Message(
     this.text, {
@@ -6,12 +8,17 @@ class Message {
     this.type = 'text',
     this.reply,
     this.replyAuthor,
+    this.replyPreview,
     this.reaction = '',
     this.read = true,
     this.deliveryStatus,
   });
   final String text, time, type, reaction;
   final String? reply, replyAuthor;
+
+  /// Drawn in the reply quote in place of [reply]'s text, for a quote that
+  /// is more than words: a voice note shows its length.
+  final Widget? replyPreview;
   final bool out, read;
   final int? deliveryStatus;
 }

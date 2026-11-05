@@ -19,6 +19,8 @@ class _SwipeReplyState extends State<SwipeReply> {
   bool dragging = false;
   @override
   Widget build(BuildContext context) => GestureDetector(
+    // The empty space beside a bubble is part of its row's swipe too.
+    behavior: HitTestBehavior.translucent,
     onHorizontalDragStart: widget.onReply == null
         ? null
         : (_) => setState(() => dragging = true),

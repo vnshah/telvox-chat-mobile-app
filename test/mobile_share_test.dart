@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart' show XFile;
 import 'package:telvox_chat_mobile_app/mobile/api.dart';
+import 'package:telvox_chat_mobile_app/mobile/media_quality.dart';
 import 'package:telvox_chat_mobile_app/mobile/share_intake.dart';
 import 'package:telvox_chat_mobile_app/mobile/share_sheet.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
+import 'fake_media.dart';
 import 'mobile_api_test.dart' show fakeApi, answer, MemoryStore;
 import 'mobile_attachments_test.dart' show temp, jpeg;
 
@@ -38,6 +40,8 @@ Future<void> settleFiles(WidgetTester tester) async {
 }
 
 void main() {
+  setUp(() => mediaCompressor = FakeCompressor());
+
   group('a share is held until the app can act on it', () {
     test('the launch share waits; take hands it over once', () async {
       final photo = temp('share-photo.jpg', jpeg);

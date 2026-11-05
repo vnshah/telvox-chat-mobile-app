@@ -10,21 +10,32 @@ import 'package:image/image.dart' as img;
 import 'package:video_player/video_player.dart';
 
 import '../ui/theme.dart';
+import 'media.dart' show Attachment;
+import 'media_quality.dart';
+import 'send_media.dart' show QualityButton, showQualitySheet;
 
-/// A photo or video taken in the app's camera, and the caption typed for it.
+/// A photo or video taken in the app's camera, the caption typed for it,
+/// and the quality it goes at.
 class CapturedMedia {
-  const CapturedMedia(this.file, {required this.video, this.caption = ''});
+  const CapturedMedia(
+    this.file, {
+    required this.video,
+    this.caption = '',
+    this.quality = MediaQuality.standard,
+  });
   final XFile file;
   final bool video;
   final String caption;
+  final MediaQuality quality;
 }
 
-/// WhatsApp's video limit through the Business API is 16 MB. Full HD needs
-/// about 2 Mbps to stay clean: at 1 Mbps dark and moving areas break into
-/// black, wave-like blocks. 2 Mbps with 64 kbps sound fills 16 MB in about a
-/// minute, so that is where recording stops.
+/// A clip is recorded clean, at the bitrate a phone's own camera uses for
+/// Full HD, and made to fit WhatsApp's 16 MB only when it is sent (see
+/// media_quality.dart), from that clean copy. Recording straight at a
+/// WhatsApp size (2 Mbps) starved the encoder: dark and moving parts broke
+/// into black, wave-like blocks that crawled across the picture.
 const maxRecording = Duration(seconds: 60);
-const _videoBitrate = 2000000, _audioBitrate = 64000;
+const _videoBitrate = 12000000, _audioBitrate = 128000;
 
 /// A front-camera photo turned the way the preview showed it (WhatsApp keeps
 /// selfies as the mirror image you saw) and with its rotation applied, so it
@@ -133,7 +144,7 @@ class _CameraScreenState extends State<CameraScreen>
       await next.initialize();
       // A front camera has no flash; asking for one must not cost the preview.
       if (camera.lensDirection == CameraLensDirection.back) {
-        await next.setFlashMode(flash).catchError((_) {});
+        await next.setFlashMode(_native(flash)).catchError((_) {});
       }
       await next.setFocusMode(FocusMode.auto).catchError((_) {});
       final low = await next.getMinZoomLevel().catchError((_) => 1.0);
@@ -215,8 +226,67 @@ class _CameraScreenState extends State<CameraScreen>
       _ => FlashMode.off,
     };
     setState(() => flash = next);
-    if (!front) await controller?.setFlashMode(next).catchError((_) {});
+    if (!front) {
+      await controller?.setFlashMode(_native(next)).catchError((_) {});
+    }
   }
+
+  static bool get _android => defaultTargetPlatform == TargetPlatform.android;
+
+  /// The flash mode the camera itself is given. On Android the capture
+  /// flash of CameraX does not fire on many phones, so the app lights the
+  /// scene with the torch itself (see [_light]) and the camera's own flash
+  /// stays off; iPhones fire theirs reliably.
+  FlashMode _native(FlashMode mode) => _android ? FlashMode.off : mode;
+
+  /// Whether the scene is dark enough for the flash, from the brightness of
+  /// one preview frame; null when the phone cannot tell.
+  Future<bool?> _dark(CameraController c) async {
+    if (!_android || !c.supportsImageStreaming()) return null;
+    final frame = Completer<double>();
+    try {
+      await c.startImageStream((image) {
+        if (frame.isCompleted) return;
+        // The first plane is brightness (Y), 0 to 255.
+        final y = image.planes.first.bytes;
+        var sum = 0, n = 0;
+        for (var i = 0; i < y.length; i += 97) {
+          sum += y[i];
+          n++;
+        }
+        frame.complete(n == 0 ? 255 : sum / n);
+      });
+      return await frame.future.timeout(const Duration(seconds: 1)) < 70;
+    } catch (_) {
+      return null;
+    } finally {
+      try {
+        await c.stopImageStream();
+      } catch (_) {}
+    }
+  }
+
+  /// Turns the torch on when the flash should light this shot or clip: On
+  /// always, Auto when the scene is dark. True when it was turned on, to be
+  /// turned off with [_unlight] afterwards.
+  Future<bool> _light(CameraController c, {required bool video}) async {
+    if (front || flash == FlashMode.off) return false;
+    // iPhones fire their own flash for photos.
+    if (!_android && !video) return false;
+    final wanted =
+        flash == FlashMode.always ||
+        (flash == FlashMode.auto && (await _dark(c) ?? false));
+    if (!wanted) return false;
+    try {
+      await c.setFlashMode(FlashMode.torch);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _unlight(CameraController c) =>
+      c.setFlashMode(_native(flash)).catchError((_) {});
 
   Future<void> setZoom(double level) async {
     final c = controller;
@@ -263,8 +333,17 @@ class _CameraScreenState extends State<CameraScreen>
       return;
     }
     setState(() => busy = true);
+    var lit = false;
     try {
+      lit = await _light(c, video: false);
+      // Time for the exposure to settle under the light, as a flash's
+      // pre-flash gives it.
+      if (lit) await Future<void>.delayed(const Duration(milliseconds: 600));
       var shot = await c.takePicture();
+      if (lit) {
+        lit = false;
+        await _unlight(c);
+      }
       if (front) {
         final turned = await _selfie(await shot.readAsBytes());
         final file = File(
@@ -277,6 +356,7 @@ class _CameraScreenState extends State<CameraScreen>
     } on CameraException catch (e) {
       if (mounted) setState(() => error = _explain(e));
     } finally {
+      if (lit) await _unlight(c);
       if (mounted) setState(() => busy = false);
     }
   }
@@ -286,6 +366,8 @@ class _CameraScreenState extends State<CameraScreen>
     if (c == null || recording || busy) return;
     _released = false;
     try {
+      // The flash stays lit while a video records, as WhatsApp's does.
+      await _light(c, video: true);
       await c.startVideoRecording();
       HapticFeedback.mediumImpact();
       if (!mounted) return;
@@ -302,6 +384,7 @@ class _CameraScreenState extends State<CameraScreen>
       // Let go while it was starting: a short clip, stopped now.
       if (_released && !locked) await stopRecording();
     } on CameraException catch (e) {
+      await _unlight(c);
       if (mounted) setState(() => error = _explain(e));
     }
   }
@@ -317,6 +400,7 @@ class _CameraScreenState extends State<CameraScreen>
     });
     try {
       final clip = await c.stopVideoRecording();
+      await _unlight(c);
       if (mounted) await review(clip, video: true);
     } on CameraException catch (e) {
       if (mounted) setState(() => error = _explain(e));
@@ -741,8 +825,8 @@ class _CircleIcon extends StatelessWidget {
 
 /// A recorded clip under review, as WhatsApp plays one: tap to pause or
 /// play, a play button while paused, and a bar to scrub with its times.
-class _VideoReview extends StatelessWidget {
-  const _VideoReview(this.player);
+class VideoReview extends StatelessWidget {
+  const VideoReview(this.player, {super.key});
   final VideoPlayerController player;
 
   static String _time(Duration d) =>
@@ -826,10 +910,19 @@ class MediaPreviewPage extends StatefulWidget {
 class _MediaPreviewPageState extends State<MediaPreviewPage> {
   final caption = TextEditingController();
   VideoPlayerController? player;
+  var quality = MediaQuality.standard;
+  MediaEstimate? estimate;
 
   @override
   void initState() {
     super.initState();
+    final file = File(widget.file.path);
+    final bytes = file.existsSync() ? file.lengthSync() : 0;
+    estimateMedia(
+      Attachment(widget.file, widget.video ? 'video' : 'image', bytes, ''),
+    ).then((e) {
+      if (mounted) setState(() => estimate = e);
+    }, onError: (_) {});
     if (widget.video) {
       final p = player = VideoPlayerController.file(File(widget.file.path));
       p
@@ -852,11 +945,18 @@ class _MediaPreviewPageState extends State<MediaPreviewPage> {
     super.dispose();
   }
 
-  /// WhatsApp refuses videos over 16 MB; better to say so before sending.
-  late final int bytes = File(widget.file.path).existsSync()
-      ? File(widget.file.path).lengthSync()
-      : 0;
-  bool get tooLarge => widget.video && bytes > 16 * 1024 * 1024;
+  /// A video is compressed to fit WhatsApp's 16 MB; one too long to fit at
+  /// all is better said before sending.
+  bool get tooLong => estimate?.tooLong ?? false;
+
+  Future<void> chooseQuality() async {
+    final chosen = await showQualitySheet(
+      context,
+      quality,
+      sizes: estimate?.sizes,
+    );
+    if (chosen != null && mounted) setState(() => quality = chosen);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -878,13 +978,15 @@ class _MediaPreviewPageState extends State<MediaPreviewPage> {
                     style: TextStyle(color: Colors.white, fontSize: 15),
                   ),
                 ),
+                const Spacer(),
+                QualityButton(quality: quality, onPressed: chooseQuality),
               ],
             ),
             Expanded(
               child: Center(
                 child: widget.video
                     ? p != null && p.value.isInitialized
-                          ? _VideoReview(p)
+                          ? VideoReview(p)
                           : const CircularProgressIndicator(color: Colors.white)
                     : InteractiveViewer(
                         child: Image.file(
@@ -898,13 +1000,12 @@ class _MediaPreviewPageState extends State<MediaPreviewPage> {
                       ),
               ),
             ),
-            if (tooLarge)
+            if (tooLong)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
                 child: Text(
-                  'This video is ${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB. '
-                  'WhatsApp takes up to 16 MB: record a shorter one.',
-                  key: const ValueKey('too-large'),
+                  tooLongMessage(),
+                  key: const ValueKey('too-long'),
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: Color(0xFFFFB4A9),
@@ -957,7 +1058,7 @@ class _MediaPreviewPageState extends State<MediaPreviewPage> {
                       child: InkWell(
                         key: const ValueKey('send-captured'),
                         customBorder: const CircleBorder(),
-                        onTap: tooLarge
+                        onTap: tooLong
                             ? null
                             : () => Navigator.pop(
                                 context,
@@ -965,6 +1066,7 @@ class _MediaPreviewPageState extends State<MediaPreviewPage> {
                                   widget.file,
                                   video: widget.video,
                                   caption: caption.text.trim(),
+                                  quality: quality,
                                 ),
                               ),
                         child: const SizedBox(
