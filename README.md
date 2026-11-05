@@ -98,7 +98,7 @@ Credentials and test tokens are not stored in source or embedded in the APK.
 - Flutter 3.47.8; Dart 3.13.7
 - Java 17; Android SDK in `~/Android/Sdk`
 - SDK: `~/.local/flutter-sdk/flutter`
-- Android identifier: `com.telvox.telvox_chat_mobile_app`
+- Android identifier: `com.telvox.chat`
 - Android Gradle Plugin 9.1.0, Gradle 9.3.1, Kotlin plugin 2.4.0
 
 The machine-specific `dev.env` file is ignored by Git. It supplies tool paths.

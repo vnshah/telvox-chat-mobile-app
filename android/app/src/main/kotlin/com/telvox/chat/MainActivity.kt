@@ -1,4 +1,4 @@
-package com.telvox.telvox_chat_mobile_app
+package com.telvox.chat
 
 import android.content.Context
 import android.media.AudioAttributes

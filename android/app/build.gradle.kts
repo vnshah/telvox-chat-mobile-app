@@ -24,7 +24,7 @@ val mapsKey = Properties().apply {
 }.getProperty("MAPS_API_KEY") ?: ""
 
 android {
-    namespace = "com.telvox.telvox_chat_mobile_app"
+    namespace = "com.telvox.chat"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -37,7 +37,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.telvox.telvox_chat_mobile_app"
+        applicationId = "com.telvox.chat"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

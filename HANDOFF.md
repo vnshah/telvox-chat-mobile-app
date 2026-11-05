@@ -219,7 +219,7 @@ they must not contain passwords, bearer tokens or backend service credentials.
 - AGP 9.1.0, Gradle wrapper 9.3.1, Kotlin plugin 2.4.0.
 - Android platforms 34/35/36, build tools 36.0.0, NDK 28.2.13676358,
   CMake 3.22.1 were present during verification.
-- Android application ID and namespace: `com.telvox.telvox_chat_mobile_app`.
+- Android application ID and namespace: `com.telvox.chat`.
 - `dev.env` is ignored and sources `~/.config/telvox/environment.sh`.
 - The existing Mac compatibility SDK was Flutter 3.38.10/Dart 3.10.9. The old Mac
   could not execute newer native Dart runtimes. Do not downgrade project constraints
