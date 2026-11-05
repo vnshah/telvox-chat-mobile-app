@@ -1,9 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <title>Telvox Chat</title>
-  <desc>Rounded chat bubble and double checkmark in Telvox green and light mint.</desc>
-  <rect width="1024" height="1024" fill="#176B46"/>
-  <g transform="translate(-240.64 -208.3) scale(1.47)" fill="none" stroke="#F4F7F3" stroke-width="52" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M359 283 H664 C700 283 730 313 730 349 V543 C730 580 700 610 664 610 H468 L359 697 V610 C323 610 293 580 293 543 V349 C293 313 323 283 359 283 Z"/>
-    <path d="M403 453 L446 495 L515 419 M477 476 L518 517 L596 432"/>
-  </g>
-</svg>
+<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- TelVox Chat: a glossy green message bubble on white (app icon option 1, 5 Nov 2026). The full app icon set is in telvox-sales/brand/app-icons/chat. -->
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef1f0"/></linearGradient>
+<linearGradient id="bu" x1="0" y1="0" x2=".8" y2="1"><stop offset="0" stop-color="#46d892"/><stop offset=".55" stop-color="#1aa565"/><stop offset="1" stop-color="#0c7046"/></linearGradient>
+<linearGradient id="bud" x1="0" y1="0" x2=".8" y2="1"><stop offset="0" stop-color="#5fe6a4"/><stop offset=".55" stop-color="#25b673"/><stop offset="1" stop-color="#11804f"/></linearGradient>
+<linearGradient id="grey" x1="0" y1="0" x2=".8" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b8b8b8"/></linearGradient>
+<linearGradient id="hi" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<clipPath id="bc"><path d="M33 22H67A14 14 0 0 1 81 36V54A14 14 0 0 1 67 68H44L29.5 79.4Q27 81.3 27 78.2V67.5Q19 64.5 19 54V36A14 14 0 0 1 33 22Z"/></clipPath>
+<mask id="holes"><path d="M33 22H67A14 14 0 0 1 81 36V54A14 14 0 0 1 67 68H44L29.5 79.4Q27 81.3 27 78.2V67.5Q19 64.5 19 54V36A14 14 0 0 1 33 22Z" fill="#fff"/><circle cx="36" cy="45" r="5.4" fill="#000"/><circle cx="50" cy="45" r="5.4" fill="#000"/><circle cx="64" cy="45" r="5.4" fill="#000"/></mask>
+<filter id="sh" x="-30%" y="-30%" width="160%" height="170%"><feDropShadow dx="0" dy="4" stdDeviation="3.5" flood-color="#0c7046" flood-opacity=".35"/></filter>
+<filter id="ds"><feDropShadow dx="0" dy="1" stdDeviation=".8" flood-color="#064e30" flood-opacity=".35"/></filter></defs><g transform="translate(50 50.5) scale(1.5) translate(-50 -51)"><path d="M33 22H67A14 14 0 0 1 81 36V54A14 14 0 0 1 67 68H44L29.5 79.4Q27 81.3 27 78.2V67.5Q19 64.5 19 54V36A14 14 0 0 1 33 22Z" fill="url(#bu)"/><g clip-path="url(#bc)"><ellipse cx="50" cy="24" rx="38" ry="16" fill="url(#hi)"/></g><circle cx="36" cy="45" r="5.4" fill="#fff" filter="url(#ds)"/><circle cx="50" cy="45" r="5.4" fill="#fff" filter="url(#ds)"/><circle cx="64" cy="45" r="5.4" fill="#fff" filter="url(#ds)"/></g></svg>

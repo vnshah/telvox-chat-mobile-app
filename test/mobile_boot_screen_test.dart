@@ -30,18 +30,35 @@ void main() {
     final spinner = find.byType(CircularProgressIndicator);
     double shown() => tester
         .widget<FadeTransition>(
-          find.ancestor(of: spinner, matching: find.byType(FadeTransition)),
+          // Its own fade; the whole app fades too, once signed in.
+          find
+              .ancestor(of: spinner, matching: find.byType(FadeTransition))
+              .first,
         )
         .opacity
         .value;
-    // A quick start shows only the mark, as Android's launch screen did.
+    // The first frame is the phone's launch screen: the bubble alone.
+    Opacity layer(Finder text) => tester.widget<Opacity>(
+      find.ancestor(of: text, matching: find.byType(Opacity)).first,
+    );
+    expect(layer(find.text('THE TELVOX FAMILY')).opacity, 0);
+    // Then, from the next frame, the rest of the splash unfolds from it.
+    await tester.pump();
     await tester.pump(const Duration(seconds: 1));
+    expect(layer(find.text('THE TELVOX FAMILY')).opacity, 1);
+    expect(layer(find.text('telvox')).opacity, 1);
+    expect(find.text('Chat'), findsOneWidget);
+    // A quick start shows no spinner.
     expect(shown(), 0);
     // A slow one shows it is still at work.
     await tester.pump(const Duration(milliseconds: 1500));
     expect(shown(), 1);
 
     store.opened.complete();
+    await tester.pump();
+    await tester.pump();
+    // Signed in (or not), the boot screen fades into the app, no cut.
+    expect(find.byType(BootScreen), findsOneWidget);
     await tester.pumpAndSettle();
     expect(find.byType(BootScreen), findsNothing);
     session.dispose();

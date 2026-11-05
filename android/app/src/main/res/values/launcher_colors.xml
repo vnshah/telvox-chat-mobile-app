@@ -1,5 +1,4 @@
 <resources>
-    <color name="launcher_background">#176B46</color>
     <!-- Telvox green (T.green) for notification accents. -->
     <color name="notification_accent">#176B46</color>
 </resources>

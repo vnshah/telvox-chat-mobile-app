@@ -24,7 +24,7 @@ class MobileApplication extends StatefulWidget {
 }
 
 class _MobileApplicationState extends State<MobileApplication>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   late final session =
       widget.session ??
       (() {
@@ -60,6 +60,7 @@ class _MobileApplicationState extends State<MobileApplication>
 
   @override
   void dispose() {
+    _fade.dispose();
     WidgetsBinding.instance.removeObserver(this);
     if (widget.session == null) session.connection.dispose();
     shares.pending.removeListener(_offerShare);
@@ -97,17 +98,57 @@ class _MobileApplicationState extends State<MobileApplication>
   String? _app;
   GlobalKey<NavigatorState>? _navigator;
 
+  /// Whether the boot screen was showing, so leaving it fades into the app
+  /// rather than cutting to it: the app is built at once beneath, and the
+  /// boot screen, kept on top as it was, fades away over it.
+  bool _booting = false;
+  Widget? _shown, _leaving;
+  late final _fade =
+      AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 300),
+      )..addStatusListener((status) {
+        if (status == AnimationStatus.completed && mounted) {
+          setState(() => _leaving = null);
+        }
+      });
+
+  bool get _boot =>
+      session.restoring || (session.awaitingNetwork && !session.signedIn);
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: session,
     builder: (context, _) {
-      final app = '${session.signedIn}:${session.ready}:${session.generation}';
+      final boot = _boot;
+      final app =
+          '$boot:${session.signedIn}:${session.ready}:${session.generation}';
       if (app != _app) {
         _app = app;
         _navigator = GlobalKey<NavigatorState>();
         session.calls.navigator = _navigator;
+        if (_booting && !boot && !MediaQuery.disableAnimationsOf(context)) {
+          _leaving = _shown;
+          _fade.forward(from: 0);
+        }
+        _booting = boot;
       }
-      return _materialApp(app);
+      final shown = _shown = _materialApp(app);
+      final leaving = _leaving;
+      return Stack(
+        textDirection: TextDirection.ltr,
+        fit: StackFit.expand,
+        children: [
+          shown,
+          if (leaving != null)
+            IgnorePointer(
+              child: FadeTransition(
+                opacity: ReverseAnimation(_fade),
+                child: leaving,
+              ),
+            ),
+        ],
+      );
     },
   );
 
@@ -126,7 +167,7 @@ class _MobileApplicationState extends State<MobileApplication>
       ),
     ),
     // Opened offline with no account kept yet: it loads once back online.
-    home: session.restoring || (session.awaitingNetwork && !session.signedIn)
+    home: _boot
         ? const BootScreen()
         : session.ready
         ? LiveHome(session)

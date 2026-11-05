@@ -28,7 +28,8 @@
         android:label="Telvox Chat"
         android:name="${applicationName}"
         android:allowBackup="false"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round">
         <!-- Google Maps SDK key, from android/maps.properties at build time. -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"

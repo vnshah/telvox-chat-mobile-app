@@ -1,12 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The launch screen before Android 12: white, the mark in the middle and
-     "from Telvox" at the foot. Android 12 and later draw theirs from
-     values-v31/styles.xml. -->
+<!-- The launch screen before Android 12: white with the app icon's bubble in
+     the middle, as Android 12 and later draw theirs (values-v31/styles.xml).
+     lib/mobile/boot_screen.dart starts on exactly this. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@android:color/white" />
     <item android:width="288dp" android:height="288dp" android:gravity="center"
         android:drawable="@drawable/splash_icon" />
-    <item android:width="200dp" android:height="80dp" android:bottom="60dp"
-        android:gravity="bottom|center_horizontal"
-        android:drawable="@drawable/splash_branding" />
 </layer-list>
