@@ -4,10 +4,10 @@ import 'dart:convert';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-import '../core/config/app_config.dart';
 import 'api.dart';
 import 'call_push.dart';
 import 'crash_reports.dart';
+import 'firebase_settings.dart';
 import 'notification_sound.dart';
 
 /// What a push carries, whichever way it reached the app.
@@ -48,12 +48,18 @@ abstract class PushTransport {
 /// while the app is open (except for the conversation on screen), and turns
 /// taps into [MobileSession.pendingOpen] for the home screen to act on.
 class PushService {
-  PushService(this.session, {PushTransport? transport})
-    : _transport =
-          transport ??
-          (AppConfig.firebaseConfigured ? FirebasePushTransport() : null);
+  PushService(this.session, {PushTransport? transport}) : _given = transport;
   final MobileSession session;
-  final PushTransport? _transport;
+  final PushTransport? _given;
+  PushTransport? _firebase;
+
+  /// Firebase once the phone knows its project (see [FirebaseSettings]),
+  /// which on a first start may only be after the server has answered.
+  PushTransport? get _transport =>
+      _given ??
+      (FirebaseSettings.current == null
+          ? null
+          : _firebase ??= FirebasePushTransport());
   final _subscriptions = <StreamSubscription<dynamic>>[];
   bool _started = false;
   String? _registered;
@@ -65,6 +71,7 @@ class PushService {
     // iPhone calls ring through Apple's VoIP push, which needs neither
     // Firebase nor permission to show notifications.
     unawaited(session.callPush.registerVoip());
+    if (_given == null) await FirebaseSettings.ready();
     final transport = _transport;
     if (transport == null || !session.signedIn) return;
     if (!_started) {

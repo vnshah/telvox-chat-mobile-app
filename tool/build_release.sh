@@ -8,25 +8,25 @@
 # upload has a higher number than the last, as the stores require; the
 # version name (1.0.0) comes from pubspec.yaml. BUILD_NUMBER=... overrides.
 #
-# Firebase (push notifications) and the API origin are compiled in from
-# config/development.json (git-ignored; see config/development.example.json).
-# A build without them installs and runs, but never receives a notification,
-# so this script refuses to build without them. android/key.properties signs
-# with the shared release key; android/maps.properties turns Google Maps on.
+# The API origin is compiled in from config/development.json (git-ignored;
+# see config/development.example.json). The Firebase project (push and crash
+# reports) is set in the server's .env and fetched by the app at start-up, so
+# no build carries it necessarily; Firebase values in the config file are
+# only a fallback for a phone that has never reached the server.
+# android/key.properties signs with the shared release key;
+# android/maps.properties turns Google Maps on.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 config=config/development.json
 if [[ ! -f $config ]]; then
-  echo "Missing $config: copy config/development.example.json and fill in the Firebase values." >&2
+  echo "Missing $config: copy config/development.example.json and set API_BASE_URL." >&2
   exit 1
 fi
-for key in API_BASE_URL FIREBASE_API_KEY FIREBASE_APP_ID FIREBASE_MESSAGING_SENDER_ID FIREBASE_PROJECT_ID; do
-  if ! python3 -c "import json,sys; sys.exit(0 if str(json.load(open('$config')).get('$key','')).strip() else 1)"; then
-    echo "$config has no $key: push notifications would not work. Not building." >&2
-    exit 1
-  fi
-done
+if ! python3 -c "import json,sys; sys.exit(0 if str(json.load(open('$config')).get('API_BASE_URL','')).strip() else 1)"; then
+  echo "$config has no API_BASE_URL: the app would not know its server. Not building." >&2
+  exit 1
+fi
 target=apk
 if [[ ${1:-} == store ]]; then
   target=store
