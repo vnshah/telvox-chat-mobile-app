@@ -200,7 +200,7 @@ class _Wordmark extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Your WhatsApp inbox, together',
+            "Your team's customer inbox",
             style: TextStyle(
               fontFamily: 'Geist',
               fontSize: 14,
