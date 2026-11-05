@@ -894,6 +894,7 @@ PreferredSizeWidget platformAppBar(
   List<Widget>? actions,
   double? leadingWidth,
   double? titleSpacing,
+  Color? iosBackground,
 }) {
   if (!isCupertino(context)) {
     return AppBar(
@@ -907,11 +908,13 @@ PreferredSizeWidget platformAppBar(
   return CupertinoNavigationBar(
     middle: title,
     leading: leading,
-    // Warm translucent bar and hairline, in the telvox palette.
-    backgroundColor: const Color(0xF2FAF8F4),
-    border: const Border(
-      bottom: BorderSide(color: Color(0x293C3228), width: .5),
-    ),
+    // Warm translucent bar and hairline, in the telvox palette; a screen
+    // laid out as iOS's grouped lists passes its own page colour, and the
+    // bar then runs into the page with no line, as in Settings.
+    backgroundColor: iosBackground ?? const Color(0xF2FAF8F4),
+    border: iosBackground != null
+        ? null
+        : const Border(bottom: BorderSide(color: Color(0x293C3228), width: .5)),
     trailing: actions == null
         ? null
         : Row(mainAxisSize: MainAxisSize.min, children: actions),

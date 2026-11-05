@@ -3,13 +3,30 @@ import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
 
-/// Building blocks shared by the customer and ticket detail screens. On
-/// Android they are laid out as WhatsApp's contact info is: white blocks on a
-/// light grey page, a large avatar, outlined action boxes and plain Material
-/// list rows. On iOS, Apple's grouped style (inset sections, icon tiles,
-/// chevrons). Both screens feel native and identical in structure.
+/// Building blocks shared by the customer and ticket detail screens, laid out
+/// as WhatsApp's contact info is on each platform. On Android: white blocks on
+/// a light grey page, a large avatar, round action buttons and plain Material
+/// rows. On iOS: Apple's own grouped list, in iOS's system colours (grey page,
+/// white inset sections, plain line icons, grey values and chevrons), with
+/// white action buttons under the avatar. Both identical in structure.
 
 /// WhatsApp's light-theme colours for these screens on Android.
+/// iOS's system colours for a grouped list, resolved for light or dark.
+abstract final class IosDetailColors {
+  static Color page(BuildContext context) =>
+      CupertinoColors.systemGroupedBackground.resolveFrom(context);
+  static Color cell(BuildContext context) =>
+      CupertinoColors.secondarySystemGroupedBackground.resolveFrom(context);
+  static Color label(BuildContext context) =>
+      CupertinoColors.label.resolveFrom(context);
+  static Color secondary(BuildContext context) =>
+      CupertinoColors.secondaryLabel.resolveFrom(context);
+  static Color separator(BuildContext context) =>
+      CupertinoColors.separator.resolveFrom(context);
+  static Color danger(BuildContext context) =>
+      CupertinoColors.systemRed.resolveFrom(context);
+}
+
 abstract final class DetailColors {
   static const page = Color(0xFFF0F2F5);
   static const ink = Color(0xFF111B21);
@@ -72,7 +89,7 @@ class DetailHero extends StatelessWidget {
         ? CrossAxisAlignment.center
         : CrossAxisAlignment.start;
     return Padding(
-      padding: EdgeInsets.fromLTRB(16, apple ? 4 : 12, 16, 8),
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
       child: Column(
         crossAxisAlignment: align,
         children: [
@@ -81,12 +98,12 @@ class DetailHero extends StatelessWidget {
               clipBehavior: Clip.none,
               children: [
                 CircleAvatar(
-                  radius: 36,
+                  radius: 50,
                   backgroundColor: colors.$1,
                   child: Text(
                     avatar!,
                     style: TextStyle(
-                      fontSize: avatarLetterSize(72, avatar!),
+                      fontSize: avatarLetterSize(100, avatar!),
                       fontWeight: FontWeight.w600,
                       height: 1,
                       color: colors.$2,
@@ -104,13 +121,16 @@ class DetailHero extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: T.green,
                         shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2.5),
+                        border: Border.all(
+                          color: IosDetailColors.page(context),
+                          width: 2.5,
+                        ),
                       ),
                     ),
                   ),
               ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
           ],
           titleEditor ??
               GestureDetector(
@@ -119,10 +139,10 @@ class DetailHero extends StatelessWidget {
                   title,
                   textAlign: centered ? TextAlign.center : TextAlign.start,
                   style: TextStyle(
-                    fontSize: apple ? 22 : 20,
+                    fontSize: 24,
                     fontWeight: FontWeight.w600,
                     letterSpacing: -.3,
-                    color: T.ink,
+                    color: IosDetailColors.label(context),
                   ),
                 ),
               ),
@@ -131,7 +151,10 @@ class DetailHero extends StatelessWidget {
             Text(
               subtitle!,
               textAlign: centered ? TextAlign.center : TextAlign.start,
-              style: const TextStyle(fontSize: 14, color: T.secondary),
+              style: TextStyle(
+                fontSize: 15,
+                color: IosDetailColors.secondary(context),
+              ),
             ),
           ],
           if (status != null) ...[
@@ -152,16 +175,13 @@ class DetailHero extends StatelessWidget {
             ),
           ],
           if (actions.isNotEmpty) ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 18),
             Row(
               children: [
-                for (final a in actions)
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: apple ? _IosAction(a) : _MaterialAction(a),
-                    ),
-                  ),
+                for (final (i, a) in actions.indexed) ...[
+                  if (i > 0) const SizedBox(width: 8),
+                  Expanded(child: _IosAction(a)),
+                ],
               ],
             ),
           ],
@@ -330,34 +350,53 @@ class _MaterialAction extends StatelessWidget {
   }
 }
 
+/// WhatsApp's iOS action button: a white rounded box on the grey page, the
+/// icon in green over its name.
 class _IosAction extends StatelessWidget {
   const _IosAction(this.action);
   final QuickAction action;
   @override
-  Widget build(BuildContext context) => CupertinoButton(
-    padding: EdgeInsets.zero,
-    minimumSize: const Size(0, 58),
-    onPressed: action.onTap,
-    child: Container(
-      height: 58,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+  Widget build(BuildContext context) {
+    final enabled = action.onTap != null;
+    final label = action.label.isEmpty
+        ? ''
+        : action.label[0].toUpperCase() + action.label.substring(1);
+    return CupertinoButton(
+      padding: EdgeInsets.zero,
+      minimumSize: const Size(0, 64),
+      onPressed: action.onTap,
+      child: Container(
+        height: 64,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: IosDetailColors.cell(context),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AppIcon(
+              action.icon,
+              size: 24,
+              color: enabled ? T.green : IosDetailColors.secondary(context),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                color: enabled
+                    ? IosDetailColors.label(context)
+                    : IosDetailColors.secondary(context),
+              ),
+            ),
+          ],
+        ),
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          AppIcon(action.icon, size: 22, color: T.green),
-          const SizedBox(height: 3),
-          Text(
-            action.label.toLowerCase(),
-            style: const TextStyle(fontSize: 11, color: T.green),
-          ),
-        ],
-      ),
-    ),
-  );
+    );
+  }
 }
 
 /// A titled group: a Material card with a taupe label on Android, an inset
@@ -392,9 +431,14 @@ class DetailSection extends StatelessWidget {
           );
     if (isCupertino(context)) {
       return CupertinoListSection.insetGrouped(
-        backgroundColor: T.iosGrouped,
-        margin: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-        separatorColor: T.iosSeparator,
+        backgroundColor: IosDetailColors.page(context),
+        decoration: BoxDecoration(
+          color: IosDetailColors.cell(context),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        margin: const EdgeInsets.fromLTRB(20, 6, 20, 14),
+        separatorColor: IosDetailColors.separator(context),
+        // iOS's grouped list header: small capitals in the secondary grey.
         header: title == null
             ? null
             : Row(
@@ -402,10 +446,9 @@ class DetailSection extends StatelessWidget {
                   Expanded(
                     child: Text(
                       title!.toUpperCase(),
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: T.muted,
-                        letterSpacing: .2,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: IosDetailColors.secondary(context),
                       ),
                     ),
                   ),
@@ -483,28 +526,33 @@ class DetailRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colour = destructive ? T.danger : T.ink;
     if (isCupertino(context)) {
+      // WhatsApp on iOS: a plain line icon in the text colour (red when it
+      // is destructive), the name, the value in grey, then the chevron.
+      final ink = destructive
+          ? IosDetailColors.danger(context)
+          : IosDetailColors.label(context);
       return CupertinoListTile(
-        leading: Container(
-          width: 29,
-          height: 29,
-          decoration: BoxDecoration(
-            color: destructive ? T.danger : tile,
-            borderRadius: BorderRadius.circular(7),
-          ),
-          child: AppIcon(icon, size: 18, color: Colors.white),
-        ),
-        title: Text(label, style: TextStyle(color: colour, fontSize: 16)),
+        leading: AppIcon(icon, size: 22, color: ink),
+        leadingSize: 26,
+        title: Text(label, style: TextStyle(color: ink, fontSize: 17)),
         subtitle: subtitle == null
             ? null
             : Text(
                 subtitle!,
-                style: const TextStyle(fontSize: 13, color: T.muted),
+                maxLines: subtitleLines,
+                overflow: subtitleLines == null ? null : TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: IosDetailColors.secondary(context),
+                ),
               ),
         additionalInfo: value == null
             ? null
-            : Text(value!, style: const TextStyle(color: T.muted)),
+            : Text(
+                value!,
+                style: TextStyle(color: IosDetailColors.secondary(context)),
+              ),
         trailing:
             trailing ??
             (onTap == null ? null : const CupertinoListTileChevron()),
@@ -747,9 +795,16 @@ class DetailScaffold extends StatelessWidget {
     );
     final apple = isCupertino(context);
     return Scaffold(
-      backgroundColor: apple ? null : DetailColors.page,
+      backgroundColor: apple
+          ? IosDetailColors.page(context)
+          : DetailColors.page,
       appBar: apple
-          ? platformAppBar(context, title: Text(title), actions: actions)
+          ? platformAppBar(
+              context,
+              title: Text(title),
+              actions: actions,
+              iosBackground: IosDetailColors.page(context),
+            )
           : AppBar(
               title: Text(title),
               actions: actions,
