@@ -56,6 +56,17 @@ String windowLabel(DateTime? expires, [DateTime? now]) {
   return '${left.inMinutes.clamp(1, 59)}m left';
 }
 
+/// The web ticket inbox's session timer: the time left in the window as
+/// HH:MM:SS (hours past 24 as they are, "71:59:58"), or "Session Closed".
+String sessionTimerLabel(DateTime? expires, [DateTime? now]) {
+  final left = expires?.difference(now ?? DateTime.now());
+  if (left == null || left.isNegative || left == Duration.zero) {
+    return 'Session Closed';
+  }
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${two(left.inHours)}:${two(left.inMinutes % 60)}:${two(left.inSeconds % 60)}';
+}
+
 /// Rebuilds [builder] with whether the window is open, and once more when it
 /// closes, so the green dot goes out on time with no reload.
 class ConversationWindow extends StatefulWidget {

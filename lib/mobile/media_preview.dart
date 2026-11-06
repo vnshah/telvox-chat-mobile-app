@@ -8,6 +8,7 @@ import 'package:video_player/video_player.dart';
 
 import '../ui/theme.dart';
 import 'media.dart';
+import 'media_save.dart';
 
 /// Opens a photo or video full screen as WhatsApp does: it grows out of its
 /// bubble ([heroTag] names it there) while the chat fades to black, and
@@ -149,6 +150,45 @@ class MediaPreview extends StatefulWidget {
 
 class _MediaPreviewState extends State<MediaPreview>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  var saving = false;
+
+  void notice(String text) =>
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(SnackBar(content: Text(text)));
+
+  /// Saves the photo or video onto the phone: in the gallery.
+  Future<void> download() async {
+    if (saving) return;
+    saving = true;
+    try {
+      final where = await downloadMedia(widget.media);
+      if (mounted) notice(where);
+    } catch (e) {
+      if (mounted) {
+        notice(e is DownloadRefused ? '$e' : 'The file could not be saved.');
+      }
+    } finally {
+      saving = false;
+    }
+  }
+
+  /// Save or send the file on, through the phone's share sheet.
+  Future<void> save(BuildContext anchor) async {
+    if (saving) return;
+    saving = true;
+    try {
+      await saveMedia(anchor, widget.media);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(content: Text('The file could not be saved.')),
+        );
+      }
+    } finally {
+      saving = false;
+    }
+  }
+
   bool get video => widget.media.type == 'video';
 
   /// The bars, shown until a tap hides them.
@@ -440,6 +480,22 @@ class _MediaPreviewState extends State<MediaPreview>
                       ),
                     ),
                 ],
+              ),
+            ),
+            IconButton(
+              key: const ValueKey('media-preview-download'),
+              tooltip: 'Download',
+              color: Colors.white,
+              icon: const Icon(Icons.download_rounded),
+              onPressed: download,
+            ),
+            Builder(
+              builder: (anchor) => IconButton(
+                key: const ValueKey('media-preview-save'),
+                tooltip: 'Save or share',
+                color: Colors.white,
+                icon: const Icon(Icons.ios_share_rounded),
+                onPressed: () => save(anchor),
               ),
             ),
           ],

@@ -174,6 +174,9 @@ void main() {
     /// The send's reply; by default a bare success.
     Json Function(RequestOptions)? sendReply;
 
+    /// The number's connected catalogues; none unless a test adds one.
+    var catalogues = <Json>[];
+
     Future<void> openChat(WidgetTester tester) async {
       sends = [];
       final api = fakeApi((r, h) async {
@@ -197,6 +200,7 @@ void main() {
             ],
             'meta': {'has_more': false},
           },
+          'inbox/get-catalogues' => {'success': true, 'catalogues': catalogues},
           'inbox/getContactDetails' => {
             'success': true,
             'data': {
@@ -257,6 +261,25 @@ void main() {
       ]) {
         expect(find.text(label), findsOneWidget);
       }
+      // No catalogue connected: no Product. Calling off: no call request.
+      expect(find.text('Product'), findsNothing);
+      expect(find.text('Call permission'), findsNothing);
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      await close(tester);
+    });
+
+    testWidgets('Product shows once the number has a catalogue', (
+      tester,
+    ) async {
+      catalogues = [
+        {'id': 3, 'name': 'Main', 'fb_catalogue_id': '900', 'product_count': 4},
+      ];
+      addTearDown(() => catalogues = []);
+      await openChat(tester);
+      await tester.tap(find.byTooltip('Attach'));
+      await tester.pumpAndSettle();
+      expect(find.text('Product'), findsOneWidget);
       await tester.tapAt(const Offset(10, 10));
       await tester.pumpAndSettle();
       await close(tester);
@@ -356,9 +379,9 @@ void main() {
           'message_types': {'call_permission_request': true},
         },
       };
-      await attach(tester, 'Location');
-      await tester.tap(find.text('Ask permission to call'));
-      await tester.pumpAndSettle();
+      // Its own tile: it has nothing to do with location.
+      await attach(tester, 'Call permission');
+      expect(find.text('Ask permission to call'), findsOneWidget);
       await tester.tap(find.text('Send'));
       await tester.pumpAndSettle();
       final body = sends.single.data as Map;

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +10,7 @@ import '../ui/theme.dart';
 import 'api.dart';
 import 'media.dart';
 import 'media_preview.dart';
+import 'media_save.dart' show DownloadRefused, downloadMedia;
 import 'models.dart';
 import 'screens.dart' show mobileNotice;
 
@@ -49,14 +52,40 @@ class _MediaGalleryPageState extends State<MediaGalleryPage> {
   final errors = <SharedKind, String>{};
   final loading = <SharedKind>{};
 
+  /// The web gallery's search: by file name, or a link's address.
+  var search = '';
+  Timer? debounce;
+  var serial = 0;
+
   @override
   void initState() {
     super.initState();
     load(kind);
   }
 
+  @override
+  void dispose() {
+    debounce?.cancel();
+    super.dispose();
+  }
+
+  void searched(String text) {
+    debounce?.cancel();
+    debounce = Timer(const Duration(milliseconds: 350), () {
+      if (!mounted || text.trim() == search) return;
+      search = text.trim();
+      serial++;
+      setState(() {
+        rowsByKind.clear();
+        loading.clear();
+      });
+      load(kind);
+    });
+  }
+
   Future<void> load(SharedKind k) async {
     if (loading.contains(k)) return;
+    final request = serial;
     setState(() {
       loading.add(k);
       errors.remove(k);
@@ -66,11 +95,13 @@ class _MediaGalleryPageState extends State<MediaGalleryPage> {
           ? await widget.session.api.post('inbox/getMediaData', {
               'contact_id': widget.contactId,
               'type': k.query,
+              if (search.isNotEmpty) 'search': search,
             })
           : await widget.session.api.post(
               'inbox/tickets/${widget.ticketId}/media-data',
-              {'type': k.query},
+              {'type': k.query, if (search.isNotEmpty) 'search': search},
             );
+      if (request != serial) return;
       final list = rows(r['data'])
         ..sort(
           (a, b) =>
@@ -78,9 +109,9 @@ class _MediaGalleryPageState extends State<MediaGalleryPage> {
         );
       if (mounted) setState(() => rowsByKind[k] = list);
     } catch (e) {
-      if (mounted) setState(() => errors[k] = '$e');
+      if (mounted && request == serial) setState(() => errors[k] = '$e');
     } finally {
-      if (mounted) setState(() => loading.remove(k));
+      if (mounted && request == serial) setState(() => loading.remove(k));
     }
   }
 
@@ -140,6 +171,15 @@ class _MediaGalleryPageState extends State<MediaGalleryPage> {
       body: Column(
         children: [
           switcher,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+            child: SearchBox(
+              key: const ValueKey('media-search'),
+              hint: 'Search',
+              dense: true,
+              onChanged: searched,
+            ),
+          ),
           SizedBox(
             height: 2,
             child: loading.contains(kind) && rowsByKind.containsKey(kind)
@@ -390,6 +430,21 @@ Future<void> _copy(BuildContext context, String text, String what) async {
   if (context.mounted) mobileNotice(context, '$what copied');
 }
 
+/// Saves a gallery file onto the phone and says where it went.
+Future<void> _download(BuildContext context, MessageMedia media) async {
+  try {
+    final where = await downloadMedia(media);
+    if (context.mounted) mobileNotice(context, where);
+  } catch (e) {
+    if (context.mounted) {
+      mobileNotice(
+        context,
+        e is DownloadRefused ? '$e' : 'The file could not be saved.',
+      );
+    }
+  }
+}
+
 class _DocumentRow extends StatelessWidget {
   const _DocumentRow(this.item, this.apiBase);
   final Json item;
@@ -421,6 +476,9 @@ class _DocumentRow extends StatelessWidget {
       onTap: url == null ? null : open,
       menu: {
         if (url != null) 'Open': open,
+        if (url != null)
+          'Download': () =>
+              _download(context, MessageMedia('document', url, name)),
         if (url != null)
           'Copy link': () => _copy(context, url.toString(), 'Link'),
       },

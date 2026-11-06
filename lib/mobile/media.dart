@@ -11,6 +11,7 @@ import 'package:video_player/video_player.dart';
 import '../ui/theme.dart';
 import 'api.dart';
 import 'media_cache.dart';
+import 'media_save.dart' show DownloadButton;
 import 'media_preview.dart';
 
 class Attachment {
@@ -350,7 +351,10 @@ class _MediaViewerState extends State<MediaViewer> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(widget.media.name)),
+    appBar: AppBar(
+      title: Text(widget.media.name),
+      actions: [DownloadButton(widget.media)],
+    ),
     body: Center(
       child: ['image', 'sticker'].contains(widget.media.type)
           ? InteractiveViewer(

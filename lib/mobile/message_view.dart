@@ -8,8 +8,10 @@ import 'package:video_player/video_player.dart';
 
 import '../ui/theme.dart';
 import '../ui/data.dart' show Message;
+import '../ui/delivery_tick.dart';
 import '../ui/chat_message.dart';
 import '../ui/file_type.dart';
+import 'media_save.dart' show DownloadButton;
 import '../ui/conversation.dart' show SwipeReply;
 import 'api.dart';
 import 'maps.dart';
@@ -48,7 +50,23 @@ Message messagePresentation(
     replyPreview: quotedAudio == null ? null : QuotedAudio(quotedAudio.url),
     read: m.status == 3,
     deliveryStatus: m.status,
+    source: messageSource(m),
+    failedReason: m.status == 4 || m.status == 5
+        ? (readableText(m.json['failed_reason']).isEmpty
+              ? 'Message failed to send'
+              : readableText(m.json['failed_reason']))
+        : null,
   );
+}
+
+/// Where an outgoing message came from, for its mark. A message the AI wrote
+/// carries the AI's own mark on the web, which the app does not show, so it
+/// gets no other mark either.
+int messageSource(ApiMessage m) {
+  if (!m.outgoing) return 0;
+  final ai = m.json['sent_by_ai'];
+  if (ai == true || number(ai) == 1) return 0;
+  return number(m.json['message_source']) ?? 0;
 }
 
 /// A quoted voice note or audio file as WhatsApp shows it: the mic, its
@@ -246,6 +264,8 @@ class LiveMessageView extends StatelessWidget {
       time: presentation.time,
       read: presentation.read,
       deliveryStatus: presentation.deliveryStatus,
+      source: presentation.source,
+      failedReason: presentation.failedReason,
       reply: presentation.reply,
       replyAuthor: presentation.replyAuthor,
     );
@@ -257,6 +277,7 @@ class LiveMessageView extends StatelessWidget {
         place != null && place.name.isEmpty && place.address.isEmpty;
     // WhatsApp frames each kind differently; anything else keeps the generic
     // bubble below with its text, media tiles, fields and buttons.
+    final product = productCardOf(m);
     final Widget? special = switch (m.type) {
       'image' || 'video' when file != null => MessageBubble(
         message: bare(c.text),
@@ -330,6 +351,16 @@ class LiveMessageView extends StatelessWidget {
         tight: true,
         contentBefore: LocationCard(location),
       ),
+      _ when product != null => MessageBubble(
+        message: bare(m.type == 'order' ? '' : c.text),
+        first: first,
+        maxWidth: 254 + 17,
+        contentBefore: ProductCard(product),
+        // The web draws these buttons without an action; so does the app.
+        footer: product.button == null
+            ? null
+            : BubbleButtons([(Icons.storefront_outlined, product.button!)]),
+      ),
       _ when c.request == 'call' => MessageBubble(
         message: presentation,
         first: first,
@@ -364,6 +395,8 @@ class LiveMessageView extends StatelessWidget {
                             time: presentation.time,
                             read: presentation.read,
                             deliveryStatus: presentation.deliveryStatus,
+                            source: presentation.source,
+                            failedReason: presentation.failedReason,
                           ),
                           first: first,
                           showStamp: false,
@@ -422,21 +455,6 @@ class LiveMessageView extends StatelessWidget {
                   ),
                 ),
               bubble,
-              if (m.status == 4 || m.status == 5)
-                Padding(
-                  padding: const EdgeInsets.only(top: 3),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: MediaQuery.sizeOf(context).width * .8,
-                    ),
-                    child: Text(
-                      readableText(m.json['failed_reason']).isEmpty
-                          ? 'Message failed to send'
-                          : readableText(m.json['failed_reason']),
-                      style: const TextStyle(fontSize: 11, color: T.danger),
-                    ),
-                  ),
-                ),
               if (m.reactions.isNotEmpty)
                 Container(
                   margin: const EdgeInsets.only(top: 2),
@@ -509,17 +527,11 @@ class StickerView extends StatelessWidget {
                   ),
                   if (message.out) ...[
                     const SizedBox(width: 3),
-                    Icon(
-                      switch (message.deliveryStatus ?? 0) {
-                        0 => Icons.schedule,
-                        1 => Icons.check,
-                        4 || 5 => Icons.error_outline,
-                        _ => Icons.done_all,
-                      },
+                    DeliveryTick(
+                      message.deliveryStatus ?? 0,
                       size: 13,
-                      color: message.deliveryStatus == 3
-                          ? const Color(0xFF7FD3FF)
-                          : Colors.white,
+                      color: Colors.white,
+                      onPhoto: true,
                     ),
                   ],
                 ],
@@ -658,18 +670,11 @@ class OverlayStamp extends StatelessWidget {
       ),
       if (message.out) ...[
         const SizedBox(width: 3),
-        Icon(
-          switch (message.deliveryStatus ?? 0) {
-            0 => Icons.schedule,
-            1 => Icons.check,
-            4 || 5 => Icons.error_outline,
-            _ => Icons.done_all,
-          },
+        DeliveryTick(
+          message.deliveryStatus ?? 0,
           size: 14,
-          color: message.deliveryStatus == 3
-              ? const Color(0xFF7FD3FF)
-              : Colors.white,
-          shadows: const [Shadow(blurRadius: 3, color: Colors.black54)],
+          color: Colors.white,
+          onPhoto: true,
         ),
       ],
     ],
@@ -965,6 +970,9 @@ class DocumentCard extends StatelessWidget {
                 ],
               ),
             ),
+            // Saves it to Downloads, as WhatsApp's arrow does.
+            if (progress == null && !media.url.isScheme('file'))
+              DownloadButton(media, color: T.secondary, size: 22),
             if (progress != null)
               Padding(
                 padding: const EdgeInsets.only(left: 8),
@@ -1800,6 +1808,8 @@ class FormResponseCard extends StatelessWidget {
       time: message.time,
       read: message.read,
       deliveryStatus: message.deliveryStatus,
+      source: message.source,
+      failedReason: message.failedReason,
     ),
     first: first,
     maxWidth: maxWidth,
@@ -1917,3 +1927,127 @@ Future<void> showFormResponse(
     ),
   ),
 );
+
+/// What a product message's card shows, as the web inbox draws it: a single
+/// product with its price, a multi-product list's first picture and count, a
+/// catalogue's thumbnail product, or an order's items and estimated total.
+/// Null when the server sent no product details for it.
+typedef ProductCardData = ({
+  String image,
+  String title,
+  String subtitle,
+  String? button,
+});
+
+ProductCardData? productCardOf(ApiMessage m) {
+  final body = object(decoded(m.json['message_body_json']));
+  String text(Object? v) => readableText(v).trim();
+  switch (m.type) {
+    case 'interactiveSingleProduct':
+      final product = object(body['product']);
+      if (product.isEmpty) return null;
+      return (
+        image: text(product['image_url']),
+        title: text(product['name']),
+        subtitle: text(product['price']),
+        button: 'View',
+      );
+    case 'interactiveMultipleProduct':
+      final products = rows(body['products']);
+      if (products.isEmpty) return null;
+      return (
+        image: text(products.first['image_url']),
+        title: text(object(object(body['component'])['header'])['text']),
+        subtitle: '${products.length} Items',
+        button: 'View items',
+      );
+    case 'interactiveCatalogue':
+      final thumb = object(body['thumbnail_product']);
+      if (thumb.isEmpty) return null;
+      final about = text(thumb['description']);
+      return (
+        image: text(thumb['image_url']),
+        title: text(thumb['name']),
+        subtitle: about.length > 60 ? '${about.substring(0, 60)}...' : about,
+        button: 'View catalog',
+      );
+    case 'order':
+      final thumb = object(body['thumbnail_product']);
+      if (body['total_items'] == null) return null;
+      return (
+        image: text(thumb['image_url']),
+        title: '${body['total_items']} items',
+        subtitle: '₹${body['estimated_total'] ?? 0} (estimated total)',
+        button: null,
+      );
+  }
+  return null;
+}
+
+class ProductCard extends StatelessWidget {
+  const ProductCard(this.product, {super.key});
+  final ProductCardData product;
+  @override
+  Widget build(BuildContext context) {
+    final picture = profilePicture(product.image);
+    return Container(
+      key: const ValueKey('product-card'),
+      width: 250,
+      margin: const EdgeInsets.only(top: 2, bottom: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .04),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 72,
+            height: 72,
+            child: picture == null
+                ? const ColoredBox(
+                    color: T.surfaceHigh,
+                    child: Icon(Icons.shopping_bag_outlined, color: T.muted),
+                  )
+                : Image.network(
+                    picture,
+                    fit: BoxFit.cover,
+                    cacheWidth: 216,
+                    errorBuilder: (_, _, _) => const ColoredBox(
+                      color: T.surfaceHigh,
+                      child: Icon(Icons.shopping_bag_outlined, color: T.muted),
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (product.title.isNotEmpty)
+                  Text(
+                    product.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: T.ink,
+                    ),
+                  ),
+                if (product.subtitle.isNotEmpty)
+                  Text(
+                    product.subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12.5, color: T.secondary),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+}

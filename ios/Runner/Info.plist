@@ -72,6 +72,14 @@
 	<string>Take photos and videos to send to customers in a chat.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Choose photos and videos to send to customers in a chat.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save photos and videos from a chat to your library.</string>
+	<!-- Downloaded documents are kept in the app's folder, shown in the Files
+	     app under Telvox Chat. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Send your current location to a customer in a chat.</string>
 	<key>NSMicrophoneUsageDescription</key>

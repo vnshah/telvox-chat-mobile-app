@@ -131,6 +131,18 @@ void main() {
     final closed = details(expiry: '2026-10-28T00:00:00Z');
     expect(SendPolicy.evaluate(session, closed, now: now).canSend, false);
     expect(SendPolicy.evaluate(session, closed, now: now).canTemplate, true);
+    // Only the window stops it: where Direct Send is offered.
+    expect(SendPolicy.evaluate(session, closed, now: now).windowClosed, true);
+    expect(
+      SendPolicy.evaluate(session, details(), now: now).windowClosed,
+      false,
+    );
+    final botsAfterWindow = details(expiry: '2026-10-28T00:00:00Z');
+    (botsAfterWindow['contact'] as Json)['conversation_owner_type'] = 1;
+    expect(
+      SendPolicy.evaluate(session, botsAfterWindow, now: now).windowClosed,
+      false,
+    );
     // A contact just added from the app has never written: templates only.
     final fresh = details();
     fresh['contact'] = {

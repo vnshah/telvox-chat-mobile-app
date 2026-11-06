@@ -4,8 +4,11 @@ import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../ui/delivery_tick.dart';
 import '../ui/theme.dart';
 import 'api.dart';
+import 'assignment.dart';
+import 'list_filter.dart';
 import 'account_menu.dart';
 import 'contact_actions.dart';
 import 'conversation_window.dart';
@@ -1195,9 +1198,11 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
             );
           }
         case 'status':
-          await api.post('inbox/conversation/${closed ? 'reopen' : 'close'}', {
-            'contact_id': id,
-          });
+          if (closed) {
+            await api.post('inbox/conversation/reopen', {'contact_id': id});
+          } else if (await closeConversation(context, api, id) == null) {
+            return;
+          }
           if (mounted) {
             mobileNotice(
               context,
@@ -1211,37 +1216,27 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
             }))['data'],
           );
           if (!mounted) return;
-          if (details['can_assign_contact'] != true) {
-            mobileNotice(context, 'You cannot assign this chat.');
+          final plan = Assignment(details);
+          if (!plan.available) {
+            mobileNotice(context, 'There is no one to assign this chat to.');
             return;
           }
-          final multi = details['multiple_assignment_enabled'] == true;
-          final users = rows(details['users']);
           await showEditorSheet(
             context,
             title: 'Assign chat',
             fields: [
               EditField(
-                multi ? 'user_ids' : 'user_id',
+                plan.multi ? 'user_ids' : 'user_id',
                 'Assignee',
-                value: multi
-                    ? details['assigned_user_ids']
-                    : number(object(details['contact'])['assigned_to']) ?? 0,
-                multiple: multi,
-                options: multi
-                    ? users
-                    : [
-                        {'id': 0, 'name': 'Unassigned'},
-                        ...users,
-                      ],
+                value: plan.value,
+                multiple: plan.multi,
+                options: plan.options,
               ),
             ],
             save: (v) => api.request(
               'inbox/contacts/$id/assign',
               method: 'POST',
-              data: multi
-                  ? v
-                  : {'user_id': v['user_id'] == 0 ? null : v['user_id']},
+              data: plan.body(v[plan.multi ? 'user_ids' : 'user_id']),
             ),
           );
       }
@@ -1262,7 +1257,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   };
   // Inbox and Contacts request the same contact list, so they share a cache.
   String get cacheKey =>
-      "list:${widget.session.api.wabaId}:${widget.kind == 2 ? 'tickets' : 'contacts'}:$filter:${search.text}";
+      "list:${widget.session.api.wabaId}:${widget.kind == 2 ? 'tickets' : 'contacts'}:$filter:${search.text}${listFilter.active ? ':${listFilter.key}' : ''}";
 
   /// Shows any cached rows for the current filter/search at once, then
   /// refreshes quietly; only an uncached view shows the loading strip.
@@ -1279,7 +1274,10 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
   ListSync get sync => widget.kind == 2 ? ListSync.tickets : ListSync.contacts;
 
   /// Searches are not kept on the phone; each tab's own list is.
-  bool get persisted => search.text.isEmpty;
+  bool get persisted => search.text.isEmpty && !listFilter.active;
+
+  /// The tags and assignee picked in the filter sheet (shared inbox only).
+  ListFilter listFilter = const ListFilter();
 
   @override
   void initState() {
@@ -1440,6 +1438,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
         final result = await widget.session.api.post('inbox/tickets', {
           'listType': filter,
           'search': search.text,
+          ...listFilter.body,
           'limit': limit,
           'offset': append ? items.length : 0,
         });
@@ -1450,12 +1449,14 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
           search: search.text,
           offset: append ? items.length : 0,
           limit: limit,
+          tags: listFilter.tags,
+          assignedTo: listFilter.assignedTo,
         );
       }
       if (!mounted || request != serial) return;
       // The chats near the top are synced onto the phone before they are
       // opened, so opening one shows what is new straight away.
-      if (widget.kind != 2 && !append && search.text.isEmpty) {
+      if (widget.kind != 2 && !append && persisted) {
         unawaited(widget.session.conversations.prefetch(next));
       }
       final merged = append
@@ -1480,6 +1481,43 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
     }
   }
 
+  /// The web inbox's filter: a funnel with a green dot while a filter is on.
+  Widget filterButton() => AppIconButton(
+    key: const ValueKey('list-filter'),
+    tooltip: listFilter.active ? 'Filters applied' : 'Filter',
+    onPressed: openFilter,
+    icon: Badge(
+      isLabelVisible: listFilter.active,
+      smallSize: 8,
+      backgroundColor: T.unread,
+      child: const AppIcon(Icons.filter_list_rounded),
+    ),
+  );
+
+  Future<void> openFilter() async {
+    final picked = await showModalBottomSheet<ListFilter>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => ListFilterSheet(
+        session: widget.session,
+        initial: listFilter,
+        people: people,
+        tickets: widget.kind == 2,
+      ),
+    );
+    if (picked == null || !mounted) return;
+    // The web ticket filter's Clear starts over: no search, the Mine tab.
+    final restart = widget.kind == 2 && picked.cleared;
+    if (!restart && picked.key == listFilter.key) return;
+    if (restart) {
+      search.clear();
+      filter = 'mychats';
+    }
+    setState(() => listFilter = picked);
+    reload();
+  }
+
   void searched(String _) {
     debounce?.cancel();
     serial++;
@@ -1493,10 +1531,19 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
       Padding(
         padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
         child: isCupertino(context)
-            ? CupertinoSearchTextField(
-                controller: search,
-                onChanged: searched,
-                placeholder: widget.kind == 2 ? 'Search tickets' : 'Search',
+            ? Row(
+                children: [
+                  Expanded(
+                    child: CupertinoSearchTextField(
+                      controller: search,
+                      onChanged: searched,
+                      placeholder: widget.kind == 2
+                          ? 'Search tickets'
+                          : 'Search',
+                    ),
+                  ),
+                  filterButton(),
+                ],
               )
             : SearchBar(
                 controller: search,
@@ -1505,6 +1552,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
                     ? 'Search tickets'
                     : 'Search name or number',
                 leading: const Icon(Icons.search, color: T.brass),
+                trailing: [filterButton()],
               ),
       ),
       Padding(
@@ -1638,6 +1686,49 @@ class _QuickAddContactState extends State<QuickAddContact> {
       country = TextEditingController(text: '91');
   bool busy = false;
   String? error;
+
+  /// The web inbox's country list (`inbox/getCountries`) and the one picked;
+  /// until it loads, or if it cannot, the code is typed instead.
+  List<Json> countries = [];
+  Json? picked;
+
+  @override
+  void initState() {
+    super.initState();
+    loadCountries();
+  }
+
+  Future<void> loadCountries() async {
+    try {
+      final r = await widget.session.api.get('inbox/getCountries');
+      final list = rows(r['data']);
+      if (!mounted || list.isEmpty) return;
+      // The number's own country first, as the web's popover opens on it.
+      final code = '${r['default_code'] ?? country.text}';
+      setState(() {
+        countries = list;
+        picked = list.where((c) => '${c['code']}' == code).firstOrNull;
+        if (picked != null) country.text = '${picked!['code']}';
+      });
+    } catch (_) {
+      /* The typed code still works. */
+    }
+  }
+
+  Future<void> pickCountry() async {
+    final chosen = await showModalBottomSheet<Json>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => CountrySheet(countries),
+    );
+    if (chosen == null || !mounted) return;
+    setState(() {
+      picked = chosen;
+      country.text = '${chosen['code']}';
+    });
+  }
+
   @override
   void dispose() {
     name.dispose();
@@ -1649,12 +1740,28 @@ class _QuickAddContactState extends State<QuickAddContact> {
   String digits(TextEditingController c) =>
       c.text.replaceAll(RegExp(r'[^0-9]'), '');
 
+  /// The web form's checks, with its words.
+  String? invalid() {
+    final number = phone.text.replaceAll(RegExp(r'\s'), '');
+    if (name.text.trim().isEmpty) return 'The Name is required';
+    if (number.isEmpty) return 'The Phone is required';
+    if (number.length < 8) {
+      return 'Phone number must be at least 8 characters long';
+    }
+    if (!RegExp(r'^[0-9]+$').hasMatch(number)) {
+      return 'Phone number must contain only digits';
+    }
+    if (digits(country).isEmpty) return 'Choose a country code';
+    return null;
+  }
+
   Future<void> save() async {
-    final code = digits(country), number = digits(phone);
-    if (name.text.trim().isEmpty || number.isEmpty || code.isEmpty) {
-      setState(() => error = 'Enter a name, country code and phone number.');
+    final problem = invalid();
+    if (problem != null) {
+      setState(() => error = problem);
       return;
     }
+    final code = digits(country), number = digits(phone);
     setState(() {
       busy = true;
       error = null;
@@ -1702,16 +1809,27 @@ class _QuickAddContactState extends State<QuickAddContact> {
             Row(
               children: [
                 SizedBox(
-                  width: 84,
-                  child: AppTextFormField(
-                    controller: country,
-                    keyboardType: TextInputType.phone,
-                    decoration: const InputDecoration(
-                      labelText: 'Code',
-                      hintText: 'Code',
-                      prefixText: '+',
-                    ),
-                  ),
+                  width: countries.isEmpty ? 84 : 108,
+                  child: countries.isEmpty
+                      ? AppTextFormField(
+                          controller: country,
+                          keyboardType: TextInputType.phone,
+                          decoration: const InputDecoration(
+                            labelText: 'Code',
+                            hintText: 'Code',
+                            prefixText: '+',
+                          ),
+                        )
+                      : FieldBox(
+                          key: const ValueKey('country-picker'),
+                          text: picked == null
+                              ? null
+                              : '${picked!['flag'] ?? ''} +${picked!['code']}'
+                                    .trim(),
+                          hint: 'Code',
+                          icon: Icons.arrow_drop_down,
+                          onTap: busy ? null : pickCountry,
+                        ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -1744,6 +1862,70 @@ class _QuickAddContactState extends State<QuickAddContact> {
       ),
     ),
   );
+}
+
+/// The countries to call, searchable by name, letters or code: flag, name,
+/// and dialling code, as the web's country list shows them.
+class CountrySheet extends StatefulWidget {
+  const CountrySheet(this.countries, {super.key});
+  final List<Json> countries;
+  @override
+  State<CountrySheet> createState() => _CountrySheetState();
+}
+
+class _CountrySheetState extends State<CountrySheet> {
+  var query = '';
+  @override
+  Widget build(BuildContext context) {
+    final q = query.trim().toLowerCase().replaceFirst('+', '');
+    final shown = [
+      for (final c in widget.countries)
+        if (q.isEmpty ||
+            '${c['name']}'.toLowerCase().contains(q) ||
+            '${c['alpha2Code']}'.toLowerCase() == q ||
+            '${c['code']}'.startsWith(q))
+          c,
+    ];
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * .7,
+        child: Column(
+          children: [
+            const SheetTitle('Country'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: SearchBox(
+                hint: 'Search country or code',
+                dense: true,
+                onChanged: (v) => setState(() => query = v),
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                itemCount: shown.length,
+                itemBuilder: (_, i) {
+                  final c = shown[i];
+                  return ListTile(
+                    key: ValueKey('country-${c['alpha2Code'] ?? c['id']}'),
+                    leading: Text(
+                      '${c['flag'] ?? ''}',
+                      style: const TextStyle(fontSize: 22),
+                    ),
+                    title: Text('${c['name'] ?? c['alpha2Code'] ?? ''}'),
+                    trailing: Text(
+                      '+${c['code']}',
+                      style: const TextStyle(color: T.secondary),
+                    ),
+                    onTap: () => Navigator.pop(context, c),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// Conversation row matching the approved inbox design, driven by API data:
@@ -1855,7 +2037,12 @@ class LiveConversationRow extends StatelessWidget {
             children: [
               // Recently active customers get WhatsApp's green dot.
               ticket
-                  ? Avatar(name, size: 46, seed: contact['id'])
+                  ? Avatar(
+                      name,
+                      size: 46,
+                      seed: contact['id'],
+                      image: '${contact['profile_url'] ?? ''}',
+                    )
                   // Green while WhatsApp's conversation window is open.
                   : ValueListenableBuilder(
                       valueListenable: knownWindows,
@@ -1865,6 +2052,7 @@ class LiveConversationRow extends StatelessWidget {
                           name,
                           size: 46,
                           seed: contact['id'],
+                          image: '${contact['profile_url'] ?? ''}',
                           online: open,
                         ),
                       ),
@@ -1938,20 +2126,7 @@ class LiveConversationRow extends StatelessWidget {
                               content?.kind != 'missed_call')
                             Padding(
                               padding: const EdgeInsets.only(right: 4),
-                              child: AppIcon(
-                                switch (receipt) {
-                                  0 => Icons.schedule,
-                                  1 => Icons.check,
-                                  4 || 5 => Icons.error_outline,
-                                  _ => Icons.done_all,
-                                },
-                                size: 15,
-                                color: switch (receipt) {
-                                  3 => T.blue,
-                                  4 || 5 => T.danger,
-                                  _ => T.muted,
-                                },
-                              ),
+                              child: DeliveryTick(receipt, size: 15),
                             ),
                           if (kindIcon != null)
                             Padding(

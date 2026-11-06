@@ -234,7 +234,8 @@ void main() {
     );
     expect(find.text('99+'), findsOneWidget);
     expect(find.text('Order shipped'), findsOneWidget);
-    expect(find.byIcon(Icons.done_all), findsOneWidget);
+    // Read: the web's two blue checks.
+    expect(find.byKey(const ValueKey('tick-3')), findsOneWidget);
     for (final label in [
       'Closed',
       'Bot',

@@ -52,6 +52,7 @@ class DetailHero extends StatelessWidget {
     required this.title,
     this.avatar,
     this.avatarSeed,
+    this.avatarImage,
     this.subtitle,
     this.chips = const [],
     this.actions = const [],
@@ -66,6 +67,9 @@ class DetailHero extends StatelessWidget {
 
   /// Picks the avatar's colour, as [Avatar.seed] does; the title by default.
   final Object? avatarSeed;
+
+  /// The customer's profile picture over the initials, as [Avatar.image].
+  final String? avatarImage;
   final List<Widget> chips;
   final List<QuickAction> actions;
   final VoidCallback? onTitleTap;
@@ -110,6 +114,18 @@ class DetailHero extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (profilePicture(avatarImage) case final url?)
+                  ClipOval(
+                    key: const ValueKey('hero-picture'),
+                    child: Image.network(
+                      url,
+                      width: 100,
+                      height: 100,
+                      fit: BoxFit.cover,
+                      cacheWidth: 300,
+                      errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                    ),
+                  ),
                 if (online)
                   Positioned(
                     right: 2,
@@ -224,6 +240,18 @@ extension on DetailHero {
                       ),
                     ),
                   ),
+                  if (profilePicture(avatarImage) case final url?)
+                    ClipOval(
+                      key: const ValueKey('hero-picture'),
+                      child: Image.network(
+                        url,
+                        width: 120,
+                        height: 120,
+                        fit: BoxFit.cover,
+                        cacheWidth: 360,
+                        errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                      ),
+                    ),
                   if (online)
                     Positioned(
                       right: 6,

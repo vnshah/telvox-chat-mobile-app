@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'data.dart';
+import 'delivery_tick.dart';
 import 'theme.dart';
 
 // Count complete emoji sequences, including skin tones, flags and ZWJ families.
@@ -109,6 +110,15 @@ class _MessageText extends StatelessWidget {
   }
 }
 
+/// The web inbox's marks for messages an agent did not type, by
+/// [Message.source].
+const sourceMarks = <int, (IconData, String)>{
+  1: (Icons.campaign_outlined, 'Sent by a broadcast'),
+  2: (Icons.account_tree_outlined, 'Sent by an automation'),
+  3: (Icons.smart_toy_outlined, 'Sent by a chatbot'),
+  4: (Icons.code_rounded, 'Sent through the API'),
+};
+
 /// The time and delivery ticks in a bubble's corner. Public so content that
 /// lays out its own last line (a voice note, a call) can place it there, as
 /// WhatsApp does, instead of on a row of its own.
@@ -133,21 +143,42 @@ class MessageStamp extends StatelessWidget {
             padding: EdgeInsets.only(right: 3),
             child: AppIcon(Icons.star_rounded, size: 10, color: T.brass),
           ),
+        if (message.out ? sourceMarks[message.source] : null case (
+          final IconData icon,
+          final String label,
+        ))
+          Padding(
+            key: ValueKey('message-source-${message.source}'),
+            padding: const EdgeInsets.only(right: 3),
+            child: Tooltip(
+              message: label,
+              child: AppIcon(
+                icon,
+                size: 12,
+                color: T.muted,
+                semanticLabel: label,
+              ),
+            ),
+          ),
         Text(message.time == 'Now' ? 'now' : message.time, style: style),
         if (message.out)
           Padding(
             padding: const EdgeInsets.only(left: 3),
-            child: AppIcon(
-              switch (message.deliveryStatus) {
-                0 => Icons.schedule,
-                2 || 3 => Icons.done_all,
-                4 || 5 => Icons.error_outline,
-                _ => message.read ? Icons.done_all : Icons.check,
-              },
-              size: 15,
-              color: message.read ? T.blue : T.muted,
-              semanticLabel: message.read ? 'Read' : 'Sent',
-            ),
+            // The web inbox's marks: sending, sent, delivered, read (blue),
+            // failed and blocked (red).
+            child: message.failedReason == null
+                ? DeliveryTick(
+                    message.deliveryStatus ?? (message.read ? 3 : 1),
+                    size: 15,
+                  )
+                // Failed: tap the red mark for why, as the web's tooltip.
+                : Tooltip(
+                    key: const ValueKey('failed-reason'),
+                    message: message.failedReason!,
+                    triggerMode: TooltipTriggerMode.tap,
+                    showDuration: const Duration(seconds: 4),
+                    child: DeliveryTick(message.deliveryStatus ?? 4, size: 15),
+                  ),
           ),
       ],
     );

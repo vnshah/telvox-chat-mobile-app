@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../ui/data.dart' show Message;
 import '../ui/theme.dart';
 import 'api.dart';
 import 'offline_bar.dart' show OfflineNote;
 import 'message_content.dart' show MessageContent, readableText;
+import 'media.dart' show MessageMedia;
+import 'media_save.dart';
+import 'message_view.dart' show AudioNote;
 import 'models.dart';
 
 /// A customer's calls on this number, newest first and grouped by day, as the
@@ -250,6 +254,11 @@ Future<void> showCallDetails(BuildContext context, Json call) {
     if (reason.isNotEmpty) ('Reason', reason.replaceAll('_', ' ')),
     if (call['recorded'] == true) ('Recording', 'Recorded'),
   ];
+  // Sent only to viewers the call details report plays recordings for.
+  final recording = Uri.tryParse('${call['recording_url'] ?? ''}');
+  final playable = recording != null && recording.hasScheme
+      ? MessageMedia('audio', recording, 'Call recording')
+      : null;
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -292,6 +301,30 @@ Future<void> showCallDetails(BuildContext context, Json call) {
                   ],
                 ),
               ),
+            if (playable != null) ...[
+              const SizedBox(height: 14),
+              Row(
+                key: const ValueKey('call-recording-player'),
+                children: [
+                  Expanded(
+                    child: AudioNote(
+                      playable,
+                      voice: false,
+                      outgoing: false,
+                      stamp: const Message(''),
+                    ),
+                  ),
+                  DownloadButton(playable),
+                  Builder(
+                    builder: (anchor) => IconButton(
+                      tooltip: 'Save or share',
+                      icon: const Icon(Icons.ios_share_rounded),
+                      onPressed: () => saveMedia(anchor, playable),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 12),
             InkWell(
               onTap: () =>

@@ -30,6 +30,9 @@ class ContactNotes {
       'contact_id': contactId,
       'note': text,
       if (existing != null) 'note_id': existing['id'],
+      // Saving without it would unlink the note from its message.
+      if ('${existing?['message_id'] ?? ''}'.isNotEmpty)
+        'message_id': existing!['message_id'],
     }))['data'],
   );
 
@@ -270,6 +273,9 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
 
   bool get dirty => text.text.trim() != stored;
 
+  /// Made from a chat message with "Add text to note".
+  bool get fromMessage => '${note?['message_id'] ?? ''}'.isNotEmpty;
+
   /// Whether Done was last drawn as enabled.
   var shownDirty = false;
 
@@ -433,7 +439,10 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
                   controller: text,
                   undoController: undo,
                   focusNode: focus,
-                  autofocus: true,
+                  // A note kept from a message reads as that message did;
+                  // the web inbox does not edit it either, only deletes it.
+                  readOnly: fromMessage,
+                  autofocus: !fromMessage,
                   expands: true,
                   maxLines: null,
                   keyboardType: TextInputType.multiline,

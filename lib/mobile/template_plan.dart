@@ -14,10 +14,24 @@ int variableCount(Object? text) =>
 /// Maps editable fields to the existing template-send contract, including its
 /// shared URL suffix and shared carousel-button value (not one per button).
 class TemplatePlan {
-  TemplatePlan(this.template) {
+  TemplatePlan(this.template, {this.trackedLinks = const []}) {
     _build();
   }
   final Json template;
+
+  /// The number's tracked links the agent may point a message at (empty
+  /// without `list-tracked-links`), from the template list.
+  final List<Json> trackedLinks;
+
+  /// What tracked-link fields start on: the template's own links.
+  final defaults = <String, dynamic>{};
+
+  /// Body variables filled by a tracked link, by their number: the server
+  /// writes each contact's own link there, so the agent types nothing.
+  final trackedBody = <String, String>{};
+
+  /// The URL button's tracked link, when it has one.
+  String? trackedButton;
   final inputs = <TemplateInput>[];
   final previews = <String>[];
   final requirements = <String>[];
@@ -49,8 +63,20 @@ class TemplatePlan {
         previews.add('${c['text'] ?? template['body'] ?? ''}');
         bodyCount = variableCount(c['text']);
         if (!auth) {
+          final tracked = object(c['tracked_link_variables']);
           for (var i = 0; i < bodyCount; i++) {
-            add('body.$i', 'Value for {{${i + 1}}}');
+            final link = tracked['${i + 1}'];
+            if (link != null && '$link'.isNotEmpty && '$link' != '0') {
+              trackedBody['${i + 1}'] = '$link';
+              defaults['tracked.body.${i + 1}'] = '$link';
+              add(
+                'tracked.body.${i + 1}',
+                '{{${i + 1}}} — tracked link',
+                kind: 'tracked_link',
+              );
+            } else {
+              add('body.$i', 'Value for {{${i + 1}}}');
+            }
           }
           if (bodyCount > 0) require('body_text');
         }
@@ -86,9 +112,24 @@ class TemplatePlan {
       } else if (type == 'FOOTER') {
         previews.add('${c['text'] ?? ''}');
       } else if (type == 'BUTTONS') {
+        // A tracked link fills the URL button per contact: nothing to type.
+        final tracked = rows(c['buttons'])
+            .where(
+              (b) =>
+                  b['type'] == 'URL' &&
+                  b['tracked_link_id'] != null &&
+                  '${b['tracked_link_id']}'.isNotEmpty,
+            )
+            .firstOrNull;
+        if (tracked != null && !auth) {
+          trackedButton = '${tracked['tracked_link_id']}';
+          defaults['tracked.button'] = trackedButton;
+          add('tracked.button', 'Tracked link', kind: 'tracked_link');
+        }
         for (final button in rows(c['buttons'])) {
           previews.add('${button['text'] ?? button['type']}');
           if (button['type'] == 'URL' &&
+              tracked == null &&
               variableCount(button['url']) > 0 &&
               !auth) {
             add('button.url', 'Button link ending');
@@ -139,6 +180,7 @@ class TemplatePlan {
 
   Json variables(Json values) {
     for (final f in inputs) {
+      if (f.kind == 'tracked_link') continue;
       final value = values[f.key];
       if (value == null || (value is String && value.trim().isEmpty)) {
         throw ApiFailure('Complete ${f.label.toLowerCase()}.');
@@ -161,9 +203,28 @@ class TemplatePlan {
     final result = <String, dynamic>{};
     if (auth) result['otp'] = values['otp'];
     if (!auth && bodyCount > 0) {
-      result['bodyText'] = [
-        for (var i = 0; i < bodyCount; i++) values['body.$i'],
+      // Only the typed values, in order: the server puts each tracked link
+      // back in its own place.
+      final typed = [
+        for (var i = 0; i < bodyCount; i++)
+          if (!trackedBody.containsKey('${i + 1}')) values['body.$i'],
       ];
+      if (typed.isNotEmpty) result['bodyText'] = typed;
+    }
+    // Only a link the agent changed is sent, as the web sends it; the server
+    // uses the template's own otherwise.
+    final bodyLinks = <String, String>{
+      for (final n in trackedBody.keys)
+        if ('${values['tracked.body.$n'] ?? ''}'.isNotEmpty &&
+            '${values['tracked.body.$n']}' != trackedBody[n])
+          n: '${values['tracked.body.$n']}',
+    };
+    if (bodyLinks.isNotEmpty) result['tracked_body_links'] = bodyLinks;
+    final buttonLink = '${values['tracked.button'] ?? ''}';
+    if (trackedButton != null &&
+        buttonLink.isNotEmpty &&
+        buttonLink != trackedButton) {
+      result['tracked_link_id'] = buttonLink;
     }
     if (values.containsKey('header.text')) {
       result['header_text'] = values['header.text'];

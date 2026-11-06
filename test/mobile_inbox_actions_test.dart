@@ -72,6 +72,11 @@ void main() {
     expect(find.text('Remove from favourites'), findsOneWidget);
     await tester.tap(find.text('Close conversation'));
     await tester.pumpAndSettle();
+    // As on the web, closing first offers an optional reason.
+    expect(find.text('Reason, e.g. issue resolved'), findsOneWidget);
+    expect(calls, isNot(contains('inbox/conversation/close')));
+    await tester.tap(find.text('Close').last);
+    await tester.pumpAndSettle();
     expect(calls, contains('inbox/conversation/close'));
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();

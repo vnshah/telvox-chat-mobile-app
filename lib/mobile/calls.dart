@@ -316,6 +316,59 @@ enum CallState {
   ended,
 }
 
+/// What the customer has said about WhatsApp calls from this number, as
+/// the contact records it (from their answer to a call permission request).
+enum CallPermission {
+  /// Allowed for good: asking again is refused by WhatsApp.
+  permanent,
+
+  /// Allowed until [callPermissionStatus]'s expiry.
+  temporary,
+
+  /// Allowed once, but that has run out.
+  expired,
+
+  /// They said no.
+  declined,
+
+  /// Never asked, or never answered.
+  none,
+}
+
+({CallPermission state, DateTime? until}) callPermissionStatus(Json contact) {
+  final answer = '${contact['call_permission'] ?? ''}'.toLowerCase();
+  final permanent =
+      contact['call_permission_permanent'] == true ||
+      '${contact['call_permission_permanent']}' == '1';
+  final until = MobileClock.instant(contact['call_permission_expiration']);
+  if (answer == 'accept') {
+    if (permanent) return (state: CallPermission.permanent, until: null);
+    return until != null && until.isAfter(DateTime.now())
+        ? (state: CallPermission.temporary, until: until)
+        : (state: CallPermission.expired, until: until);
+  }
+  if (answer == 'reject' || answer == 'decline' || answer == 'declined') {
+    return (state: CallPermission.declined, until: null);
+  }
+  return (state: CallPermission.none, until: null);
+}
+
+/// The permission in words: "Allowed permanently", "Allowed until 12 Nov,
+/// 4:30 pm", "Expired", "Declined", "Not given yet".
+String callPermissionLabel(Json contact) {
+  final status = callPermissionStatus(contact);
+  const clock = MobileClock();
+  return switch (status.state) {
+    CallPermission.permanent => 'Allowed permanently',
+    CallPermission.temporary =>
+      'Allowed until ${clock.dayLabel(status.until!.toIso8601String())}, '
+          '${clock.time(status.until!.toIso8601String())}',
+    CallPermission.expired => 'Permission expired',
+    CallPermission.declined => 'Declined',
+    CallPermission.none => 'Not given yet',
+  };
+}
+
 /// Whether this number and contact can be called now, worded for the call
 /// button's tooltip when not.
 ({bool shown, String? blocked}) callEligibility(Json? config, Json contact) {

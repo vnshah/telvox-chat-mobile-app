@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'assignment.dart';
 import 'editors.dart';
 import 'detail_layout.dart';
 import 'media.dart';
@@ -12,7 +13,7 @@ import 'models.dart' show formatPhone;
 import 'screens.dart' show failure, mobileNotice, openPage;
 import 'shared_media.dart';
 import 'call_history.dart';
-import 'calls.dart' show callEligibility;
+import 'calls.dart' show callEligibility, callPermissionLabel;
 import 'conversation_window.dart';
 
 class ContactActionsPage extends StatefulWidget {
@@ -151,62 +152,39 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
     },
   );
 
-  Future<void> setStatus(bool open) => change(
-    'status',
-    () => api.request(
-      'inbox/conversation/${open ? 'reopen' : 'close'}',
-      method: 'POST',
-      data: {'contact_id': widget.id},
-    ),
-    optimistic: () => patchContact({'conversation_status': open ? 1 : 0}),
-  );
-
-  Future<void> status() => showEditorSheet(
-    context,
-    title: 'Conversation status',
-    fields: [
-      EditField(
+  /// Reopens at once; closing first asks for an optional reason, as the web
+  /// inbox's close panel does.
+  Future<void> setStatus(bool open) async {
+    if (open) {
+      return change(
         'status',
-        'Status',
-        value: closed ? 0 : 1,
-        required: true,
-        options: const [
-          {'id': 1, 'name': 'Open'},
-          {'id': 0, 'name': 'Closed'},
-        ],
-      ),
-    ],
-    // The sheet waits for the save; the page shows it the moment it lands.
-    save: (v) async {
-      await api.request(
-        'inbox/conversation/${v['status'] == 0 ? 'close' : 'reopen'}',
-        method: 'POST',
-        data: {'contact_id': widget.id},
+        () => api.request(
+          'inbox/conversation/reopen',
+          method: 'POST',
+          data: {'contact_id': widget.id},
+        ),
+        optimistic: () => patchContact({'conversation_status': 1}),
       );
-      patchContact({'conversation_status': v['status'] == 0 ? 0 : 1});
-    },
-  );
+    }
+    final saved = await closeConversation(context, api, widget.id);
+    if (saved == null || !mounted) return;
+    patchContact({'conversation_status': 0, ...saved});
+  }
+
+  Future<void> status() => setStatus(closed);
 
   Future<void> assign() async {
-    final multi = data!['multiple_assignment_enabled'] == true;
-    final users = rows(data!['users']);
+    final plan = Assignment(data!);
     await showEditorSheet(
       context,
       title: 'Assign contact',
       fields: [
         EditField(
-          multi ? 'user_ids' : 'user_id',
+          plan.multi ? 'user_ids' : 'user_id',
           'Assignee',
-          value: multi
-              ? data!['assigned_user_ids']
-              : number(contact['assigned_to']) ?? 0,
-          multiple: multi,
-          options: multi
-              ? users
-              : [
-                  {'id': 0, 'name': 'Unassigned'},
-                  ...users,
-                ],
+          value: plan.value,
+          multiple: plan.multi,
+          options: plan.options,
         ),
       ],
       save: (v) async {
@@ -214,26 +192,29 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
           await api.request(
             'inbox/contacts/${widget.id}/assign',
             method: 'POST',
-            data: multi
-                ? v
-                : {'user_id': v['user_id'] == 0 ? null : v['user_id']},
+            data: plan.body(v[plan.multi ? 'user_ids' : 'user_id']),
           ),
         );
-        // The server answers with what it saved: the contact and assignee.
-        final saved = object(r['data']);
-        final ids = multi ? List.of(v['user_ids'] as List) : null;
-        patch({
-          if (saved['contact'] is Map)
-            'contact': {...contact, ...object(saved['contact'])},
-          if (!multi) 'assignUser': saved['assignUser'],
-          if (multi) 'assigned_user_ids': ids,
-          if (multi)
-            'assignUser': users
-                .where((u) => ids!.contains(u['id']))
-                .firstOrNull,
-        });
+        applyAssignment(object(r['data']), plan);
       },
     );
+  }
+
+  /// What the server saved for an assignment: the contact and its assignees.
+  void applyAssignment(Json saved, Assignment plan) {
+    final ids = saved['assigned_user_ids'] is List
+        ? List.of(saved['assigned_user_ids'] as List)
+        : null;
+    patch({
+      if (saved['contact'] is Map)
+        'contact': {...contact, ...object(saved['contact'])},
+      if (!plan.multi) 'assignUser': saved['assignUser'],
+      if (plan.multi && ids != null) 'assigned_user_ids': ids,
+      if (plan.multi && ids != null)
+        'assignUser': plan.users
+            .where((u) => ids.contains(u['id']))
+            .firstOrNull,
+    });
   }
 
   Future<void> favourite() {
@@ -242,6 +223,19 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
       'favourite',
       () => api.request('inbox/contacts/${widget.id}/favorite', method: 'POST'),
       optimistic: () => patch({'is_favourite': !now}),
+    );
+  }
+
+  Future<void> toggleMarketing() {
+    final on = number(contact['marketing_otp']) == 1;
+    return change(
+      'marketing',
+      () => api.request(
+        'inbox/contacts/${widget.id}/profile',
+        method: 'POST',
+        data: {'marketing_otp': on ? 0 : 1},
+      ),
+      optimistic: () => patchContact({'marketing_otp': on ? 0 : 1}),
     );
   }
 
@@ -282,43 +276,41 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
         patch({'tags': tags.where((t) => t['id'] != tag['id']).toList()}),
   );
 
+  /// One sheet for tags: search the number's tags and tap one to add it;
+  /// when none matches, "Add new tag" makes the searched name a tag and puts
+  /// it on the contact, so the name is never typed twice.
   Future<void> addTag() async {
-    late final List<Json> options;
-    try {
-      setState(() => saving.add('tags'));
-      options = rows(
-        (await api.get('inbox/tags', query: {'contact_id': widget.id}))['data'],
-      );
-    } catch (e) {
-      if (mounted) mobileNotice(context, e);
-      return;
-    } finally {
-      if (mounted) setState(() => saving.remove('tags'));
-    }
-    if (!mounted) return;
     final have = {for (final t in tags) t['id']};
-    await showEditorSheet(
-      context,
-      title: 'Add tag',
-      fields: [
-        EditField(
-          'tag_id',
-          'Tag',
-          options: [...options.where((o) => !have.contains(o['id']))],
-          required: true,
-        ),
-      ],
-      save: (v) async {
-        await api.request(
+    final added = await showModalBottomSheet<Json>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => TagPickerSheet(
+        load: () async => [
+          for (final t in rows(
+            (await api.get(
+              'inbox/tags',
+              query: {'contact_id': widget.id},
+            ))['data'],
+          ))
+            if (!have.contains(t['id'])) t,
+        ],
+        attached: [for (final t in tags) '${t['name'] ?? ''}'],
+        canCreate: widget.session.canRoute('inbox-shared.tags.add') != false,
+        create: (name) =>
+            api.request('inbox/tags/add', method: 'POST', data: {'name': name}),
+        attach: (tag) => api.request(
           'inbox/contacts/tag/add',
           method: 'POST',
-          data: {'contact_id': widget.id, ...v},
-        );
-        patch({
-          'tags': [...tags, options.firstWhere((o) => o['id'] == v['tag_id'])],
-        });
-      },
+          data: {'contact_id': widget.id, 'tag_id': tag['id']},
+        ),
+      ),
     );
+    if (added != null && mounted) {
+      patch({
+        'tags': [...tags, added],
+      });
+    }
   }
 
   List<Json> get notes => rows(data!['notes']);
@@ -362,9 +354,18 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
         .take(2)
         .map((p) => p[0].toUpperCase())
         .join();
-    final assignee = '${object(data!['assignUser'])['name'] ?? 'Unassigned'}';
+    final plan = Assignment(data!);
+    // As the web's assign button reads: the agent, "N assigned", or Bot.
+    final picked = plan.assignedIds.length;
+    final assignee = plan.multi && picked > 1
+        ? '$picked assigned'
+        : object(data!['assignUser'])['name'] != null
+        ? '${object(data!['assignUser'])['name']}'
+        : plan.botOwned
+        ? 'Bot'
+        : 'Unassigned';
     final favourite = data!['is_favourite'] == true;
-    final canAssign = data!['can_assign_contact'] == true;
+    final canAssign = plan.available;
     final notes = this.notes;
     final latest = notes.isEmpty ? null : readableText(notes.first['content']);
     final shown = name.isEmpty ? formatPhone(c['wa_id']) : name;
@@ -388,6 +389,7 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
           builder: (context, open) => DetailHero(
             avatar: initials.isEmpty ? '?' : initials,
             avatarSeed: widget.id,
+            avatarImage: '${c['profile_url'] ?? ''}',
             title: shown,
             subtitle: formatPhone(c['display_wa_id'] ?? c['wa_id']),
             onTitleTap: editName,
@@ -476,6 +478,14 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
                 ContactFieldsPage(widget.session, widget.id),
               ),
             ),
+            // What the customer has said about calls from this number.
+            if (callEligibility(widget.session.config, contact).shown)
+              DetailRow(
+                key: const ValueKey('call-permission'),
+                icon: Icons.add_call,
+                label: 'WhatsApp calls',
+                value: callPermissionLabel(contact),
+              ),
             if (callEligibility(widget.session.config, contact).shown)
               DetailRow(
                 icon: Icons.history,
@@ -490,37 +500,50 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
               ),
           ],
         ),
-        if (can('dnd') || can('block'))
-          DetailSection(
-            children: [
-              if (can('dnd'))
-                DetailRow(
-                  icon: Icons.do_not_disturb_on_outlined,
-                  label: 'Marketing do not disturb',
-                  subtitle: 'No marketing templates to this contact',
-                  onTap: saving.contains('dnd') ? null : () => toggle('dnd'),
-                  trailing:
-                      spinner('dnd') ??
-                      Switch.adaptive(
-                        value: data!['is_dnd'] == true,
-                        activeTrackColor: T.unread,
-                        onChanged: (_) => toggle('dnd'),
-                      ),
-                ),
-              if (can('block'))
-                DetailRow(
-                  icon: Icons.block,
-                  label: data!['is_blocked'] == true
-                      ? 'Unblock $shown'
-                      : 'Block $shown',
-                  destructive: data!['is_blocked'] != true,
-                  trailing: spinner('block'),
-                  onTap: saving.contains('block')
-                      ? null
-                      : () => toggle('block'),
-                ),
-            ],
-          ),
+        DetailSection(
+          children: [
+            // The web panel's marketing opt-in: the contact's own choice to
+            // get promotional messages, separate from the DND list below.
+            DetailRow(
+              key: const ValueKey('marketing-opt-in'),
+              icon: Icons.campaign_outlined,
+              label: 'Marketing opt-in',
+              subtitle: 'Allow promotional messages to this contact',
+              onTap: saving.contains('marketing') ? null : toggleMarketing,
+              trailing:
+                  spinner('marketing') ??
+                  Switch.adaptive(
+                    value: number(contact['marketing_otp']) == 1,
+                    activeTrackColor: T.unread,
+                    onChanged: (_) => toggleMarketing(),
+                  ),
+            ),
+            if (can('dnd'))
+              DetailRow(
+                icon: Icons.do_not_disturb_on_outlined,
+                label: 'Marketing do not disturb',
+                subtitle: 'No marketing templates to this contact',
+                onTap: saving.contains('dnd') ? null : () => toggle('dnd'),
+                trailing:
+                    spinner('dnd') ??
+                    Switch.adaptive(
+                      value: data!['is_dnd'] == true,
+                      activeTrackColor: T.unread,
+                      onChanged: (_) => toggle('dnd'),
+                    ),
+              ),
+            if (can('block'))
+              DetailRow(
+                icon: Icons.block,
+                label: data!['is_blocked'] == true
+                    ? 'Unblock $shown'
+                    : 'Block $shown',
+                destructive: data!['is_blocked'] != true,
+                trailing: spinner('block'),
+                onTap: saving.contains('block') ? null : () => toggle('block'),
+              ),
+          ],
+        ),
       ],
     );
   }
@@ -563,10 +586,13 @@ class FieldSpec {
 
 /// A contact's custom fields as one form: change any number of them, then
 /// Save sends every change together, or Cancel puts the saved values back.
+/// With [ticketId], the ticket's own values, as the web ticket inbox's
+/// Custom Field tab keeps them (saved by the ticket, not the contact).
 class ContactFieldsPage extends StatefulWidget {
-  const ContactFieldsPage(this.session, this.id, {super.key});
+  const ContactFieldsPage(this.session, this.id, {super.key, this.ticketId});
   final MobileSession session;
   final int id;
+  final int? ticketId;
   @override
   State<ContactFieldsPage> createState() => _ContactFieldsPageState();
 }
@@ -593,13 +619,29 @@ class _ContactFieldsPageState extends State<ContactFieldsPage> {
 
   Future<void> load() async {
     try {
-      final r = await widget.session.api.get(
-        'inbox/custom-fields',
-        query: {'contact_id': widget.id},
-      );
+      final Json next;
+      if (widget.ticketId case final ticket?) {
+        final api = widget.session.api;
+        final defs = await api.post('inbox/getCustomFields', {
+          'ticket_id': ticket,
+        });
+        final values = await api.post('inbox/getCustomFieldValues', {
+          'ticket_id': ticket,
+        });
+        next = {
+          'customFields': rows(defs['data']),
+          'customFieldValues': object(values['data']),
+        };
+      } else {
+        final r = await widget.session.api.get(
+          'inbox/custom-fields',
+          query: {'contact_id': widget.id},
+        );
+        next = object(r['data']);
+      }
       if (mounted) {
         setState(() {
-          data = object(r['data']);
+          data = next;
           error = null;
         });
       }
@@ -732,8 +774,61 @@ class _ContactFieldsPageState extends State<ContactFieldsPage> {
     form = GlobalKey<FormState>();
   });
 
+  /// A ticket field's change, by the web ticket inbox's endpoint for its kind.
+  Future<Json> sendTicket(Json field, int ticket) async {
+    final spec = FieldSpec.of(field);
+    final api = widget.session.api;
+    Object? at(String key) {
+      final input = inputsOf(field).where((i) => i.key == key).firstOrNull;
+      return input == null ? null : current(field, input);
+    }
+
+    final base = {'ticket_id': ticket, 'customFieldId': field['id']};
+    switch (spec.saveAs) {
+      case 'image' || 'file' || 'video':
+        final file = at('file');
+        if (file is! Attachment) return valueOf(field);
+        final r = await api.request(
+          'inbox/storeFileValue',
+          method: 'POST',
+          data: FormData.fromMap({...base, 'file': file.multipart()}),
+        );
+        return object(object(r)['data']);
+      case 'date' || 'date_range':
+        final r = await api.post('inbox/storeDateValue', {
+          ...base,
+          'start': at('start_date'),
+          'end': spec.saveAs == 'date_range' ? at('end_date') : null,
+          'type': spec.saveAs == 'date_range' ? 'range' : 'single',
+        });
+        return object(r['data']);
+      case 'multi_select':
+        final v = at('value');
+        final r = await api.post('inbox/storeMultiValue', {
+          ...base,
+          'value': v is List
+              ? v
+              : [
+                  for (final s in '${v ?? ''}'.split(','))
+                    if (s.trim().isNotEmpty) s.trim(),
+                ],
+        });
+        return object(r['data']);
+      default:
+        // A textarea keeps its whole text; other text is at most 255.
+        final path = switch (spec.saveAs) {
+          'textarea' => 'inbox/storeTextareaValue',
+          'select' => 'inbox/storeSingleValue',
+          _ => 'inbox/storeTextValue',
+        };
+        final r = await api.post(path, {...base, 'value': at('value')});
+        return object(r['data']);
+    }
+  }
+
   /// Sends one field's change; the saved value, or throws.
   Future<Json> send(Json field) async {
+    if (widget.ticketId case final ticket?) return sendTicket(field, ticket);
     final spec = FieldSpec.of(field);
     final body = <String, dynamic>{
       'contact_id': widget.id,
@@ -992,6 +1087,234 @@ class _ContactFieldsPageState extends State<ContactFieldsPage> {
                   ],
                 ),
               ),
+      ),
+    );
+  }
+}
+
+/// Picks a tag for a contact from a searchable list. With a search that no
+/// tag matches, the last row offers to add the searched name as a new tag
+/// (at most 30 characters, as the web's tag form takes); it is made, then
+/// added to the contact like a picked one. Closes with the added tag.
+class TagPickerSheet extends StatefulWidget {
+  const TagPickerSheet({
+    super.key,
+    required this.load,
+    required this.attach,
+    required this.create,
+    this.attached = const [],
+    this.canCreate = true,
+  });
+
+  /// The number's tags not yet on the contact.
+  final Future<List<Json>> Function() load;
+  final Future<Object?> Function(Json tag) attach;
+  final Future<Object?> Function(String name) create;
+
+  /// Names already on the contact: searching one offers no new tag.
+  final List<String> attached;
+  final bool canCreate;
+
+  static const maxName = 30;
+  @override
+  State<TagPickerSheet> createState() => _TagPickerSheetState();
+}
+
+class _TagPickerSheetState extends State<TagPickerSheet> {
+  List<Json>? options;
+  var query = '';
+  Object? saving;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    refresh();
+  }
+
+  Future<void> refresh() async {
+    try {
+      final list = await widget.load();
+      if (mounted) setState(() => options = list);
+    } catch (e) {
+      if (mounted) setState(() => error = '$e');
+    }
+  }
+
+  String name(Json t) => '${t['name'] ?? ''}';
+
+  Future<void> pick(Json tag) async {
+    if (saving != null) return;
+    setState(() {
+      saving = tag['id'];
+      error = null;
+    });
+    try {
+      await widget.attach(tag);
+      if (mounted) Navigator.pop(context, tag);
+    } catch (e) {
+      if (mounted) setState(() => error = '$e');
+    } finally {
+      if (mounted) setState(() => saving = null);
+    }
+  }
+
+  /// Makes the searched name a tag, then adds it. The server does not answer
+  /// with the new tag, so it is found again in the list by its name.
+  Future<void> createAndPick(String text) async {
+    if (saving != null) return;
+    if (text.length > TagPickerSheet.maxName) {
+      setState(
+        () => error =
+            'Tag name must be ${TagPickerSheet.maxName} characters or less',
+      );
+      return;
+    }
+    setState(() {
+      saving = 'new';
+      error = null;
+    });
+    try {
+      await widget.create(text);
+      final list = await widget.load();
+      final made = list
+          .where((t) => name(t).trim().toLowerCase() == text.toLowerCase())
+          .fold<Json?>(
+            null,
+            (best, t) =>
+                best == null ||
+                    (number(t['id']) ?? 0) > (number(best['id']) ?? 0)
+                ? t
+                : best,
+          );
+      if (made == null) {
+        if (mounted) setState(() => options = list);
+        return;
+      }
+      await widget.attach(made);
+      if (mounted) Navigator.pop(context, made);
+    } catch (e) {
+      if (mounted) setState(() => error = '$e');
+    } finally {
+      if (mounted) setState(() => saving = null);
+    }
+  }
+
+  Widget spinner() => const SizedBox(
+    width: 20,
+    height: 20,
+    child: CircularProgressIndicator(strokeWidth: 2),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final list = options;
+    final text = query.trim();
+    final q = text.toLowerCase();
+    final shown = [
+      for (final t in list ?? const <Json>[])
+        if (q.isEmpty || name(t).toLowerCase().contains(q)) t,
+    ];
+    final exists =
+        (list ?? const <Json>[]).any(
+          (t) => name(t).trim().toLowerCase() == q,
+        ) ||
+        widget.attached.any((n) => n.trim().toLowerCase() == q);
+    final offerNew = widget.canCreate && text.isNotEmpty && !exists;
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * .7,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SheetTitle('Add tag'),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: SearchBox(
+                  key: const ValueKey('tag-search'),
+                  hint: widget.canCreate
+                      ? 'Search or add a tag'
+                      : 'Search tags',
+                  dense: true,
+                  onChanged: (v) => setState(() {
+                    query = v;
+                    error = null;
+                  }),
+                ),
+              ),
+              if (error != null && !isOffline(error))
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                  child: Text(error!, style: const TextStyle(color: T.danger)),
+                ),
+              Flexible(
+                child: list == null && error == null
+                    ? const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    : ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final t in shown)
+                            ListTile(
+                              key: ValueKey('choice-${t['id']}'),
+                              leading: const Icon(Icons.sell_outlined),
+                              title: Text(name(t)),
+                              enabled: saving == null,
+                              trailing: saving == t['id'] ? spinner() : null,
+                              onTap: () => pick(t),
+                            ),
+                          if (offerNew)
+                            ListTile(
+                              key: const ValueKey('tag-create'),
+                              leading: const Icon(
+                                Icons.add_circle_outline,
+                                color: T.unread,
+                              ),
+                              title: Text.rich(
+                                TextSpan(
+                                  children: [
+                                    const TextSpan(text: 'Add new tag '),
+                                    TextSpan(
+                                      text: '"$text"',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              enabled: saving == null,
+                              trailing: saving == 'new' ? spinner() : null,
+                              onTap: () => createAndPick(text),
+                            ),
+                          if (shown.isEmpty && !offerNew)
+                            Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Text(
+                                text.isNotEmpty
+                                    ? widget.canCreate
+                                          ? 'This tag is already on the contact.'
+                                          : 'No matching tags.'
+                                    : widget.canCreate
+                                    ? 'No tags yet. Type a name to add one.'
+                                    : 'No tags to add.',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: T.muted),
+                              ),
+                            ),
+                        ],
+                      ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

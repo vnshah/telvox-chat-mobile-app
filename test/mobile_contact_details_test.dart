@@ -98,8 +98,18 @@ void main() {
 
     await tester.tap(find.text('Close'));
     await tester.pumpAndSettle();
+    // The reason sheet: at most 100 characters, trimmed before sending.
+    await tester.enterText(
+      find.byType(AppTextFormField).last,
+      '  issue resolved ',
+    );
+    await tester.tap(find.text('Close').last);
+    await tester.pumpAndSettle();
     expect(find.text('Reopen'), findsOneWidget);
-    expect(requests.map((r) => r.path), contains('inbox/conversation/close'));
+    expect(
+      requests.firstWhere((r) => r.path == 'inbox/conversation/close').data,
+      {'contact_id': 12, 'reason': 'issue resolved'},
+    );
 
     // The server's answers were enough: the contact was loaded once.
     expect(detailLoads(), 1);

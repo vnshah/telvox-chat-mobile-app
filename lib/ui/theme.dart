@@ -522,6 +522,15 @@ String avatarInitials(String name) => name
     .join()
     .toUpperCase();
 
+/// A profile picture's address, or null when there is none to show. The web
+/// inbox loads it straight from WhatsApp's servers, so no headers go with it.
+String? profilePicture(Object? url) {
+  final text = '${url ?? ''}'.trim();
+  return text.startsWith('http://') || text.startsWith('https://')
+      ? text
+      : null;
+}
+
 /// Large initials read best: one letter fills more of the circle than two.
 double avatarLetterSize(double size, String initials) =>
     size * (initials.characters.length > 1 ? .38 : .46);
@@ -534,9 +543,14 @@ class Avatar extends StatelessWidget {
     this.color,
     this.seed,
     this.online = false,
+    this.image,
   });
   final String name;
   final double size;
+
+  /// The customer's WhatsApp profile picture, as the web inbox shows it; the
+  /// initials stay underneath while it loads and when it cannot be loaded.
+  final String? image;
 
   /// What picks the colour, such as the contact's id; the name by default.
   final Object? seed;
@@ -570,6 +584,18 @@ class Avatar extends StatelessWidget {
               ),
             ),
           ),
+          if (profilePicture(image) case final url?)
+            ClipOval(
+              key: const ValueKey('avatar-picture'),
+              child: Image.network(
+                url,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                cacheWidth: (size * 3).round(),
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              ),
+            ),
           if (online)
             Positioned(
               key: const ValueKey('online-dot'),

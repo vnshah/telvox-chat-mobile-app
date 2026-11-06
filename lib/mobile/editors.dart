@@ -15,8 +15,16 @@ class EditField {
     this.lines = 1,
     this.kind = 'text',
     this.hint,
+    this.maxLength,
+    this.help,
   });
   final String key, label;
+
+  /// The most characters a text input takes.
+  final int? maxLength;
+
+  /// A line under the input, such as what the value does.
+  final String? help;
 
   /// text, email, number, password, date, datetime, switch, or `file:kind`.
   final String kind;
@@ -279,6 +287,7 @@ class FieldInput extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               controlAffinity: ListTileControlAffinity.leading,
               title: Text('${option['name']}'),
+              subtitle: optionDetail(option),
               value: (value is List ? value as List : []).contains(
                 option['id'],
               ),
@@ -304,11 +313,28 @@ class FieldInput extends StatelessWidget {
         // The same face and size as the text boxes beside it.
         style: Theme.of(context).textTheme.bodyLarge,
         hint: Text(f.hint ?? 'Choose…'),
+        // The closed box shows the name; the open list adds the detail line.
+        selectedItemBuilder: (_) => [
+          for (final option in f.options!)
+            Text('${option['name']}', overflow: TextOverflow.ellipsis),
+        ],
         items: [
           for (final option in f.options!)
             DropdownMenuItem(
               value: option['id'],
-              child: Text('${option['name']}', overflow: TextOverflow.ellipsis),
+              child: optionDetail(option) == null
+                  ? Text('${option['name']}', overflow: TextOverflow.ellipsis)
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${option['name']}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        optionDetail(option)!,
+                      ],
+                    ),
             ),
         ],
         onChanged: busy ? null : onChanged,
@@ -332,8 +358,11 @@ class FieldInput extends StatelessWidget {
         ),
         _ => multiline ? TextInputType.multiline : null,
       },
+      maxLength: f.maxLength,
       decoration: InputDecoration(
         hintText: f.hint,
+        helperText: f.help,
+        helperMaxLines: 3,
         contentPadding: multiline ? const EdgeInsets.all(14) : null,
       ),
       enabled: enabled,
@@ -624,6 +653,7 @@ class _ChoiceSheetState extends State<ChoiceSheet> {
                       ListTile(
                         key: ValueKey('choice-${o['id']}'),
                         title: Text('${o['name']}'),
+                        subtitle: optionDetail(o),
                         enabled: saving == null,
                         trailing: saving == o['id']
                             ? const SizedBox(
@@ -688,4 +718,16 @@ class _ChoiceSheetState extends State<ChoiceSheet> {
       ),
     );
   }
+}
+
+/// An option's second line, such as an agent's "Manager - Sales"; null when
+/// the option has none.
+Widget? optionDetail(Map option) {
+  final detail = '${option['detail'] ?? ''}';
+  if (detail.isEmpty) return null;
+  return Text(
+    detail,
+    overflow: TextOverflow.ellipsis,
+    style: const TextStyle(fontSize: 12.5, color: T.muted),
+  );
 }

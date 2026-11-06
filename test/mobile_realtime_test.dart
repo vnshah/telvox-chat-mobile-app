@@ -228,6 +228,8 @@ void main() {
       'private-receive.message.7.919999999999',
       'private-receive.reaction.7.919999999999',
       'private-change.log.7.919999999999',
+      // The customer opening a tracked link, for the web's banner.
+      'private-link.clicked.7.12',
     });
 
     // No timer-driven requests while idle.
@@ -254,6 +256,22 @@ void main() {
       find.textContaining('Is my order ready?', findRichText: true),
       findsOneWidget,
     );
+
+    // The customer opens a tracked link: the web's banner, gone in a minute.
+    socket.server('link.clicked', {
+      'contact_master_id': 12,
+      'link_id': 45,
+      'link_name': 'Spring sale',
+      'clicked_at': '2026-10-29T10:06:00+05:30',
+    }, channel: 'private-link.clicked.7.12');
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump();
+    expect(
+      find.textContaining('Clicked Spring sale just now', findRichText: true),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 61));
+    expect(find.byKey(const ValueKey('link-click-banner')), findsNothing);
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();
     session.realtime.stop();

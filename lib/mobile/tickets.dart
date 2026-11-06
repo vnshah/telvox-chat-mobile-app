@@ -1,15 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
 import 'chat.dart' show LiveChat;
+import 'contact_actions.dart' show ContactFieldsPage;
 import 'shared_media.dart' show MediaGalleryPage;
 import 'detail_layout.dart';
 import 'editors.dart';
 import 'models.dart' show MobileClock, formatPhone;
-import 'send_policy.dart' show flag;
+import 'send_policy.dart' show flag, ticketSendDetail;
 import 'realtime.dart';
 import 'screens.dart' show failure, mobileNotice, openPage;
 
@@ -34,7 +36,8 @@ class _TicketPageState extends State<TicketPage> {
     super.initState();
     // Reopening a ticket shows the last details at once while they refresh.
     data = widget.session.viewCache[cacheKey] as Json?;
-    load();
+    // A closed ticket left without a disposition asks for one on opening.
+    load().then((_) => askDisposition()).catchError((_) {});
     // Status, SLA and last activity change as the conversation moves.
     live = widget.session.realtime.listen(
       'ticket.message.${widget.id}',
@@ -146,23 +149,133 @@ class _TicketPageState extends State<TicketPage> {
     ], 'inbox/tickets/${widget.id}/assign');
   });
 
-  void disposition(Json t) => action(() async {
-    final r = await api.get('inbox/tickets/${widget.id}/dispositions');
-    final choices = [
-      for (final c in rows(r['data']))
-        for (final d in rows(c['dispositions']))
-          {...d, 'name': '${c['name']} · ${d['name']}'},
+  /// May this agent change the ticket: theirs, or one of their team's, as
+  /// the web ticket inbox allows it.
+  bool get canEditTicket {
+    final assignee = number(object(data?['ticket'])['assign_user_id']);
+    if (assignee == null || data == null) return false;
+    final team = ticketSendDetail(data!)['child_user_ids'] as List;
+    return assignee == number(widget.session.user?['id']) ||
+        team.contains(assignee);
+  }
+
+  bool get ticketClosed {
+    final t = object(data?['ticket']);
+    return '${t['closed_at'] ?? ''}'.isNotEmpty && flag(t['status_is_closed']);
+  }
+
+  /// The statuses the web offers from here: all when the current one is a
+  /// reopen status; closed and reopen statuses on a closed ticket; on an
+  /// open one, all but the reopen statuses.
+  List<Json> statusChoices(List<Json> statuses) {
+    final current = statuses
+        .where((s) => '${s['id']}' == '${object(data!['ticket'])['status_id']}')
+        .firstOrNull;
+    if (current != null && flag(current['is_reopen'])) return statuses;
+    return [
+      for (final s in statuses)
+        if (ticketClosed
+            ? flag(s['is_closed']) || flag(s['is_reopen'])
+            : !flag(s['is_reopen']))
+          s,
     ];
+  }
+
+  /// A new status; closing one asks what came of it, as the web does.
+  void changeStatus() => action(() async {
+    final r = await api.get('inbox/ticket_metadata');
     if (!mounted) return;
-    await edit('Ticket disposition', [
-      EditField(
-        'disposition_id',
-        'Disposition',
-        value: t['disposition_id'],
-        required: true,
-        options: choices,
+    final statuses = rows(object(r['data'])['statuses']);
+    Json? picked;
+    setState(() => busy = false);
+    await showEditorSheet(
+      context,
+      title: 'Update Status',
+      fields: [
+        EditField(
+          'status_id',
+          'Status',
+          options: statusChoices(statuses),
+          value: object(data!['ticket'])['status_id'],
+          required: true,
+        ),
+      ],
+      save: (v) async {
+        await api.request(
+          'inbox/tickets/${widget.id}/status',
+          method: 'POST',
+          data: v,
+        );
+        picked = statuses.where((s) => s['id'] == v['status_id']).firstOrNull;
+      },
+    );
+    if (picked != null && flag(picked!['is_closed']) && mounted) {
+      await load();
+      // The page waits idle under the question, as under any sheet.
+      if (mounted) await askDisposition(force: true);
+    }
+    if (mounted) setState(() => busy = true);
+  });
+
+  var askedDisposition = false;
+
+  /// What came of a closed ticket: asked when it closes, and when a closed
+  /// ticket without one is opened, of an agent who may change it. Back puts
+  /// it off until the ticket is opened again, as switching tickets does on
+  /// the web; with no dispositions set up there is nothing to ask.
+  Future<void> askDisposition({bool force = false}) async {
+    final t = object(data?['ticket']);
+    if (!mounted || data == null) return;
+    if (!force && (askedDisposition || t['disposition_id'] != null)) return;
+    if (!ticketClosed || !canEditTicket) return;
+    askedDisposition = true;
+    final r = await api.get('inbox/tickets/${widget.id}/dispositions');
+    final categories = [
+      for (final c in rows(r['data']))
+        if (rows(c['dispositions']).isNotEmpty) c,
+    ];
+    if (categories.isEmpty || !mounted) return;
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      isScrollControlled: true,
+      builder: (_) => DispositionSheet(
+        categories: categories,
+        initial: number(t['disposition_id']),
+        save: (id) => api.request(
+          'inbox/tickets/${widget.id}/disposition',
+          method: 'POST',
+          data: {'disposition_id': id},
+        ),
       ),
-    ], 'inbox/tickets/${widget.id}/disposition');
+    );
+    if (saved == true && mounted) await load();
+  }
+
+  void disposition(Json t) => action(() async {
+    setState(() => busy = false);
+    await askDisposition(force: true);
+    // A closed or someone else's ticket: the plain list, as before.
+    if (!ticketClosed || !canEditTicket) {
+      final r = await api.get('inbox/tickets/${widget.id}/dispositions');
+      final choices = [
+        for (final c in rows(r['data']))
+          for (final d in rows(c['dispositions']))
+            {...d, 'name': '${c['name']} · ${d['name']}'},
+      ];
+      if (!mounted) return;
+      await edit('Ticket disposition', [
+        EditField(
+          'disposition_id',
+          'Disposition',
+          value: t['disposition_id'],
+          required: true,
+          options: choices,
+        ),
+      ], 'inbox/tickets/${widget.id}/disposition');
+    }
+    if (mounted) setState(() => busy = true);
   });
 
   void addTag() => action(() async {
@@ -283,13 +396,7 @@ class _TicketPageState extends State<TicketPage> {
               messages,
               primary: true,
             ),
-            QuickAction(
-              Icons.timelapse,
-              'Status',
-              busy
-                  ? null
-                  : () => action(() => choose('status', 'Status', 'statuses')),
-            ),
+            QuickAction(Icons.timelapse, 'Status', busy ? null : changeStatus),
             QuickAction(
               Icons.person_add_alt_1_outlined,
               'Assign',
@@ -309,14 +416,29 @@ class _TicketPageState extends State<TicketPage> {
         DetailSection(
           title: 'Details',
           children: [
+            if ('${t['ticket_number'] ?? ''}'.isNotEmpty)
+              DetailRow(
+                key: const ValueKey('ticket-number'),
+                icon: Icons.confirmation_number_outlined,
+                label: 'Ticket ID',
+                value: '#${t['ticket_number']}',
+                // As the web's copy icon: the number itself, without "#".
+                onTap: () async {
+                  await Clipboard.setData(
+                    ClipboardData(text: '${t['ticket_number']}'),
+                  );
+                  if (context.mounted) {
+                    mobileNotice(context, 'Ticket number copied.');
+                  }
+                },
+                trailing: const AppIcon(Icons.copy_rounded, size: 18),
+              ),
             DetailRow(
               icon: Icons.timelapse,
               tile: closed ? T.muted : T.green,
               label: 'Status',
               value: status.isEmpty ? 'Not set' : status,
-              onTap: busy
-                  ? null
-                  : () => action(() => choose('status', 'Status', 'statuses')),
+              onTap: busy ? null : changeStatus,
             ),
             DetailRow(
               icon: Icons.flag_outlined,
@@ -405,6 +527,20 @@ class _TicketPageState extends State<TicketPage> {
         ),
         DetailSection(
           children: [
+            // The web ticket inbox's Custom Field tab.
+            DetailRow(
+              key: const ValueKey('ticket-custom-fields'),
+              icon: Icons.tune,
+              label: 'Custom fields',
+              onTap: () => openPage(
+                context,
+                ContactFieldsPage(
+                  widget.session,
+                  int.tryParse('${contact['id']}') ?? 0,
+                  ticketId: widget.id,
+                ),
+              ),
+            ),
             DetailRow(
               icon: Icons.perm_media_outlined,
               label: 'Media, documents and links',
@@ -616,4 +752,146 @@ class _CreateTicketPageState extends State<CreateTicketPage> {
             ],
           ),
   );
+}
+
+/// What came of a closed ticket, as the web's disposition panel asks it: a
+/// tab per category, its dispositions as cards, and Save once one is picked.
+class DispositionSheet extends StatefulWidget {
+  const DispositionSheet({
+    super.key,
+    required this.categories,
+    required this.save,
+    this.initial,
+  });
+  final List<Json> categories;
+  final Future<Object?> Function(int id) save;
+  final int? initial;
+  @override
+  State<DispositionSheet> createState() => _DispositionSheetState();
+}
+
+class _DispositionSheetState extends State<DispositionSheet> {
+  late int tab = () {
+    final at = widget.categories.indexWhere(
+      (c) =>
+          rows(c['dispositions']).any((d) => number(d['id']) == widget.initial),
+    );
+    return at < 0 ? 0 : at;
+  }();
+  late int? picked = widget.initial;
+  bool saving = false;
+  String? error;
+
+  Future<void> save() async {
+    final id = picked;
+    if (id == null || saving) return;
+    setState(() {
+      saving = true;
+      error = null;
+    });
+    try {
+      await widget.save(id);
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) setState(() => error = '$e');
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final options = rows(widget.categories[tab]['dispositions']);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Select disposition',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'This ticket is closed. Choose how it ended.',
+              style: TextStyle(fontSize: 13, color: T.secondary),
+            ),
+            const SizedBox(height: 12),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (var i = 0; i < widget.categories.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        key: ValueKey('disposition-tab-$i'),
+                        label: Text('${widget.categories[i]['name'] ?? ''}'),
+                        selected: tab == i,
+                        // Another category starts with nothing picked.
+                        onSelected: (_) => setState(() {
+                          tab = i;
+                          picked = null;
+                        }),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Flexible(
+              child: GridView.count(
+                shrinkWrap: true,
+                crossAxisCount: 2,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                childAspectRatio: 2.8,
+                children: [
+                  for (final d in options)
+                    if (number(d['id']) case final int id)
+                      OutlinedButton(
+                        key: ValueKey('disposition-$id'),
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: picked == id
+                              ? T.greenWash
+                              : Colors.white,
+                          side: BorderSide(
+                            color: picked == id ? T.green : T.hairline,
+                          ),
+                          foregroundColor: T.ink,
+                        ),
+                        // The picked one again lets it go.
+                        onPressed: saving
+                            ? null
+                            : () => setState(
+                                () => picked = picked == id ? null : id,
+                              ),
+                        child: Text(
+                          '${d['name'] ?? ''}',
+                          maxLines: 2,
+                          textAlign: TextAlign.center,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                ],
+              ),
+            ),
+            if (error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(error!, style: const TextStyle(color: T.danger)),
+              ),
+            const SizedBox(height: 12),
+            AppButton.filled(
+              key: const ValueKey('disposition-save'),
+              onPressed: picked == null || saving ? null : save,
+              child: Text(saving ? 'Saving…' : 'Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

@@ -35,7 +35,7 @@ void main() {
                   controller: TextEditingController(),
                   onSend: () {},
                   onAttach: () {},
-                  onQuickReplies: () {},
+                  onQuickReplies: ([_ = '']) {},
                   onVoiceNote: (_) {},
                   onCamera: () {},
                   recorder: recorder,

@@ -74,6 +74,8 @@ enum AttachChoice {
   audio,
   quickReplies,
   templates,
+  product,
+  callPermission,
 }
 
 /// One choice of the attach sheet: a rounded tile in a soft colour.
@@ -91,6 +93,8 @@ typedef _AttachItem = ({
 Future<AttachChoice?> showAttachSheet(
   BuildContext context, {
   required bool templates,
+  bool products = false,
+  bool callPermission = false,
 }) {
   final items = <_AttachItem>[
     (
@@ -135,6 +139,22 @@ Future<AttachChoice?> showAttachSheet(
       tint: Color(0xFFDDF3F0),
       ink: Color(0xFF16958A),
     ),
+    if (products)
+      (
+        choice: AttachChoice.product,
+        icon: Icons.storefront_outlined,
+        label: 'Product',
+        tint: Color(0xFFFFE9E0),
+        ink: Color(0xFFD25A2C),
+      ),
+    if (callPermission)
+      (
+        choice: AttachChoice.callPermission,
+        icon: Icons.add_call,
+        label: 'Call permission',
+        tint: Color(0xFFE2F4E8),
+        ink: Color(0xFF1E8E4E),
+      ),
     if (templates)
       (
         choice: AttachChoice.templates,
@@ -269,7 +289,10 @@ class ChatComposer extends StatefulWidget {
   final String? replyAuthor, replyText;
   final VoidCallback? onCancelReply, onCancelAttachment;
   final Attachment? attachment;
-  final VoidCallback onSend, onAttach, onQuickReplies;
+  final VoidCallback onSend, onAttach;
+
+  /// Opens quick replies, searching what was typed (such as "/").
+  final void Function([String query]) onQuickReplies;
 
   /// The camera beside the clip, as on WhatsApp; hidden while typing.
   final VoidCallback? onCamera;
@@ -639,8 +662,10 @@ class _ChatComposerState extends State<ChatComposer>
                     // "/" opens quick replies, as in the web ticket inbox.
                     onChanged: (v) {
                       if (v == '/') {
+                        // Opens searching "/", as the web picker does:
+                        // the shortcuts.
                         widget.controller.clear();
-                        widget.onQuickReplies();
+                        widget.onQuickReplies('/');
                       } else if (v.trim().isNotEmpty) {
                         widget.onTyping?.call();
                       }

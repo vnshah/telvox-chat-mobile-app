@@ -147,14 +147,14 @@ void main() {
     await send(tester, 'On my way');
     // Sending: shown at once, with the clock.
     expect(bubble('On my way'), findsOneWidget);
-    expect(find.byIcon(Icons.schedule), findsOneWidget);
+    expect(find.byKey(const ValueKey('tick-0')), findsOneWidget);
 
     // The webhook saved it and realtime announced it before the send's own
     // reply came back: the catch-up's row takes the sending bubble's place.
     server.history.add(server.saved(100, 'On my way', server.tempId));
     await catchUp(tester);
     expect(bubble('On my way'), findsOneWidget);
-    expect(find.byIcon(Icons.schedule), findsNothing);
+    expect(find.byKey(const ValueKey('tick-0')), findsNothing);
 
     // The reply arriving late changes nothing.
     server.hold!.complete();
@@ -188,7 +188,7 @@ void main() {
     await send(tester, 'Are you there?');
     await tester.pumpAndSettle();
     expect(bubble('Are you there?'), findsOneWidget);
-    expect(find.byIcon(Icons.error_outline), findsOneWidget);
+    expect(find.byKey(const ValueKey('tick-4')), findsOneWidget);
     expect(find.text('Retry send'), findsOneWidget);
 
     await tester.tap(find.text('Retry send'));
@@ -250,7 +250,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.byIcon(Icons.schedule), findsOneWidget);
+    expect(find.byKey(const ValueKey('tick-0')), findsOneWidget);
 
     // Sent (the server's row, same temporary id): same card, no progress.
     await tester.pumpWidget(
@@ -275,6 +275,6 @@ void main() {
     expect(find.text('Quote-November.pdf'), findsOneWidget);
     expect(find.text('240 KB • PDF'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.byIcon(Icons.schedule), findsNothing);
+    expect(find.byKey(const ValueKey('tick-0')), findsNothing);
   });
 }

@@ -16,10 +16,14 @@ class TemplateSend extends StatefulWidget {
     this.template, {
     super.key,
     this.ticketId,
+    this.trackedLinks = const [],
   });
   final MobileSession session;
   final Json contact, template;
   final int? ticketId;
+
+  /// The tracked links the template list offered (see [TemplatePlan]).
+  final List<Json> trackedLinks;
   @override
   State<TemplateSend> createState() => _TemplateSendState();
 }
@@ -42,10 +46,14 @@ class _TemplateSendState extends State<TemplateSend> {
       final r = await widget.session.api.get(
         'inbox/templates/${widget.template['id']}',
       );
-      final next = TemplatePlan(object(r['data']));
+      final next = TemplatePlan(
+        object(r['data']),
+        trackedLinks: widget.trackedLinks,
+      );
       if (mounted) {
         setState(() {
           plan = next;
+          values = {...next.defaults, ...values};
           error = null;
         });
       }
@@ -169,8 +177,10 @@ class _TemplateSendState extends State<TemplateSend> {
   List<(String, List<TemplateInput>)> get groups {
     final out = <String, List<TemplateInput>>{};
     for (final f in plan!.inputs) {
-      final group = f.key == 'card.button'
+      final group = f.key == 'card.button' || f.key == 'tracked.button'
           ? 'Button'
+          : f.key.startsWith('tracked.body.')
+          ? 'Message'
           : switch (f.key.split('.').first) {
               'header' || 'location' => 'Header',
               'body' || 'otp' => 'Message',
@@ -185,6 +195,7 @@ class _TemplateSendState extends State<TemplateSend> {
   }
 
   Widget field(TemplateInput f) {
+    if (f.kind == 'tracked_link') return trackedField(f);
     if (['image', 'video', 'document'].contains(f.kind)) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
@@ -212,6 +223,58 @@ class _TemplateSendState extends State<TemplateSend> {
           hintText: f.kind == 'datetime' ? '2026-12-31T18:00' : null,
         ),
         onChanged: (v) => changed(f.key, v),
+      ),
+    );
+  }
+
+  /// A tracked link's place: where the message points, picked from the
+  /// number's links, or the template's own named when there is no list.
+  Widget trackedField(TemplateInput f) {
+    final links = plan!.trackedLinks;
+    final current = '${values[f.key] ?? ''}';
+    final button = f.key == 'tracked.button';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (links.isEmpty)
+            Text(
+              '${f.label}: ${links.where((l) => '${l['id']}' == current).firstOrNull?['name'] ?? 'Tracked link'}',
+              key: ValueKey('template-field-${f.key}'),
+            )
+          else
+            DropdownButtonFormField<String>(
+              key: ValueKey('template-field-${f.key}'),
+              initialValue: links.any((l) => '${l['id']}' == current)
+                  ? current
+                  : null,
+              isExpanded: true,
+              decoration: InputDecoration(labelText: f.label),
+              items: [
+                for (final l in links)
+                  DropdownMenuItem(
+                    value: '${l['id']}',
+                    child: Text(
+                      '${l['name'] ?? l['id']}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: (v) {
+                if (v != null) changed(f.key, v);
+              },
+            ),
+          if (button)
+            const Padding(
+              padding: EdgeInsets.only(top: 6),
+              child: Text(
+                'The link is filled per contact, so there is nothing to type. '
+                'Choose where this message points.',
+                style: TextStyle(fontSize: 12.5, color: T.muted),
+              ),
+            ),
+        ],
       ),
     );
   }

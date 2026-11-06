@@ -24,6 +24,11 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"
         tools:node="replace" />
+    <!-- Saving a chat's photo, video or document to the phone: needed only
+         before Android 10; later versions save without a permission. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
     <application
         android:label="Telvox Chat"
         android:name="${applicationName}"

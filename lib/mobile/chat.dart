@@ -15,6 +15,14 @@ import 'calls.dart';
 import 'conversation_search.dart';
 import 'conversation_window.dart';
 import 'api.dart';
+import 'message_notes.dart';
+import 'product_send.dart';
+import 'canned_responses.dart';
+import 'split_ticket.dart';
+import 'tickets.dart' show TicketPage;
+import 'media_save.dart' show DownloadRefused, downloadMedia;
+import 'notes.dart' show NotesPage;
+import 'assignment.dart';
 import 'models.dart';
 import 'screens.dart';
 import 'media.dart';
@@ -27,7 +35,7 @@ import 'message_content.dart' show readableText;
 import 'templates.dart';
 import 'message_info.dart';
 import 'message_view.dart';
-import 'editors.dart' show EditField, showEditorSheet;
+import 'editors.dart' show EditField, confirmAction, showEditorSheet;
 import 'location.dart';
 import 'maps.dart';
 import 'send_policy.dart';
@@ -96,24 +104,232 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   bool picking = false;
   Json? detail, ticket;
   bool detailsBusy = false, showLoading = false;
-  bool windowRejected = false, reopening = false;
+  bool windowRejected = false, reopening = false, takingOver = false;
+
+  /// Choosing messages to split off into a new ticket.
+  bool splitting = false;
+  final splitIds = <int>{};
+
+  bool get canSplit {
+    final s = widget.session;
+    return widget.ticketId != null &&
+        s.canRoute('ticket-inbox-api.split') != false &&
+        s.canRoute('ticket-inbox-api.create-metadata') != false;
+  }
+
+  /// A sent or received message, as the web lets one be split off; not the
+  /// conversation's log lines, nor one still sending.
+  bool splittable(ApiMessage m) =>
+      !m.log &&
+      (m.outgoing || number(m.json['type']) == 2) &&
+      number(m.id) != null;
+
+  void startSplit() => setState(() {
+    unselect();
+    splitting = true;
+    splitIds.clear();
+  });
+
+  void stopSplit() => setState(() {
+    splitting = false;
+    splitIds.clear();
+  });
+
+  void toggleSplit(ApiMessage m) => setState(() {
+    final id = number(m.id)!;
+    splitIds.contains(id) ? splitIds.remove(id) : splitIds.add(id);
+  });
+
+  AppBar splitBar() => AppBar(
+    key: const ValueKey('split-bar'),
+    shape: const Border(bottom: BorderSide(color: T.hairline)),
+    leading: IconButton(
+      tooltip: 'Cancel',
+      icon: const Icon(Icons.close),
+      onPressed: stopSplit,
+    ),
+    title: const Text('Select messages'),
+    actions: [
+      Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: AppButton.filled(
+          key: const ValueKey('split-selected'),
+          onPressed: splitIds.isEmpty ? null : splitSelected,
+          child: Text('Split (${splitIds.length})'),
+        ),
+      ),
+    ],
+  );
+
+  Future<void> splitSelected() async {
+    final ids = [
+      for (final m in messages)
+        if (number(m.id) case final int id when splitIds.contains(id)) id,
+    ];
+    final made = await openPage<Json>(
+      context,
+      SplitTicketPage(widget.session, widget.ticketId!, ids),
+    );
+    if (made == null || !mounted) return;
+    stopSplit();
+    mobileNotice(
+      context,
+      'Ticket #${made['ticket_number'] ?? ''} created with ${ids.length} '
+      'message${ids.length == 1 ? '' : 's'}',
+    );
+    // The new ticket opens, as on the web.
+    final id = number(made['id']);
+    if (id != null) await openPage(context, TicketPage(widget.session, id));
+  }
+
+  /// The ticket's internal notes, oldest first.
+  List<Json> get ticketNotes =>
+      widget.ticketId == null ? const [] : rows(detail?['ticket_notes']);
+
+  /// Where each note goes in the conversation, as the web places them: a
+  /// note made from a message right after it; any other after the last
+  /// message sent before it (before the first message when it is older).
+  /// Keyed by message id; [notesBeforeAll] holds those before the first.
+  ({List<Json> first, Map<String, List<Json>> after}) get notePlaces {
+    if (identical(_placedFor, messages) && identical(_placedNotes, detail)) {
+      return _places;
+    }
+    _placedFor = messages;
+    _placedNotes = detail;
+    final first = <Json>[];
+    final after = <String, List<Json>>{};
+    final byWamid = {
+      for (final m in messages)
+        if (m.wamid.isNotEmpty) m.wamid: m,
+    };
+    for (final n in ticketNotes) {
+      final anchor = byWamid['${n['message_id'] ?? ''}'];
+      if (anchor != null) {
+        (after[anchor.id] ??= []).add(n);
+        continue;
+      }
+      final at = MobileClock.instant(n['created_at']);
+      ApiMessage? before;
+      for (final m in messages) {
+        final t = MobileClock.instant(m.json['created_at']);
+        if (at == null || t == null || t.isAfter(at)) break;
+        before = m;
+      }
+      before == null ? first.add(n) : (after[before.id] ??= []).add(n);
+    }
+    return _places = (first: first, after: after);
+  }
+
+  var _places = (first: <Json>[], after: <String, List<Json>>{});
+  List<ApiMessage>? _placedFor;
+  Json? _placedNotes;
+
+  /// The web's rule for changing a note in the conversation: an open ticket,
+  /// a note this agent (or their number) wrote; one made from a message is
+  /// only removed, never edited.
+  bool mayChangeNote(Json n, {bool edit = false}) {
+    final me = '${widget.session.user?['id'] ?? ''}';
+    final mine =
+        '${n['user_id'] ?? ''}' == me || '${n['waba_user_id'] ?? ''}' == me;
+    if (ticketClosed || !mine) return false;
+    return !edit || '${n['message_id'] ?? ''}'.isEmpty;
+  }
+
+  Future<void> editNote(Json n) async {
+    await showEditorSheet(
+      context,
+      title: 'Edit note',
+      fields: [
+        EditField(
+          'note',
+          'Note',
+          value: n['content'],
+          required: true,
+          lines: 4,
+          maxLength: 5000,
+        ),
+      ],
+      save: (v) => widget.session.api.request(
+        'inbox/ticket/${widget.ticketId}/notes/${n['id']}',
+        method: 'PUT',
+        data: {'note': '${v['note'] ?? ''}'.trim()},
+      ),
+    );
+    if (mounted) await details();
+  }
+
+  Future<void> deleteNote(Json n) async {
+    if (!await confirmAction(
+      context,
+      'Delete note',
+      'Delete this internal ticket note?',
+    )) {
+      return;
+    }
+    try {
+      await widget.session.api.request(
+        'inbox/ticket/${widget.ticketId}/notes/${n['id']}',
+        method: 'DELETE',
+      );
+      if (mounted) await details();
+    } catch (e) {
+      if (mounted) mobileNotice(context, e);
+    }
+  }
+
+  Widget noteBubble(Json n) => TicketNoteBubble(
+    n,
+    onEdit: mayChangeNote(n, edit: true) ? () => editNote(n) : null,
+    onDelete: mayChangeNote(n) ? () => deleteNote(n) : null,
+  );
+
+  /// The ticket's number, as the web ticket header shows it.
+  String get ticketNumber => '${ticket?['ticket_number'] ?? ''}';
+
+  /// Closed, as the web ticket inbox reads it: a closed time and a closed
+  /// status.
+  bool get ticketClosed =>
+      ticket != null &&
+      '${ticket!['closed_at'] ?? ''}'.isNotEmpty &&
+      flag(ticket!['status_is_closed']);
+
+  /// Copies the number as it is, without the "#".
+  Future<void> copyTicketNumber() async {
+    await Clipboard.setData(ClipboardData(text: ticketNumber));
+    if (mounted) mobileNotice(context, 'Ticket number copied.');
+  }
+
   bool get closed =>
       widget.ticketId == null &&
       number(object(detail?['contact'])['conversation_status']) == 0;
   String get cacheKey =>
       "chat:${widget.session.api.wabaId}:$contactId:${widget.ticketId}";
   String get detailKey => 'detail:$cacheKey';
-  SendPolicy get policy => windowRejected
-      ? SendPolicy(
-          "Messaging window closed. Send an approved template, or wait for a new customer message.",
-          SendPolicy.evaluate(
-            widget.session,
-            detail,
-            ticket: ticket,
-          ).canTemplate,
-          null,
-        )
-      : SendPolicy.evaluate(widget.session, detail, ticket: ticket);
+  SendPolicy get policy {
+    final base = SendPolicy.evaluate(widget.session, detail, ticket: ticket);
+    if (!windowRejected) return base;
+    return SendPolicy(
+      "Messaging window closed. Send an approved template, or wait for a new customer message.",
+      base.canTemplate,
+      null,
+      windowClosed: base.canSend || base.windowClosed,
+    );
+  }
+
+  /// The number's Direct Send settings, from the inbox's own configuration.
+  Json get directSend => object(
+    object(object(widget.session.config?['inbox'])['waba_user'])['direct_send'],
+  );
+
+  /// The web's Direct Send: a message without a template after the window
+  /// closes, for numbers Meta has onboarded to it, in the shared inbox only,
+  /// and only where the window is all that stops a reply.
+  bool get canDirectSend =>
+      widget.ticketId == null &&
+      directSend['available'] == true &&
+      widget.session.canSendType('direct_send') != false &&
+      policy.windowClosed;
+
   String? error, sync;
   // `busy` guards overlapping requests and is not display state; quiet
   // refreshes must not rebuild the screen just to toggle it. `again` records a
@@ -248,8 +464,10 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
 
   /// The contact as the call rules read it: the list row, updated by details.
   Json get callContact => {...widget.contact, ...object(detail?['contact'])};
+
+  /// Calling works the same in a ticket chat as in the shared inbox, as on
+  /// the web: the call is with the ticket's customer.
   bool get callable =>
-      widget.ticketId == null &&
       callEligibility(widget.session.config, callContact).blocked == null &&
       callEligibility(widget.session.config, callContact).shown;
   String get phone => '${widget.contact['wa_id'] ?? ''}';
@@ -280,6 +498,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     openConversation();
     details();
     subscribeLive();
+    // Known before the attach sheet opens, so Product shows without a wait.
+    if (canSendProducts) unawaited(hasCatalogues());
     focus(true);
     widget.session.visibleConversation = visibleKey;
     widget.session.visibleContacts.add('contact:$contactId');
@@ -299,7 +519,11 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     final realtime = widget.session.realtime;
     final waba = widget.session.api.wabaId;
     final channels = widget.ticketId != null
-        ? ['ticket.message.${widget.ticketId}']
+        ? [
+            'ticket.message.${widget.ticketId}',
+            // Notes added, edited or removed, by anyone on the ticket.
+            'ticket.${widget.ticketId}',
+          ]
         : phone.isEmpty || waba == null
         ? <String>[]
         : [
@@ -314,11 +538,43 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       live.add(
         realtime.listen(
           channel,
-          (event, _) => liveRefresh(details: event == 'change.log.created'),
+          (event, _) => liveRefresh(
+            details:
+                event == 'change.log.created' || event.contains('TicketNote'),
+          ),
           onResync: () => liveRefresh(details: true),
         ),
       );
     }
+    // The customer opening a tracked link, live, as the web chat shows it.
+    // Not kept joined: the banner belongs to this visit to the chat.
+    if (widget.ticketId == null && waba != null) {
+      live.add(
+        realtime.listen('link.clicked.$waba.$contactId', (event, data) {
+          if (event != 'link.clicked') return;
+          final body = object(decoded(data));
+          final payload = body['data'] is Map ? object(body['data']) : body;
+          final name = '${payload['link_name'] ?? ''}'.trim();
+          if (name.isNotEmpty) showLinkClick(name);
+        }),
+      );
+    }
+  }
+
+  /// The tracked link the customer just opened; gone after a minute.
+  String? linkClicked;
+  Timer? linkClickTimer;
+
+  void showLinkClick(String name) {
+    if (!mounted) return;
+    linkClickTimer?.cancel();
+    setState(() => linkClicked = name);
+    linkClickTimer = Timer(const Duration(seconds: 60), dismissLinkClick);
+  }
+
+  void dismissLinkClick() {
+    linkClickTimer?.cancel();
+    if (mounted && linkClicked != null) setState(() => linkClicked = null);
   }
 
   bool _detailsWanted = false;
@@ -388,6 +644,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     widget.session.visibleContacts.remove('contact:$contactId');
     liveDebounce?.cancel();
     highlightTimer?.cancel();
+    linkClickTimer?.cancel();
     for (final sub in live) {
       sub.cancel();
     }
@@ -414,7 +671,11 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           }))['data'],
         );
         nextTicket = object(data['ticket']);
-        nextDetail = ticketSendDetail(data);
+        nextDetail = {
+          ...ticketSendDetail(data),
+          // Drawn in the conversation, as the web ticket inbox shows them.
+          'ticket_notes': data['ticket_notes'],
+        };
       } else {
         nextDetail = object(
           (await widget.session.api.post('inbox/getContactDetails', {
@@ -825,7 +1086,15 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       : '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}';
 
   Future<void> attachMenu(bool canTemplate) async {
-    final choice = await showAttachSheet(context, templates: canTemplate);
+    // Product only where the number has a catalogue to send from.
+    final products = canSendProducts && await hasCatalogues();
+    if (!mounted) return;
+    final choice = await showAttachSheet(
+      context,
+      templates: canTemplate,
+      products: products,
+      callPermission: canAskToCall,
+    );
     if (!mounted || choice == null) return;
     switch (choice) {
       case AttachChoice.document:
@@ -842,7 +1111,46 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         quickReplies();
       case AttachChoice.templates:
         templates();
+      case AttachChoice.product:
+        sendProduct();
+      case AttachChoice.callPermission:
+        askToCall();
     }
+  }
+
+  /// Whether the number has at least one catalogue connected. Asked once per
+  /// number and kept for the session; a failed check offers no Product.
+  Future<bool> hasCatalogues() async {
+    final key = 'catalogues:${widget.session.api.wabaId}';
+    final known = widget.session.viewCache[key];
+    if (known is bool) return known;
+    try {
+      final r = await widget.session.api.get('inbox/get-catalogues');
+      final has = rows(r['catalogues']).isNotEmpty;
+      widget.session.viewCache[key] = has;
+      return has;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// The web composer's Product: the shared inbox only (the ticket composer
+  /// has none), where the number may send product messages and read its
+  /// catalogues and products.
+  bool get canSendProducts {
+    final s = widget.session;
+    return widget.ticketId == null &&
+        s.canSendType('single_product') != false &&
+        s.canRoute('inbox.catalogues') != false &&
+        s.canRoute('inbox.products') != false;
+  }
+
+  Future<void> sendProduct() async {
+    final fields = await openPage<Json>(
+      context,
+      ProductSendPage(widget.session),
+    );
+    if (fields != null && mounted) queue(fields);
   }
 
   /// A recorded voice note goes straight out, like WhatsApp's release-to-send.
@@ -936,13 +1244,15 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   }
 
   /// Whether this number may ask the customer for permission to call.
+  /// Not once the customer has allowed calls for good: WhatsApp refuses
+  /// to ask again ("A permanent permission has already been approved").
   bool get canAskToCall =>
-      widget.session.canSendType('call_permission_request') ??
-      callEligibility(widget.session.config, widget.contact).shown;
+      (widget.session.canSendType('call_permission_request') ??
+          callEligibility(widget.session.config, callContact).shown) &&
+      callPermissionStatus(callContact).state != CallPermission.permanent;
 
-  /// Share a place picked on the map, ask the customer for their location
-  /// (WhatsApp gives them a "Send location" button), or ask permission to
-  /// call them.
+  /// Share a place picked on the map, or ask the customer for their location
+  /// (WhatsApp gives them a "Send location" button) or delivery address.
   Future<void> shareLocation() async {
     if (!policy.canSend) {
       mobileNotice(context, policy.reason!);
@@ -967,12 +1277,13 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
               subtitle: const Text('They get a button to share it'),
               onTap: () => Navigator.pop(context, 'ask'),
             ),
-            if (canAskToCall)
+            if (widget.session.canSendType('address') != false)
               ListTile(
-                leading: const Icon(Icons.add_call),
-                title: const Text('Ask permission to call'),
-                subtitle: const Text('They choose whether you can call them'),
-                onTap: () => Navigator.pop(context, 'call'),
+                key: const ValueKey('ask-address'),
+                leading: const Icon(Icons.home_work_outlined),
+                title: const Text('Ask for their address'),
+                subtitle: const Text('They fill in a delivery address form'),
+                onTap: () => Navigator.pop(context, 'address'),
               ),
           ],
         ),
@@ -986,14 +1297,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           'Please share your location.',
         );
         if (body != null) queue({'message_type': 'location', 'body': body});
-      case 'call':
-        final body = await askText(
-          'Ask permission to call',
-          'Can we call you on WhatsApp about your request?',
-        );
-        if (body != null) {
-          queue({'message_type': 'call_permission_request', 'body': body});
-        }
+      case 'address':
+        await askAddress();
       default:
         final location = await openPage<Json>(
           context,
@@ -1009,9 +1314,162 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
+  /// WhatsApp's address form, as the web's "Ask for their address" sends it:
+  /// the country the form is for (WhatsApp offers it for India, Singapore
+  /// and Brazil), the message, and an optional header and footer.
+  Future<void> askAddress() async {
+    Json? picked;
+    await showEditorSheet(
+      context,
+      title: 'Ask for their address',
+      submit: 'Send',
+      fields: const [
+        EditField(
+          'address_country',
+          'Country',
+          required: true,
+          hint: 'Search address country',
+          options: [
+            {'id': 'IN', 'name': 'India'},
+            {'id': 'SG', 'name': 'Singapore'},
+            {'id': 'BR', 'name': 'Brazil'},
+          ],
+        ),
+        EditField('header', 'Header', hint: 'Enter Header'),
+        EditField(
+          'body',
+          'Message',
+          required: true,
+          lines: 3,
+          hint: 'Add your message...',
+        ),
+        EditField('footer', 'Footer', hint: 'Enter Footer'),
+      ],
+      save: (v) async => picked = v,
+    );
+    final v = picked;
+    if (v == null || !mounted) return;
+    String? optional(Object? text) {
+      final t = '${text ?? ''}'.trim();
+      return t.isEmpty ? null : t;
+    }
+
+    queue({
+      'message_type': 'address',
+      'body': '${v['body'] ?? ''}'.trim(),
+      'address_country': v['address_country'],
+      'header': optional(v['header']),
+      'footer': optional(v['footer']),
+    });
+  }
+
+  /// A message without a template once the window has closed (the web's
+  /// "Send a message"): utility or authentication content, which Meta turns
+  /// into a matching template, within the number's limits.
+  Future<void> directMessage() async {
+    final config = directSend;
+    final limit = number(object(config['limits'])['body']) ?? 1024;
+    final naming = object(config['template_name']);
+    final nameMax = number(naming['max_length']) ?? 512;
+    final nameable = [
+      for (final c in (naming['categories'] as List?) ?? const ['utility'])
+        '$c',
+    ];
+    final categories = [
+      for (final c
+          in (config['categories'] as List?) ??
+              const ['utility', 'authentication'])
+        {
+          'id': '$c',
+          'name': '$c'.isEmpty ? '' : '$c'[0].toUpperCase() + '$c'.substring(1),
+        },
+    ];
+    Json? picked;
+    await showEditorSheet(
+      context,
+      title: 'Send a message',
+      submit: 'Send',
+      fields: [
+        EditField(
+          'category',
+          'Category',
+          value: 'utility',
+          required: true,
+          options: categories,
+          help:
+              'Meta generates a matching template from this message. Utility and '
+              'authentication content only — sending marketing content this way '
+              'puts this number\'s Direct Send access at risk.',
+        ),
+        EditField(
+          'body',
+          'Message',
+          required: true,
+          lines: 4,
+          maxLength: limit,
+          hint: 'Your order #12345 has shipped and arrives on Friday.',
+        ),
+        EditField(
+          'template_name',
+          'Template name (optional)',
+          maxLength: nameMax,
+          hint: 'e.g. order_shipment_update',
+          help: 'Utility messages only. Lowercase letters, numbers and _.',
+        ),
+      ],
+      save: (v) async {
+        final name = '${v['template_name'] ?? ''}'.trim();
+        if (name.isNotEmpty) {
+          if (!nameable.contains(v['category'])) {
+            throw const ApiFailure(
+              'A template name can be given for utility messages only.',
+            );
+          }
+          if (!RegExp(r'^[a-z0-9_]+$').hasMatch(name)) {
+            throw const ApiFailure(
+              'Use lowercase letters, numbers and underscores in the template name.',
+            );
+          }
+        }
+        picked = v;
+      },
+    );
+    final v = picked;
+    if (v == null || !mounted) return;
+    final name = '${v['template_name'] ?? ''}'.trim();
+    queue({
+      'message_type': 'text',
+      'body': '${v['body'] ?? ''}'.trim(),
+      'direct_send_category': v['category'],
+      'direct_send_template_name': name.isEmpty ? null : name,
+    });
+  }
+
+  /// WhatsApp's call permission request: the customer chooses whether this
+  /// number may call them (WhatsApp calls need their consent first), as the
+  /// web's "Ask permission to call" sends it.
+  Future<void> askToCall() async {
+    if (!policy.canSend) {
+      mobileNotice(context, policy.reason!);
+      return;
+    }
+    final body = await askText(
+      'Ask permission to call',
+      'Can we call you on WhatsApp about your request?',
+      help: 'Calls from this number: ${callPermissionLabel(callContact)}',
+    );
+    if (body != null) {
+      queue({'message_type': 'call_permission_request', 'body': body});
+    }
+  }
+
   /// The message a request goes with, written by the agent; WhatsApp needs
   /// one. Null when closed.
-  Future<String?> askText(String title, String suggested) async {
+  Future<String?> askText(
+    String title,
+    String suggested, {
+    String? help,
+  }) async {
     String? text;
     await showEditorSheet(
       context,
@@ -1025,6 +1483,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           required: true,
           lines: 3,
           hint: 'Message',
+          help: help,
         ),
       ],
       save: (v) async => text = '${v['body']}'.trim(),
@@ -1139,7 +1598,9 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     if (item.sending || item.accepted) return;
     // The bubble keeps drawing this file once the server's row replaces it.
     if (item.attachment case final Attachment file) sentFiles[item.key] = file;
-    if (!policy.canSend) {
+    // Direct Send goes out past the closed window, as the server allows it.
+    final direct = item.body['direct_send_category'] != null && canDirectSend;
+    if (!policy.canSend && !direct) {
       mobileNotice(context, policy.reason!);
       return;
     }
@@ -1221,7 +1682,16 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
-  bool canReply(ApiMessage m) => policy.canSend && m.wamid.isNotEmpty;
+  /// As on the web, product messages and orders take no reply.
+  bool canReply(ApiMessage m) =>
+      policy.canSend &&
+      m.wamid.isNotEmpty &&
+      !const {
+        'interactiveSingleProduct',
+        'interactiveMultipleProduct',
+        'interactiveCatalogue',
+        'order',
+      }.contains(m.type);
   bool canReact(ApiMessage m) => m.wamid.isNotEmpty;
   bool hasInfo(ApiMessage m) => m.outgoing && m.wamid.isNotEmpty;
 
@@ -1236,8 +1706,79 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         await Clipboard.setData(ClipboardData(text: m.text));
       case 'info':
         await showMessageInfo(context, m);
+      case 'download':
+        await download(m);
+      case 'note':
+        await keepAsNote(m);
+      case 'view-note':
+        await viewNotes();
     }
   }
+
+  /// The file a message carries, for Download; null for one without.
+  MessageMedia? fileOf(ApiMessage m) =>
+      m.id.startsWith('pending:') || m.type == 'sticker'
+      ? null
+      : MessageMedia.fromMessage(
+          m.json,
+          widget.session.api.dio.options.baseUrl,
+        );
+
+  Future<void> download(ApiMessage m) async {
+    final file = fileOf(m);
+    if (file == null) return;
+    try {
+      final where = await downloadMedia(file);
+      if (mounted) mobileNotice(context, where);
+    } catch (e) {
+      if (mounted) {
+        mobileNotice(
+          context,
+          e is DownloadRefused ? '$e' : 'The file could not be saved.',
+        );
+      }
+    }
+  }
+
+  List<Json> get notes => rows(detail?['notes']);
+
+  /// The web's "Add text to note": shared-inbox chats only, where the
+  /// number's notes are allowed.
+  bool canNote(ApiMessage m) =>
+      widget.ticketId == null &&
+      detail != null &&
+      widget.session.canRoute('inbox.notes.store') != false &&
+      supportsNote(m);
+
+  /// Keeps [m]'s text as a note on the contact, linked to the message.
+  Future<void> keepAsNote(ApiMessage m) async {
+    try {
+      final saved = rows(
+        (await widget.session.api.post('inbox/notes', {
+          'contact_id': contactId,
+          'note': noteText(m),
+          'message_id': m.wamid,
+        }))['data'],
+      );
+      if (!mounted) return;
+      setState(() => detail = {...?detail, 'notes': saved});
+      mobileNotice(context, 'The note has been added successfully.');
+    } catch (e) {
+      if (mounted) mobileNotice(context, e);
+    }
+  }
+
+  Future<void> viewNotes() => openPage(
+    context,
+    NotesPage(
+      widget.session,
+      contactId,
+      initial: notes,
+      onChanged: (next) {
+        if (mounted) setState(() => detail = {...?detail, 'notes': next});
+      },
+    ),
+  );
 
   Future<void> moreReactions(ApiMessage m) async {
     setState(() => reacting = false);
@@ -1326,6 +1867,27 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
         icon: const Icon(Icons.copy_rounded),
         onPressed: () => selectedAction('copy'),
       ),
+      if (fileOf(m) != null)
+        IconButton(
+          key: const ValueKey('selection-download'),
+          tooltip: 'Download',
+          icon: const Icon(Icons.download_rounded),
+          onPressed: () => selectedAction('download'),
+        ),
+      if (canNote(m))
+        noteFor(m, notes) == null
+            ? IconButton(
+                key: const ValueKey('selection-note'),
+                tooltip: 'Add text to note',
+                icon: const Icon(Icons.note_add_outlined),
+                onPressed: () => selectedAction('note'),
+              )
+            : IconButton(
+                key: const ValueKey('selection-view-note'),
+                tooltip: 'View note',
+                icon: const Icon(Icons.sticky_note_2_outlined),
+                onPressed: () => selectedAction('view-note'),
+              ),
       if (hasInfo(m))
         IconButton(
           key: const ValueKey('selection-info'),
@@ -1432,6 +1994,25 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     }
   }
 
+  /// The bot's chat taken by this agent, as the web's Take over does: the
+  /// chat is assigned to them (beside its other agents when it can have
+  /// several), which ends the bot's part in it.
+  Future<void> takeOver() async {
+    if (takingOver || detail == null) return;
+    setState(() => takingOver = true);
+    try {
+      await widget.session.api.post(
+        'inbox/contacts/$contactId/assign',
+        Assignment(detail!).takeOverBody(widget.session.user?['id']),
+      );
+      await details();
+    } catch (e) {
+      if (mounted) mobileNotice(context, e);
+    } finally {
+      if (mounted) setState(() => takingOver = false);
+    }
+  }
+
   /// Customer details in the shared inbox; a ticket chat always sits on its
   /// ticket's details (as the web ticket inbox pairs them), so it returns.
   Future<void> openContact() async {
@@ -1451,54 +2032,85 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     if (mounted) details();
   }
 
-  Future<List<Json>> fetchQuickReplies(String key) async {
+  Future<Json> fetchQuickReplies(String key) async {
     final result = await widget.session.api.get('inbox/canned-responses');
     final data = object(result['data']);
-    final list = [
-      ...rows(data['uncategorised']),
-      for (final c in rows(data['categories'])) ...rows(c['responses']),
-    ];
-    widget.session.viewCache[key] = list;
-    return list;
+    widget.session.viewCache[key] = data;
+    return data;
   }
 
-  Future<void> quickReplies() async {
+  /// Quick replies (canned responses), as the web ticket composer offers
+  /// them; [query] is what was typed, such as "/".
+  Future<void> quickReplies([String query = '']) async {
     try {
-      final key = 'quick:${widget.session.api.wabaId}';
-      final cached = widget.session.viewCache[key] as List<Json>?;
+      final key = 'canned:${widget.session.api.wabaId}';
+      final cached = widget.session.viewCache[key] as Json?;
       // Open instantly from the session cache and refresh it for next time.
       final refresh = fetchQuickReplies(key);
       if (cached != null) unawaited(refresh.then((_) {}, onError: (_) {}));
-      final list = cached ?? await refresh;
+      final data = cached ?? await refresh;
       if (!mounted) return;
       final selected = await showModalBottomSheet<String>(
         context: context,
         showDragHandle: true,
-        builder: (context) => SafeArea(
-          child: ListView(
-            children: [
-              const ListTile(title: Text('Quick replies')),
-              if (list.isEmpty)
-                const ListTile(title: Text('No quick replies available')),
-              for (final r in list)
-                AppListTile(
-                  title: Text('${r['title'] ?? ''}'),
-                  subtitle: Text('${r['body'] ?? ''}'),
-                  onTap: () => Navigator.pop(context, '${r['body'] ?? ''}'),
-                ),
-            ],
-          ),
+        isScrollControlled: true,
+        builder: (_) => CannedResponseSheet(
+          session: widget.session,
+          data: data,
+          query: query,
         ),
       );
       if (mounted && selected != null) {
-        composer.text = selected.replaceAll(
-          '{{name}}',
-          '${widget.contact['profile_name'] ?? ''}',
+        final v = cannedValues;
+        composer.text = fillCannedResponse(
+          selected,
+          customerName: v.customerName,
+          ticketNumber: v.ticketNumber,
+          agentName: v.agentName,
+          department: v.department,
+        );
+        composer.selection = TextSelection.collapsed(
+          offset: composer.text.length,
         );
       }
     } catch (e) {
       if (mounted) mobileNotice(context, e);
     }
+  }
+
+  /// The values the web fills a canned response with: the customer, the
+  /// ticket's number and department, and its agent (the one assigned, else
+  /// whoever is answering).
+  ({
+    String customerName,
+    String ticketNumber,
+    String agentName,
+    String department,
+  })
+  get cannedValues {
+    final c = {...widget.contact, ...object(detail?['contact'])};
+    String text(Object? v) => '${v ?? ''}'.trim();
+    final customer = [
+      text(c['profile_name']),
+      text(c['waba_profile_name']),
+      text(c['wa_id']),
+    ].firstWhere((v) => v.isNotEmpty, orElse: () => '');
+    final assigned = widget.ticketId != null
+        ? text(object(ticket?['assign_user'])['name'])
+        : text(object(detail?['assignUser'])['name']);
+    final me = text(
+      object(object(widget.session.config?['inbox'])['auth_user'])['name'],
+    );
+    return (
+      customerName: customer,
+      ticketNumber: ticketNumber,
+      agentName: assigned.isNotEmpty
+          ? assigned
+          : me.isNotEmpty
+          ? me
+          : text(widget.session.user?['name']),
+      department: text(object(ticket?['department'])['name']),
+    );
   }
 
   Future<void> templates() async {
@@ -1582,6 +2194,26 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     final m = messages[position];
     final lit = highlightId != null && number(m.id) == highlightId;
     final key = rowKey(m);
+    final places = widget.ticketId == null ? null : notePlaces;
+    final notesBefore = position == 0 ? places?.first ?? const [] : const [];
+    final notesAfter = places?.after[m.id] ?? const [];
+    if (notesBefore.isNotEmpty || notesAfter.isNotEmpty) {
+      return KeyedSubtree(
+        key: ValueKey('notes:$key'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final n in notesBefore) noteBubble(Json.from(n)),
+            messageItem(m, position, lit, key),
+            for (final n in notesAfter) noteBubble(Json.from(n)),
+          ],
+        ),
+      );
+    }
+    return messageItem(m, position, lit, key);
+  }
+
+  Widget messageItem(ApiMessage m, int position, bool lit, String key) {
     return KeyedSubtree(
       key: ValueKey(key),
       child: _PopIn(
@@ -1598,7 +2230,9 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
             // selected one stays green across the row while selected.
             Builder(
               builder: (rowContext) {
-                final chosen = selected != null && rowKey(selected!) == key;
+                final chosen =
+                    (selected != null && rowKey(selected!) == key) ||
+                    (splitting && splitIds.contains(number(m.id)));
                 final row = AnimatedContainer(
                   key: lit ? highlightKey : null,
                   duration: const Duration(milliseconds: 150),
@@ -1614,10 +2248,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                 );
                 // Always this shape, selecting or not, so selecting never
                 // rebuilds a bubble (nor reloads its photo).
-                final selecting = selected != null && !m.log;
+                final selecting = (selected != null || splitting) && !m.log;
                 return GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: selecting
+                  onTap: splitting
+                      ? (splittable(m) ? () => toggleSplit(m) : null)
+                      : selecting
                       ? () => tapWhileSelecting(m, rowContext)
                       : null,
                   child: AbsorbPointer(absorbing: selecting, child: row),
@@ -1794,12 +2430,15 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
     final chosen = selected;
     // Back lets a selected message go before it leaves the chat.
     return PopScope(
-      canPop: chosen == null,
+      canPop: chosen == null && !splitting,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && selected != null) unselect();
+        if (!didPop && splitting) stopSplit();
       },
       child: Scaffold(
-        appBar: chosen != null
+        appBar: splitting
+            ? splitBar()
+            : chosen != null
             ? selectionBar(chosen)
             : AppBar(
                 shape: const Border(bottom: BorderSide(color: T.hairline)),
@@ -1822,6 +2461,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                                   name,
                                   size: 36,
                                   seed: widget.contact['id'],
+                                  image:
+                                      '${widget.contact['profile_url'] ?? ''}',
                                   online: open,
                                 ),
                                 const SizedBox(width: 10),
@@ -1838,8 +2479,13 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                                       WindowStatus(
                                         permission.expiresAt,
                                         known: detail != null,
+                                        timer: widget.ticketId != null,
+                                        // The web hides it on a closed ticket.
+                                        hidden: ticketClosed,
                                         prefix: widget.ticketId != null
-                                            ? 'Ticket conversation'
+                                            ? ticketNumber.isEmpty
+                                                  ? 'Ticket conversation'
+                                                  : 'Ticket #$ticketNumber'
                                             : formatPhone(
                                                 widget.contact['display_wa_id'] ??
                                                     phone,
@@ -1865,8 +2511,17 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                       onPressed: searchChat,
                       icon: const AppIcon(Icons.search),
                     ),
-                  if (widget.ticketId == null)
-                    CallButton(session: widget.session, contact: callContact),
+                  CallButton(session: widget.session, contact: callContact),
+                  // The web's Split Ticket: only once the ticket is closed.
+                  if (canSplit)
+                    AppIconButton(
+                      key: const ValueKey('split-ticket'),
+                      tooltip: ticketClosed
+                          ? 'Split ticket'
+                          : 'Ticket must be closed to split',
+                      onPressed: ticketClosed ? startSplit : null,
+                      icon: const AppIcon(Icons.call_split_rounded),
+                    ),
                   if (isCupertino(context))
                     AppIconButton(
                       tooltip: 'Contact details',
@@ -1890,6 +2545,11 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                           ),
                         if (permission.canTemplate)
                           (label: 'Send template', onPressed: templates),
+                        if (ticketNumber.isNotEmpty)
+                          (
+                            label: 'Copy ticket number',
+                            onPressed: copyTicketNumber,
+                          ),
                       ],
                     ),
                 ],
@@ -1906,6 +2566,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                   children: [
                     RealtimeNotice(widget.session.realtime),
                     LoadingBar(showLoading),
+                    if (linkClicked case final link?)
+                      LinkClickBanner(link, onDismiss: dismissLinkClick),
                     if (error != null && !isOffline(error))
                       MaterialBanner(
                         content: Text(error!),
@@ -2009,7 +2671,37 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                                           color: T.secondary,
                                         ),
                                       ),
+                                      // As the web's closed banner adds it.
+                                      if (closed &&
+                                          '${object(detail!['contact'])['close_reason'] ?? ''}'
+                                              .trim()
+                                              .isNotEmpty) ...[
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Last close reason: ${'${object(detail!['contact'])['close_reason']}'.trim()}',
+                                          key: const ValueKey('close-reason'),
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            fontSize: 12.5,
+                                            color: T.muted,
+                                          ),
+                                        ),
+                                      ],
                                       const SizedBox(height: 8),
+                                      if (!closed &&
+                                          Assignment(detail!).botOwned &&
+                                          Assignment(detail!).canTakeOver)
+                                        AppButton.filled(
+                                          key: const ValueKey('take-over'),
+                                          onPressed: takingOver
+                                              ? null
+                                              : takeOver,
+                                          child: Text(
+                                            takingOver
+                                                ? 'Taking over…'
+                                                : 'Take over',
+                                          ),
+                                        ),
                                       if (closed)
                                         AppButton.outlined(
                                           onPressed: reopening ? null : reopen,
@@ -2018,6 +2710,33 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                                                 ? 'Reopening…'
                                                 : 'Reopen conversation',
                                           ),
+                                        ),
+                                      // Why Direct Send went away, as the web says it.
+                                      if (permission.windowClosed &&
+                                          widget.ticketId == null &&
+                                          '${directSend['restriction'] ?? ''}'
+                                              .isNotEmpty)
+                                        Padding(
+                                          key: const ValueKey(
+                                            'direct-send-restriction',
+                                          ),
+                                          padding: const EdgeInsets.only(
+                                            bottom: 8,
+                                          ),
+                                          child: Text(
+                                            '${directSend['restriction']}',
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontSize: 12.5,
+                                              color: T.danger,
+                                            ),
+                                          ),
+                                        ),
+                                      if (canDirectSend)
+                                        AppButton.outlined(
+                                          key: const ValueKey('direct-send'),
+                                          onPressed: directMessage,
+                                          child: const Text('Direct message'),
                                         ),
                                       if (permission.canTemplate)
                                         AppButton.filled(
@@ -2166,8 +2885,14 @@ class _TemplatePickerState extends State<TemplatePicker> {
     super.initState();
     // Reopening shows the last list at once; the request still refreshes it.
     templates = widget.session.viewCache[cacheKey] as List<Json>?;
+    trackedLinks =
+        widget.session.viewCache['$cacheKey:links'] as List<Json>? ?? const [];
     load();
   }
+
+  /// The number's tracked links, sent with the list when the agent may use
+  /// them (`list-tracked-links`).
+  List<Json> trackedLinks = const [];
 
   Future<void> load() async {
     try {
@@ -2176,10 +2901,13 @@ class _TemplatePickerState extends State<TemplatePicker> {
         query: {'contact_id': widget.contact['id']},
       );
       final next = rows(r['data']);
+      final links = rows(r['tracked_links']);
       widget.session.viewCache[cacheKey] = next;
+      widget.session.viewCache['$cacheKey:links'] = links;
       if (mounted) {
         setState(() {
           templates = next;
+          trackedLinks = links;
           error = null;
         });
       }
@@ -2196,6 +2924,7 @@ class _TemplatePickerState extends State<TemplatePicker> {
         widget.contact,
         t,
         ticketId: widget.ticketId,
+        trackedLinks: trackedLinks,
       ),
     );
     // Close the picker too, landing back in the conversation.
@@ -2338,8 +3067,17 @@ class WindowStatus extends StatefulWidget {
     super.key,
     required this.prefix,
     this.known = true,
+    this.timer = false,
+    this.hidden = false,
   });
   final DateTime? expiresAt;
+
+  /// A ticket's session timer: HH:MM:SS, ticking each second, as the web
+  /// ticket inbox shows it.
+  final bool timer;
+
+  /// No window shown at all, as for a closed ticket.
+  final bool hidden;
 
   /// False until contact details load; nothing is claimed before then.
   final bool known;
@@ -2353,9 +3091,12 @@ class _WindowStatusState extends State<WindowStatus> {
   @override
   void initState() {
     super.initState();
-    tick = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (mounted) setState(() {});
-    });
+    tick = Timer.periodic(
+      widget.timer ? const Duration(seconds: 1) : const Duration(minutes: 1),
+      (_) {
+        if (mounted) setState(() {});
+      },
+    );
   }
 
   @override
@@ -2367,7 +3108,11 @@ class _WindowStatusState extends State<WindowStatus> {
   @override
   Widget build(BuildContext context) {
     final open = windowOpen(widget.expiresAt);
-    final label = widget.known ? windowLabel(widget.expiresAt) : '';
+    final label = !widget.known || widget.hidden
+        ? ''
+        : widget.timer
+        ? sessionTimerLabel(widget.expiresAt)
+        : windowLabel(widget.expiresAt);
     return Text.rich(
       TextSpan(
         children: [
@@ -2403,4 +3148,182 @@ class _ComposerCard extends StatelessWidget {
     ),
     child: child,
   );
+}
+
+/// "Clicked <link> just now": the customer opened a tracked link in this
+/// chat, as the web inbox's banner says it. Dismissed with ×, or by itself.
+class LinkClickBanner extends StatelessWidget {
+  const LinkClickBanner(this.link, {super.key, required this.onDismiss});
+  final String link;
+  final VoidCallback onDismiss;
+  @override
+  Widget build(BuildContext context) => Padding(
+    key: const ValueKey('link-click-banner'),
+    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+    child: Material(
+      color: const Color(0xFFE7F7EE),
+      shape: const StadiumBorder(),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 4, 4, 4),
+        child: Row(
+          children: [
+            const Icon(Icons.link_rounded, size: 18, color: T.unread),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    const TextSpan(text: 'Clicked '),
+                    TextSpan(
+                      text: link,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const TextSpan(text: ' just now'),
+                  ],
+                ),
+                style: const TextStyle(fontSize: 13, color: T.ink),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            IconButton(
+              tooltip: 'Dismiss',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.close, size: 18),
+              onPressed: onDismiss,
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// An internal note in a ticket's conversation, as the web ticket inbox draws
+/// it: a centred amber card, "Internal Note", who wrote it and how long ago,
+/// the note, and "pinned to message" for one made from a message. Only the
+/// team sees it; it is never sent to the customer.
+class TicketNoteBubble extends StatelessWidget {
+  const TicketNoteBubble(this.note, {super.key, this.onEdit, this.onDelete});
+  final Json note;
+  final VoidCallback? onEdit, onDelete;
+
+  /// "just now", "5m ago", "3h ago", "2d ago" within a week, then "Nov 6".
+  static String ago(Object? raw, [DateTime? now]) {
+    final at = MobileClock.instant(raw);
+    if (at == null) return '';
+    final left = (now ?? DateTime.now()).difference(at);
+    if (left.inMinutes < 1) return 'just now';
+    if (left.inHours < 1) return '${left.inMinutes}m ago';
+    if (left.inDays < 1) return '${left.inHours}h ago';
+    if (left.inDays < 7) return '${left.inDays}d ago';
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final local = at.toLocal();
+    return '${months[local.month - 1]} ${local.day}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // The agent who wrote it when the server says; else the number's name.
+    final who = [
+      '${object(note['author'])['name'] ?? ''}'.trim(),
+      '${object(note['user'])['name'] ?? ''}'.trim(),
+    ].firstWhere((n) => n.isNotEmpty, orElse: () => '');
+    final pinned = '${note['message_id'] ?? ''}'.isNotEmpty;
+    return Center(
+      child: Container(
+        key: ValueKey('ticket-note-${note['id']}'),
+        constraints: const BoxConstraints(maxWidth: 320),
+        margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 24),
+        padding: const EdgeInsets.fromLTRB(12, 8, 4, 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF4D6),
+          border: Border.all(color: const Color(0xFFF0D58A)),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.sticky_note_2_outlined,
+                  size: 15,
+                  color: Color(0xFF9A6B00),
+                ),
+                const SizedBox(width: 5),
+                const Text(
+                  'Internal Note',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF9A6B00),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    [
+                      who,
+                      ago(note['created_at']),
+                    ].where((p) => p.isNotEmpty).join(' · '),
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11.5, color: T.muted),
+                  ),
+                ),
+                if (onEdit != null)
+                  IconButton(
+                    tooltip: 'Edit note',
+                    visualDensity: VisualDensity.compact,
+                    iconSize: 17,
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
+                if (onDelete != null)
+                  IconButton(
+                    tooltip: 'Delete note',
+                    visualDensity: VisualDensity.compact,
+                    iconSize: 17,
+                    onPressed: onDelete,
+                    icon: const Icon(Icons.delete_outline_rounded),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Text(
+                '${note['content'] ?? ''}',
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: T.ink,
+                  height: 1.35,
+                ),
+              ),
+            ),
+            if (pinned)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  '📌 pinned to message',
+                  style: TextStyle(fontSize: 11.5, color: T.muted),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }

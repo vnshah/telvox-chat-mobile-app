@@ -19,10 +19,19 @@ Json ticketSendDetail(Json data) => {
 /// Mirrors shared/ticket inbox assignment and service/referral window checks.
 /// Templates bypass the window only, never ownership or contact restrictions.
 class SendPolicy {
-  const SendPolicy(this.reason, this.canTemplate, this.expiresAt);
+  const SendPolicy(
+    this.reason,
+    this.canTemplate,
+    this.expiresAt, {
+    this.windowClosed = false,
+  });
   final String? reason;
   final bool canTemplate;
   final DateTime? expiresAt;
+
+  /// Only the 24-hour window stops a reply: the chat is open, the agent's,
+  /// and not the bot's. Where the web inbox offers Direct Send.
+  final bool windowClosed;
   bool get canSend => reason == null;
   static SendPolicy evaluate(
     MobileSession session,
@@ -93,6 +102,7 @@ class SendPolicy {
         'Messaging window closed. Send an approved template, or wait for a new customer message.',
         templateAllowed,
         expiry,
+        windowClosed: true,
       );
     }
     return SendPolicy(null, templateAllowed, expiry);

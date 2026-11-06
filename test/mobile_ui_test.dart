@@ -123,7 +123,16 @@ void main() {
       await tester.pump();
       await tester.tap(find.byTooltip('Send message'));
       await tester.pumpAndSettle();
-      expect(find.textContaining('Customer session expired'), findsOneWidget);
+      // Why it failed sits on the red mark, as the web inbox's tooltip.
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w is Tooltip &&
+              (w.message ?? '').contains('Customer session expired'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Customer session expired'), findsNothing);
       expect(find.byTooltip('Delete for me'), findsNothing);
       await tester.pumpWidget(const SizedBox());
       await tester.pumpAndSettle();

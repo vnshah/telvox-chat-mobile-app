@@ -260,6 +260,8 @@ class InboxRepository {
     String search = '',
     int offset = 0,
     int limit = 30,
+    List<int> tags = const [],
+    int? assignedTo,
   }) async => rows(
     await api.request(
       'inbox/contacts',
@@ -267,6 +269,9 @@ class InboxRepository {
       data: {
         'listType': filter,
         'search': search,
+        // The web's filter: chats with any of these tags, and one assignee.
+        if (tags.isNotEmpty) 'tags': tags,
+        'assignedTo': ?assignedTo,
         'limit': limit,
         'offset': offset,
       },
