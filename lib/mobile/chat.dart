@@ -257,6 +257,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // The call screen's Message goes back to this chat rather than opening
+    // it again; and opening it while this customer's phone rings quiets the
+    // ringback (the call keeps ringing).
+    final calls = widget.session.calls;
+    calls.chatOnScreen = contactId;
+    if (calls.statusWith(contactId) != null) calls.silenceRingback();
     scroll.addListener(() {
       // Scrolling away from a selected message puts its reactions away.
       if (reacting) setState(() => reacting = false);
@@ -373,6 +379,8 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    final calls = widget.session.calls;
+    if ('${calls.chatOnScreen}' == '$contactId') calls.chatOnScreen = null;
     focus(false);
     if (widget.session.visibleConversation == visibleKey) {
       widget.session.visibleConversation = null;

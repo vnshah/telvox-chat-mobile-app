@@ -5,11 +5,14 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:telvox_chat_mobile_app/mobile/api.dart';
 import 'package:telvox_chat_mobile_app/mobile/call_push.dart';
 import 'package:telvox_chat_mobile_app/mobile/call_recording.dart';
 import 'package:telvox_chat_mobile_app/mobile/calls.dart';
+import 'package:telvox_chat_mobile_app/mobile/screens.dart'
+    show LiveConversationRow;
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
 import 'mobile_api_test.dart' show fakeApi, answer, MemoryStore;
@@ -762,6 +765,175 @@ void main() {
       expect(find.bySemanticsLabel('Record'), findsNothing);
       await h.session.calls.hangUp();
       await done(tester, h);
+    });
+  });
+
+  group('calling and chatting at once, the call never interrupted', () {
+    late List<MethodCall> audio;
+    setUp(() {
+      audio = [];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(const MethodChannel('telvox/call_audio'), (
+            call,
+          ) async {
+            audio.add(call);
+            return null;
+          });
+    });
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('telvox/call_audio'),
+            null,
+          );
+    });
+
+    /// The inbox row of the customer being called, and the call button.
+    Future<Harness> callFromInbox(WidgetTester tester) async {
+      final h = await harness(tester);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: T.themeFor(TargetPlatform.android),
+          home: Scaffold(
+            body: Column(
+              children: [
+                LiveConversationRow(
+                  session: h.session,
+                  item: {
+                    ...permitted,
+                    'last_message': {
+                      'type': 1,
+                      'message_type': 'voice_call',
+                      'message_body': jsonEncode({
+                        'status': 'COMPLETED',
+                        'duration': 6,
+                      }),
+                      'message_status': 0,
+                    },
+                  },
+                  onTap: () {},
+                ),
+                CallButton(session: h.session, contact: permitted),
+              ],
+            ),
+          ),
+        ),
+      );
+      return h;
+    }
+
+    Future<void> finish(WidgetTester tester, Harness h) async {
+      await h.session.calls.hangUp();
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      h.session.realtime.stop();
+      await tester.pump();
+      h.session.dispose();
+    }
+
+    testWidgets('a call row never shows the pending clock', (tester) async {
+      final h = await callFromInbox(tester);
+      expect(find.byIcon(Icons.schedule), findsNothing);
+      expect(find.textContaining('Voice call'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      h.session.realtime.stop();
+      await tester.pump();
+      h.session.dispose();
+    });
+
+    testWidgets('the row says Ringing, then On call, then the call', (
+      tester,
+    ) async {
+      final h = await callFromInbox(tester);
+      await tester.tap(find.byTooltip('Voice call'));
+      await settle(tester);
+      h.socket.server('calls', {
+        'call_id': 'wacid.OUT',
+        'direction': 'BUSINESS_INITIATED',
+        'event': 'connect',
+        'sdp': 'v=0\r\ncustomer-answer\r\n',
+      }, channel: 'private-calls.7');
+      await settle(tester);
+      // Back to the inbox, the call running behind the green bar.
+      Navigator.of(tester.element(find.byType(CallScreen))).pop();
+      await settle(tester);
+      expect(find.text('Ringing… · Tap to message'), findsOneWidget);
+
+      h.socket.server('calls', {
+        'call_id': 'wacid.OUT',
+        'direction': 'BUSINESS_INITIATED',
+        'event': 'status',
+        'status': 'ACCEPTED',
+      }, channel: 'private-calls.7');
+      await settle(tester);
+      expect(find.text('On call'), findsOneWidget);
+      expect(find.byKey(const ValueKey('ongoing-call-bar')), findsNothing);
+
+      await h.session.calls.hangUp();
+      await settle(tester);
+      expect(find.text('On call'), findsNothing);
+      await finish(tester, h);
+    });
+
+    testWidgets('Message opens the chat and quiets the ring, still ringing', (
+      tester,
+    ) async {
+      final h = await callFromInbox(tester);
+      final opened = <Json>[];
+      h.session.calls.openChat = opened.add;
+      await tester.tap(find.byTooltip('Voice call'));
+      await settle(tester);
+      h.socket.server('calls', {
+        'call_id': 'wacid.OUT',
+        'direction': 'BUSINESS_INITIATED',
+        'event': 'connect',
+        'sdp': 'v=0\r\ncustomer-answer\r\n',
+      }, channel: 'private-calls.7');
+      await settle(tester);
+      expect(h.session.calls.state, CallState.ringing);
+
+      await tester.tap(find.byKey(const ValueKey('call-message')));
+      // Past the call screen's closing transition.
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(find.byType(CallScreen), findsNothing);
+      expect(opened.single['id'], 12);
+      expect(
+        audio.where((c) => c.method == 'ringback').last.arguments,
+        isFalse,
+      );
+      // The call itself is untouched: still ringing, nothing ended.
+      expect(h.session.calls.state, CallState.ringing);
+      expect(
+        h.posts.where(
+          (r) => r.path.endsWith('terminate') || r.path.endsWith('decline'),
+        ),
+        isEmpty,
+      );
+      await finish(tester, h);
+    });
+
+    testWidgets('Message during a call goes back to the chat underneath', (
+      tester,
+    ) async {
+      final h = await callFromInbox(tester);
+      final opened = <Json>[];
+      h.session.calls
+        ..openChat = opened.add
+        ..chatOnScreen = 12;
+      await tester.tap(find.byTooltip('Voice call'));
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('call-message')));
+      // Past the call screen's closing transition.
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      // The chat was already open under the call screen: not opened twice.
+      expect(opened, isEmpty);
+      expect(find.byType(CallScreen), findsNothing);
+      expect(h.session.calls.busy, isTrue);
+      await finish(tester, h);
     });
   });
 }

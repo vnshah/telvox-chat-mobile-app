@@ -604,7 +604,15 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
     }
     widget.session.calls
       ..attach()
-      ..addListener(showIncomingCall);
+      ..addListener(showIncomingCall)
+      // The call screen's Message button opens the customer's chat here,
+      // over whatever is showing; the call carries on underneath.
+      ..openChat = (contact) =>
+          widget.session.calls.navigator?.currentState?.push(
+            MaterialPageRoute<void>(
+              builder: (_) => LiveChat(widget.session, contact),
+            ),
+          );
     widget.session.realtime.start();
     widget.session.push.enable();
     widget.session
@@ -736,6 +744,7 @@ class _LiveHomeState extends State<LiveHome> with WidgetsBindingObserver {
     device?.cancel();
     widget.session.calls
       ..removeListener(showIncomingCall)
+      ..openChat = null
       ..detach();
     refresh.dispose();
     widget.session
@@ -1758,9 +1767,18 @@ class LiveConversationRow extends StatelessWidget {
   /// Quick actions on the row itself, as WhatsApp offers on a long press.
   final VoidCallback? onLongPress;
 
+  // Redrawn as a call with this customer rings, connects and ends.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: session.calls,
+    builder: (context, _) => _row(context),
+  );
+
+  Widget _row(BuildContext context) {
     final contact = ticket ? object(item['contact']) : item;
+    // This phone is on a call with this customer: said in green in place of
+    // the last message, until the call ends.
+    final onCall = ticket ? null : session.calls.statusWith(contact['id']);
     final name =
         '${contact['profile_name'] ?? contact['waba_profile_name'] ?? contact['display_wa_id'] ?? 'Contact'}';
     final last = object(item[ticket ? 'last_thread' : 'last_message']);
@@ -1887,46 +1905,77 @@ class LiveConversationRow extends StatelessWidget {
                     const SizedBox(height: 4),
                     Row(
                       children: [
-                        if (outgoing && !ticket)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 4),
+                        if (onCall != null) ...[
+                          const Padding(
+                            padding: EdgeInsets.only(right: 4),
                             child: AppIcon(
-                              switch (receipt) {
-                                0 => Icons.schedule,
-                                1 => Icons.check,
-                                4 || 5 => Icons.error_outline,
-                                _ => Icons.done_all,
-                              },
+                              Icons.call,
                               size: 15,
-                              color: switch (receipt) {
-                                3 => T.blue,
-                                4 || 5 => T.danger,
-                                _ => T.muted,
-                              },
+                              color: T.unread,
                             ),
                           ),
-                        if (kindIcon != null)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 4),
-                            child: AppIcon(
-                              kindIcon,
-                              size: 16,
-                              color: kindIcon == Icons.call_missed
-                                  ? T.danger
-                                  : T.muted,
+                          Expanded(
+                            child: Text(
+                              onCall == 'On call' || onCall == 'Connecting…'
+                                  ? onCall
+                                  : '$onCall · Tap to message',
+                              key: ValueKey('row-call-${contact['id']}'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w600,
+                                color: T.unread,
+                              ),
                             ),
                           ),
-                        Expanded(
-                          child: Text(
-                            preview,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 13.5,
-                              color: strong ? T.ink : T.secondary,
+                        ] else ...[
+                          // Calls have no delivery receipts (their status stays
+                          // at 0), so they never show the pending clock.
+                          if (outgoing &&
+                              !ticket &&
+                              content?.kind != 'call' &&
+                              content?.kind != 'missed_call')
+                            Padding(
+                              padding: const EdgeInsets.only(right: 4),
+                              child: AppIcon(
+                                switch (receipt) {
+                                  0 => Icons.schedule,
+                                  1 => Icons.check,
+                                  4 || 5 => Icons.error_outline,
+                                  _ => Icons.done_all,
+                                },
+                                size: 15,
+                                color: switch (receipt) {
+                                  3 => T.blue,
+                                  4 || 5 => T.danger,
+                                  _ => T.muted,
+                                },
+                              ),
+                            ),
+                          if (kindIcon != null)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 4),
+                              child: AppIcon(
+                                kindIcon,
+                                size: 16,
+                                color: kindIcon == Icons.call_missed
+                                    ? T.danger
+                                    : T.muted,
+                              ),
+                            ),
+                          Expanded(
+                            child: Text(
+                              preview,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                color: strong ? T.ink : T.secondary,
+                              ),
                             ),
                           ),
-                        ),
+                        ],
                         if (!ticket &&
                             number(contact['conversation_status']) == 0)
                           marker(Icons.lock_outline, 'Closed', T.muted),

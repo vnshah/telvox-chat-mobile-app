@@ -384,6 +384,54 @@ class PhoneCalls extends ChangeNotifier {
   /// The call screen is showing; a second ring or tap does not open another.
   bool screenOpen = false;
 
+  /// Opens a customer's chat, for the call screen's Message button; the home
+  /// screen supplies it. The call carries on underneath, behind the green bar.
+  void Function(Json contact)? openChat;
+
+  /// The contact whose chat is on screen, so Message goes back to that chat
+  /// rather than opening it a second time.
+  Object? chatOnScreen;
+
+  /// The agent turned to the chat while the customer's phone rings: the
+  /// ringback stays quiet, and the call keeps ringing.
+  bool ringbackSilenced = false;
+
+  /// What this phone's call with [contactId] is doing, for that customer's
+  /// inbox row; null when this phone is not on a call with them.
+  String? statusWith(Object? contactId) {
+    if (!busy || contactId == null || '${contact['id']}' != '$contactId') {
+      return null;
+    }
+    return switch (state) {
+      CallState.dialing => 'Calling…',
+      CallState.ringing => 'Ringing…',
+      CallState.incoming => 'Incoming call',
+      CallState.connecting => 'Connecting…',
+      CallState.active => 'On call',
+      _ => null,
+    };
+  }
+
+  /// Quiets the ringback as the agent turns to the chat. Never ends the call.
+  void silenceRingback() {
+    if (state != CallState.dialing && state != CallState.ringing) return;
+    if (ringbackSilenced) return;
+    ringbackSilenced = true;
+    unawaited(CallAudio.ringback(false));
+    notifyListeners();
+  }
+
+  /// Leaves the call screen for the customer's chat, without touching the
+  /// call: back to the chat if it is the one underneath, otherwise opened.
+  void messageCustomer(NavigatorState from) {
+    silenceRingback();
+    final id = contact['id'];
+    final customer = contact;
+    from.maybePop();
+    if (id != null && '$chatOnScreen' == '$id') return;
+    openChat?.call(customer);
+  }
+
   void showingScreen(bool open) {
     screenOpen = open;
     notifyListeners();
@@ -928,6 +976,7 @@ class PhoneCalls extends ChangeNotifier {
     output = null;
     _offer = null;
     _answerApplied = _declined = _systemAccepted = false;
+    ringbackSilenced = false;
     _system = null;
   }
 
@@ -1148,6 +1197,26 @@ class _CallScreenState extends State<CallScreen> {
                     key: const ValueKey('call-status'),
                     style: const TextStyle(fontSize: 15, color: Colors.white70),
                   ),
+                  // The customer's chat, while their phone rings or the call
+                  // is on: the call carries on underneath, the ringback quiet.
+                  if (c.busy && c.state != CallState.incoming) ...[
+                    const SizedBox(height: 18),
+                    OutlinedButton.icon(
+                      key: const ValueKey('call-message'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white38),
+                        shape: const StadiumBorder(),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 10,
+                        ),
+                      ),
+                      onPressed: () => c.messageCustomer(Navigator.of(context)),
+                      icon: const Icon(Icons.chat_outlined, size: 18),
+                      label: const Text('Message'),
+                    ),
+                  ],
                   const Spacer(),
                   if (c.state == CallState.incoming)
                     _IncomingControls(c)
