@@ -82,6 +82,11 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+  # iOS plugins come through CocoaPods only. google_maps_flutter_ios and
+  # sqflite_sqlcipher have no Swift Package Manager version yet, so with SPM
+  # on, every iOS build warned about them. Remove once they support it.
+  config:
+    enable-swift-package-manager: false
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
