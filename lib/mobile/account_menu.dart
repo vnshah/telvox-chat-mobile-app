@@ -62,7 +62,7 @@ class AccountMenu extends StatelessWidget {
 }
 
 /// Where the privacy policy is published; the stores link the same page.
-const privacyPolicyUrl = 'https://telvox.dev/privacy';
+const privacyPolicyUrl = 'https://telvox.dev/privacy/chat';
 
 /// Opens the privacy policy in the phone's browser.
 Future<void> openPrivacyPolicy(BuildContext context) async {

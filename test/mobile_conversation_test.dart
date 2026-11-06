@@ -329,6 +329,7 @@ void main() {
         RepaintBoundary(
           key: boundary,
           child: MaterialApp(
+            debugShowCheckedModeBanner: false,
             theme: T.themeFor(platform),
             home: LiveChat(session, {
               'id': 12,
