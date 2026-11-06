@@ -26,7 +26,8 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
 /**
- * Videos made small enough for WhatsApp, as WhatsApp itself does before it
+ * Media work on the phone's own encoders. Videos made small enough for
+ * WhatsApp, as WhatsApp itself does before it
  * sends one: re-encoded on the phone's hardware encoder to H.264 (Main
  * profile, which every WhatsApp client plays) with AAC sound, at the size and
  * bitrate the app planned (Standard 480p, HD 720p), at most 30 frames a
@@ -42,6 +43,7 @@ class VideoCompressor(private val context: Context, private val channel: MethodC
         when (method) {
             "probe" -> probe(args["path"] as String, result)
             "compress" -> compress(args, result)
+            "mixAudio" -> mixAudio(args, result)
             "cancel" -> {
                 running.remove(args["id"] as String)?.cancel()
                 result.success(null)
@@ -159,6 +161,47 @@ class VideoCompressor(private val context: Context, private val channel: MethodC
                 main.postDelayed(this, 200)
             }
         })
+    }
+
+    /**
+     * A recorded call's two sides (this phone's microphone and the customer's
+     * voice, each recorded to its own file) mixed into one AAC recording, as
+     * the web inbox records a call. Media3 mixes the audio of sequences that
+     * play side by side.
+     */
+    private fun mixAudio(args: Map<*, *>, result: MethodChannel.Result) {
+        val inputs = (args["inputs"] as List<*>).map { it as String }
+        val out = args["out"] as String
+        val sequences = inputs.map { path ->
+            EditedMediaItemSequence.Builder(
+                EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(File(path)))).build(),
+            ).build()
+        }
+        var answered = false
+        Transformer.Builder(context)
+            .setAudioMimeType(MimeTypes.AUDIO_AAC)
+            .addListener(object : Transformer.Listener {
+                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                    if (!answered) {
+                        answered = true
+                        result.success(out)
+                    }
+                }
+
+                override fun onError(
+                    composition: Composition,
+                    exportResult: ExportResult,
+                    exportException: ExportException,
+                ) {
+                    File(out).delete()
+                    if (!answered) {
+                        answered = true
+                        result.error("mix", exportException.errorCodeName, null)
+                    }
+                }
+            })
+            .build()
+            .start(Composition.Builder(sequences).build(), out)
     }
 
     private fun report(id: String, value: Double) {

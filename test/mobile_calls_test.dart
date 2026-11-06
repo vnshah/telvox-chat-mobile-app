@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -6,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:telvox_chat_mobile_app/mobile/api.dart';
 import 'package:telvox_chat_mobile_app/mobile/call_push.dart';
+import 'package:telvox_chat_mobile_app/mobile/call_recording.dart';
 import 'package:telvox_chat_mobile_app/mobile/calls.dart';
 import 'package:telvox_chat_mobile_app/ui/theme.dart';
 
@@ -52,6 +55,32 @@ class FakeCallMedia implements CallMedia {
   Future<void> mute(bool muted) async => calls.add('mute:$muted');
   @override
   Future<void> speaker(bool on) async => calls.add('speaker:$on');
+
+  /// Records to two real files, as the phone's two recorders do.
+  (String, String)? recordingFiles;
+  @override
+  Future<bool> startRecording(String folder) async {
+    calls.add('record');
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final files = (
+      '$folder/$stamp-microphone.m4a',
+      '$folder/$stamp-customer.m4a',
+    );
+    await Directory(folder).create(recursive: true);
+    await File(files.$1).writeAsBytes([1, 2, 3]);
+    await File(files.$2).writeAsBytes([4, 5, 6, 7]);
+    recordingFiles = files;
+    return true;
+  }
+
+  @override
+  Future<(String, String)?> stopRecording() async {
+    final files = recordingFiles;
+    recordingFiles = null;
+    if (files != null) calls.add('stop-recording');
+    return files;
+  }
+
   @override
   Future<void> close() async => calls.add('close');
 }
@@ -594,4 +623,132 @@ void main() {
       h.session.dispose();
     },
   );
+
+  group('recording a call on the phone, as the web inbox does', () {
+    late Directory folder;
+    setUp(() {
+      folder = Directory.systemTemp.createTempSync('call-recording-test');
+      callRecordingFolder = () async => folder.path;
+      mixCallRecording = (microphone, customer, out) async =>
+          File(out)..writeAsStringSync('mixed-call');
+    });
+    tearDown(() {
+      if (folder.existsSync()) folder.deleteSync(recursive: true);
+    });
+
+    /// An outgoing call, answered, on the call screen.
+    Future<Harness> answeredCall(
+      WidgetTester tester, {
+      bool record = true,
+    }) async {
+      final h = await harness(tester);
+      h.session.config = {
+        ...h.session.config!,
+        'calls': {'record_in_app': record},
+      };
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: T.themeFor(TargetPlatform.android),
+          home: Scaffold(
+            body: Center(
+              child: CallButton(session: h.session, contact: permitted),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byTooltip('Voice call'));
+      await settle(tester);
+      for (final event in [
+        {'event': 'connect', 'sdp': 'v=0\r\ncustomer-answer\r\n'},
+        {'event': 'status', 'status': 'ACCEPTED'},
+      ]) {
+        h.socket.server('calls', {
+          'call_id': 'wacid.OUT',
+          'direction': 'BUSINESS_INITIATED',
+          ...event,
+        }, channel: 'private-calls.7');
+        await settle(tester);
+      }
+      expect(h.session.calls.state, CallState.active);
+      return h;
+    }
+
+    Future<void> done(WidgetTester tester, Harness h) async {
+      await tester.pump(const Duration(seconds: 2));
+      h.session.realtime.stop();
+      await tester.pump();
+      h.session.dispose();
+    }
+
+    testWidgets('starts and stops with the server, sending the mixed call', (
+      tester,
+    ) async {
+      final h = await answeredCall(tester);
+      expect(find.bySemanticsLabel('Record'), findsOneWidget);
+
+      await tester.runAsync(() => h.session.calls.toggleRecording());
+      await settle(tester);
+      expect(h.session.calls.recording, isTrue);
+      expect(h.media.calls, contains('record'));
+      expect(
+        h.posts
+            .singleWhere((r) => r.path == 'inbox/calls/start-recording')
+            .data,
+        {'call_id': 'wacid.OUT', 'contact_id': 12},
+      );
+      expect(find.bySemanticsLabel('Stop'), findsOneWidget);
+
+      await tester.runAsync(() => h.session.calls.toggleRecording());
+      await settle(tester);
+      expect(h.session.calls.recording, isFalse);
+      final stop = h.posts.singleWhere(
+        (r) => r.path == 'inbox/calls/stop-recording',
+      );
+      expect(stop.data['call_id'], 'wacid.OUT');
+      expect(
+        utf8.decode(base64Decode(stop.data['recording_blob'])),
+        'mixed-call',
+      );
+      // The recording leaves nothing behind on the phone.
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      expect(folder.listSync(), isEmpty);
+      await h.session.calls.hangUp();
+      await done(tester, h);
+    });
+
+    testWidgets('a call that ends while recording uploads it', (tester) async {
+      final h = await answeredCall(tester);
+      await tester.runAsync(() => h.session.calls.toggleRecording());
+      await settle(tester);
+
+      await tester.runAsync(() async {
+        await h.session.calls.hangUp();
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await settle(tester);
+      final upload = h.posts.singleWhere(
+        (r) => r.path == 'inbox/calls/upload-recording',
+      );
+      expect(upload.data['call_id'], 'wacid.OUT');
+      expect(
+        utf8.decode(base64Decode(upload.data['recording_blob'])),
+        'mixed-call',
+      );
+      // Stopped before the call's audio was closed.
+      expect(
+        h.media.calls.indexOf('stop-recording'),
+        lessThan(h.media.calls.indexOf('close')),
+      );
+      await done(tester, h);
+    });
+
+    testWidgets('a number Meta records shows no record button', (tester) async {
+      final h = await answeredCall(tester, record: false);
+      expect(find.bySemanticsLabel('Record'), findsNothing);
+      await h.session.calls.hangUp();
+      await done(tester, h);
+    });
+  });
 }

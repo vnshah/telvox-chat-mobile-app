@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
@@ -11,6 +13,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../ui/theme.dart';
 import 'api.dart';
 import 'call_push.dart';
+import 'call_recording.dart';
 import 'message_content.dart' show readableText;
 import 'models.dart';
 import 'realtime.dart';
@@ -48,6 +51,13 @@ abstract class CallMedia {
   /// The outputs the call can play on right now.
   Future<List<AudioOutput>> outputs();
   Future<void> route(AudioOutput output);
+
+  /// Starts recording the call, this phone's microphone and the customer's
+  /// voice each to its own file in [folder]. False where the phone cannot.
+  Future<bool> startRecording(String folder);
+
+  /// Stops recording: the files (microphone, customer), or null if none.
+  Future<(String, String)?> stopRecording();
   Future<void> close();
 }
 
@@ -73,6 +83,10 @@ class WebRtcCallMedia implements CallMedia {
   final List<Object?> _iceServers;
   RTCPeerConnection? _peer;
   MediaStream? _local;
+
+  /// The call's two recorders while it records, and their files.
+  MediaRecorder? _microphone, _customer;
+  (String, String)? _recording;
   final _connected = ValueNotifier(false);
 
   @override
@@ -173,7 +187,48 @@ class WebRtcCallMedia implements CallMedia {
   Future<void> route(AudioOutput output) => Helper.selectAudioOutput(output.id);
 
   @override
+  Future<bool> startRecording(String folder) async {
+    // flutter_webrtc records call audio on Android only.
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
+    if (_recording != null) return true;
+    await Directory(folder).create(recursive: true);
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final files = (
+      '$folder/$stamp-microphone.m4a',
+      '$folder/$stamp-customer.m4a',
+    );
+    final microphone = MediaRecorder(), customer = MediaRecorder();
+    try {
+      await microphone.start(
+        files.$1,
+        audioChannel: RecorderAudioChannel.INPUT,
+      );
+      await customer.start(files.$2, audioChannel: RecorderAudioChannel.OUTPUT);
+    } catch (_) {
+      await microphone.stop().catchError((_) {});
+      await customer.stop().catchError((_) {});
+      return false;
+    }
+    _microphone = microphone;
+    _customer = customer;
+    _recording = files;
+    return true;
+  }
+
+  @override
+  Future<(String, String)?> stopRecording() async {
+    final files = _recording;
+    if (files == null) return null;
+    _recording = null;
+    await _microphone?.stop().catchError((_) {});
+    await _customer?.stop().catchError((_) {});
+    _microphone = _customer = null;
+    return files;
+  }
+
+  @override
   Future<void> close() async {
+    await stopRecording();
     for (final track in _local?.getTracks() ?? <MediaStreamTrack>[]) {
       await track.stop();
     }
@@ -279,6 +334,20 @@ class PhoneCalls extends ChangeNotifier {
   String? callId, notice;
   DateTime? connectedAt;
   bool muted = false, speaker = false;
+
+  /// Recording the call on this phone, as the web inbox's record button does,
+  /// and since when.
+  bool recording = false;
+  DateTime? recordingSince;
+  bool _recordingBusy = false;
+
+  /// This number records its calls on the device (custom capture); Meta
+  /// records the others itself. Android only: flutter_webrtc cannot record
+  /// call audio on iOS.
+  bool get canRecord =>
+      object(session.config?['calls'])['record_in_app'] == true &&
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.android;
 
   /// The headset the call plays on, when not the earpiece or speaker.
   AudioOutput? output;
@@ -678,6 +747,72 @@ class PhoneCalls extends ChangeNotifier {
     await _call?.mute(muted);
   }
 
+  /// Starts or stops recording, telling the server as the web inbox does:
+  /// start-recording first, then stop-recording with the recording. Returns
+  /// what went wrong, for the call screen to say, or null.
+  Future<String?> toggleRecording() async {
+    final id = callId, media = _call;
+    if (_recordingBusy || id == null || media == null) return null;
+    if (state != CallState.active) return null;
+    _recordingBusy = true;
+    notifyListeners();
+    try {
+      if (!recording) {
+        await session.api.post('inbox/calls/start-recording', {
+          'call_id': id,
+          if (number(contact['id']) != null)
+            'contact_id': number(contact['id']),
+        });
+        if (!await media.startRecording(await callRecordingFolder())) {
+          return 'This phone cannot record the call.';
+        }
+        recording = true;
+        recordingSince = DateTime.now();
+        return null;
+      }
+      final seconds = _recordedSeconds();
+      final blob = await _finishRecording(media);
+      await session.api.post('inbox/calls/stop-recording', {
+        'call_id': id,
+        'recording_blob': ?blob,
+        'call_duration': seconds,
+      });
+      return null;
+    } catch (e) {
+      if (recording) await _finishRecording(media);
+      return '$e';
+    } finally {
+      _recordingBusy = false;
+      notifyListeners();
+    }
+  }
+
+  int _recordedSeconds() => recordingSince == null
+      ? 0
+      : DateTime.now().difference(recordingSince!).inSeconds;
+
+  /// Stops the recorders and returns the recording, mixed, as base64; the
+  /// files are removed. Null when nothing was recorded.
+  Future<String?> _finishRecording(CallMedia media) async {
+    recording = false;
+    recordingSince = null;
+    final files = await media.stopRecording();
+    if (files == null) return null;
+    return _encodeRecording(files);
+  }
+
+  static Future<String?> _encodeRecording((String, String) files) async {
+    final out = '${files.$1.replaceAll('-microphone.m4a', '')}-call.m4a';
+    try {
+      final file = await callRecordingFile(files.$1, files.$2, out);
+      return file == null ? null : base64Encode(await file.readAsBytes());
+    } finally {
+      for (final path in [files.$1, files.$2, out]) {
+        unawaited(File(path).delete().then((_) {}, onError: (_) {}));
+      }
+    }
+  }
+
   Future<void> toggleSpeaker() async {
     speaker = !speaker;
     output = null;
@@ -780,6 +915,16 @@ class PhoneCalls extends ChangeNotifier {
     _call = null;
     _offer = null;
     notice = reason;
+    // Ended while recording (often the customer hanging up): the recording
+    // goes up on its own, as the web inbox uploads it.
+    final id = callId;
+    if (recording && media != null && id != null) {
+      final seconds = _recordedSeconds();
+      recording = false;
+      recordingSince = null;
+      final files = await media.stopRecording();
+      if (files != null) unawaited(_uploadRecording(id, files, seconds));
+    }
     _set(CallState.ended);
     await media?.close();
     _reset?.cancel();
@@ -789,6 +934,20 @@ class PhoneCalls extends ChangeNotifier {
         connectedAt = null;
         _set(CallState.idle);
       }
+    });
+  }
+
+  Future<void> _uploadRecording(
+    String id,
+    (String, String) files,
+    int seconds,
+  ) async {
+    final blob = await _encodeRecording(files);
+    if (blob == null) return;
+    await _post('inbox/calls/upload-recording', {
+      'call_id': id,
+      'recording_blob': blob,
+      'call_duration': seconds,
     });
   }
 
@@ -1043,6 +1202,22 @@ class _CallControls extends StatelessWidget {
             on: calls.muted,
             onPressed: live ? calls.toggleMute : null,
           ),
+          // Recording, on a number that records its calls on the device.
+          if (calls.canRecord && calls.state == CallState.active)
+            _RoundButton(
+              label: calls.recording ? 'Stop' : 'Record',
+              icon: calls.recording
+                  ? Icons.stop_rounded
+                  : Icons.fiber_manual_record,
+              colour: calls.recording ? const Color(0xFFE53935) : null,
+              onPressed: () async {
+                final problem = await calls.toggleRecording();
+                if (problem != null && context.mounted) {
+                  ScaffoldMessenger.maybeOf(context)
+                      ?.showSnackBar(SnackBar(content: Text(problem)));
+                }
+              },
+            ),
           _RoundButton(
             label: 'End call',
             icon: Icons.call_end,
