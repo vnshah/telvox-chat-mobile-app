@@ -72,7 +72,9 @@ class _MessageText extends StatelessWidget {
     final stampWidth =
         painter.width.ceilToDouble() +
         (message.out ? 18 : 0) +
-        (starred ? 13 : 0);
+        (starred ? 13 : 0) +
+        // Room for the broadcast / automation / chatbot / API mark.
+        (message.out && sourceMarks.containsKey(message.source) ? 15 : 0);
     final stampHeight = math.max(14.0, painter.height);
     painter.dispose();
     final stamp = MessageStamp(message, starred: starred);
