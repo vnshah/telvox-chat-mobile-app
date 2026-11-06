@@ -186,9 +186,15 @@ class WebRtcCallMedia implements CallMedia {
   @override
   Future<void> route(AudioOutput output) => Helper.selectAudioOutput(output.id);
 
+  /// iOS records through the app's own recorder (AppDelegate.swift):
+  /// flutter_webrtc's recorder there needs a video track.
+  static const _iosRecorder = MethodChannel('telvox/call_recording');
+  static bool get _ios =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
   @override
   Future<bool> startRecording(String folder) async {
-    // flutter_webrtc records call audio on Android only.
+    if (_ios) return _startIosRecording(folder);
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
     if (_recording != null) return true;
     await Directory(folder).create(recursive: true);
@@ -215,11 +221,33 @@ class WebRtcCallMedia implements CallMedia {
     return true;
   }
 
+  Future<bool> _startIosRecording(String folder) async {
+    if (_recording != null) return true;
+    try {
+      final paths = await _iosRecorder.invokeListMethod<String>('start', {
+        'folder': folder,
+      });
+      if (paths == null || paths.length != 2) return false;
+      _recording = (paths[0], paths[1]);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   @override
   Future<(String, String)?> stopRecording() async {
     final files = _recording;
     if (files == null) return null;
     _recording = null;
+    if (_ios) {
+      try {
+        await _iosRecorder.invokeListMethod<String>('stop');
+      } catch (_) {
+        // The files written so far still go up.
+      }
+      return files;
+    }
     await _microphone?.stop().catchError((_) {});
     await _customer?.stop().catchError((_) {});
     _microphone = _customer = null;
@@ -342,12 +370,13 @@ class PhoneCalls extends ChangeNotifier {
   bool _recordingBusy = false;
 
   /// This number records its calls on the device (custom capture); Meta
-  /// records the others itself. Android only: flutter_webrtc cannot record
-  /// call audio on iOS.
+  /// records the others itself. Android records through flutter_webrtc, iOS
+  /// through the app's own recorder (AppDelegate.swift).
   bool get canRecord =>
       object(session.config?['calls'])['record_in_app'] == true &&
       !kIsWeb &&
-      defaultTargetPlatform == TargetPlatform.android;
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
 
   /// The headset the call plays on, when not the earpiece or speaker.
   AudioOutput? output;

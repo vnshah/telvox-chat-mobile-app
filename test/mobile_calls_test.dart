@@ -744,6 +744,19 @@ void main() {
       await done(tester, h);
     });
 
+    testWidgets('an iPhone records too, on the same numbers', (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        final h = await answeredCall(tester);
+        expect(h.session.calls.canRecord, isTrue);
+        expect(find.bySemanticsLabel('Record'), findsOneWidget);
+        await h.session.calls.hangUp();
+        await done(tester, h);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
     testWidgets('a number Meta records shows no record button', (tester) async {
       final h = await answeredCall(tester, record: false);
       expect(find.bySemanticsLabel('Record'), findsNothing);
