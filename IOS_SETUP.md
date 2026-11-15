@@ -5,8 +5,8 @@ a Mac is already in the repo (see "Already done"). The steps below need a Mac
 with Xcode, the Telvox Apple Developer account, or both, and are in the order
 to do them.
 
-Bundle ID: `com.telvox.telvoxChatMobileApp` · App Group:
-`group.com.telvox.telvoxChatMobileApp` · minimum iOS 15.
+Bundle ID: `com.telvox.chat` · App Group:
+`group.com.telvox.chat` · minimum iOS 15.
 
 ## Already done (no Mac needed)
 
@@ -42,7 +42,7 @@ Bundle ID: `com.telvox.telvoxChatMobileApp` · App Group:
 ## 2. Firebase for iPhone
 
 1. Firebase console, project `telvox-3275c` → *Add app* → iOS, bundle ID
-   `com.telvox.telvoxChatMobileApp`.
+   `com.telvox.chat`.
 2. From the `GoogleService-Info.plist` it offers, copy `GOOGLE_APP_ID` into
    `FIREBASE_IOS_APP_ID` and `API_KEY` into `FIREBASE_IOS_API_KEY` in
    `config/development.json`. The plist itself is not added to the project
@@ -88,7 +88,7 @@ Follow `receive_sharing_intent` 1.8.1's iOS steps
 2. Replace its `Info.plist` with the plugin's (text, URLs, images, video and
    files).
 3. Add the App Groups capability to the extension with
-   `group.com.telvox.telvoxChatMobileApp`, and a user-defined build setting
+   `group.com.telvox.chat`, and a user-defined build setting
    `CUSTOM_GROUP_ID` with the same value.
 4. In `ios/Podfile`, inside `target 'Runner'`, add
    `target 'Share Extension' do inherit! :search_paths end`; run `pod install`.
@@ -119,7 +119,7 @@ iPhone ring only while the app is open.
   its push token.
 - **Server** (`vnshah/telvox-chat`): store the VoIP token on the phone's
   `mobile_devices` row; for iPhones, `SendCallPushJob` sends an APNs push
-  (token auth with the same `.p8`, topic `com.telvox.telvoxChatMobileApp.voip`,
+  (token auth with the same `.p8`, topic `com.telvox.chat.voip`,
   `apns-push-type: voip`, short expiry) with the call id and caller, instead of
   the FCM data push; a withdrawn call ends it the same way.
 

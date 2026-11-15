@@ -10,7 +10,7 @@ same on both platforms; the extension only hands the files over.
 Done once, on a Mac with Xcode, by someone in the Apple developer team:
 
 1. **App Group.** In the Apple Developer portal create
-   `group.com.telvox.telvoxChatMobileApp`, and add it (Signing &
+   `group.com.telvox.chat`, and add it (Signing &
    Capabilities → App Groups) to the **Runner** target.
 2. **Extension target.** File → New → Target → *Share Extension*, named
    `ShareExtension`, language Swift; do not activate its scheme. Set its
@@ -38,7 +38,7 @@ Done once, on a Mac with Xcode, by someone in the Apple developer team:
    `ShareMedia-$(PRODUCT_BUNDLE_IDENTIFIER)`, and `AppGroupId` =
    `$(CUSTOM_GROUP_ID)`.
 6. **Build setting.** On both targets add the user-defined setting
-   `CUSTOM_GROUP_ID` = `group.com.telvox.telvoxChatMobileApp`.
+   `CUSTOM_GROUP_ID` = `group.com.telvox.chat`.
 7. **Podfile.** Inside `target 'Runner'`, add
    `target 'ShareExtension' do inherit! :search_paths end`, then
    `pod install`.
