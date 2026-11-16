@@ -128,6 +128,28 @@ final class CallRecording {
   private static var customer: CallAudioFile?
 
   static func register(messenger: FlutterBinaryMessenger) {
+    // What the phone is, for the sign-in history: model, iOS version, app version.
+    FlutterMethodChannel(name: "telvox/device", binaryMessenger: messenger)
+      .setMethodCallHandler { call, result in
+        guard call.method == "describe" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        var system = utsname()
+        uname(&system)
+        let machine = withUnsafeBytes(of: &system.machine) { raw in
+          String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        let bundle = Bundle.main.infoDictionary
+        result([
+          // The hardware id, such as iPhone16,2; the name the user gave the
+          // phone is personal and is not sent.
+          "model": machine.isEmpty ? UIDevice.current.model : machine,
+          "os": "iOS \(UIDevice.current.systemVersion)",
+          "version": bundle?["CFBundleShortVersionString"] as? String,
+          "build": bundle?["CFBundleVersion"] as? String,
+        ])
+      }
     FlutterMethodChannel(name: "telvox/call_recording", binaryMessenger: messenger)
       .setMethodCallHandler { call, result in
         switch call.method {

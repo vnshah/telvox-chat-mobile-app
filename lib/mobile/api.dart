@@ -11,6 +11,7 @@ import 'call_push.dart';
 import 'calls.dart';
 import 'connection.dart';
 import 'conversation_sync.dart';
+import 'device_identity.dart';
 import 'local_cache.dart';
 import 'media_cache.dart';
 import 'notification_sound.dart';
@@ -109,6 +110,11 @@ class MobileApi {
   String? token;
   int? wabaId;
   VoidCallback? onUnauthorized;
+
+  /// Every request names the app and the phone, so the server's sign-in
+  /// history and activity show which phone it was.
+  void identify(DeviceIdentity identity) =>
+      dio.options.headers['User-Agent'] = identity.userAgent;
 
   /// A request got no answer from the server (see [ConnectionMonitor]).
   VoidCallback? onUnreachable;
@@ -538,6 +544,8 @@ class MobileSession extends ChangeNotifier {
     awaitingNetwork = false;
     error = null;
     notifyListeners();
+    // Not awaited: the phone's name rides on the requests once it is known.
+    unawaited(deviceIdentity().then(api.identify, onError: (_) {}));
     try {
       notificationSound.value = NotificationSound.from(
         await store.read(_soundKey),
@@ -581,6 +589,13 @@ class MobileSession extends ChangeNotifier {
       install = newRequestId();
       await store.write('install_id', install);
     }
+    // The phone's model, system and app version, for the sign-in history.
+    // Never held up by the phone: without an answer it signs in without them.
+    final identity = await deviceIdentity().timeout(
+      const Duration(seconds: 2),
+      onTimeout: () => const DeviceIdentity(),
+    );
+    api.identify(identity);
     final result = object(
       await api.request(
         'auth/login',
@@ -591,9 +606,12 @@ class MobileSession extends ChangeNotifier {
           'password': password,
           'device_uuid': install,
           'platform': defaultTargetPlatform == TargetPlatform.iOS ? 1 : 2,
-          'device_name': defaultTargetPlatform == TargetPlatform.iOS
-              ? 'iPhone'
-              : 'Android phone',
+          'device_name':
+              identity.model ??
+              (defaultTargetPlatform == TargetPlatform.iOS
+                  ? 'iPhone'
+                  : 'Android phone'),
+          ...identity.loginFields,
         },
       ),
     );

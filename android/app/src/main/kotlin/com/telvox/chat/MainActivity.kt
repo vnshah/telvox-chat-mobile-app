@@ -37,6 +37,30 @@ class MainActivity : FlutterActivity() {
         videoChannel.setMethodCallHandler { call, result ->
             compressor.handle(call.method, call.arguments as? Map<*, *> ?: emptyMap<Any, Any>(), result)
         }
+        // What the phone is, for the sign-in history: model, Android version, app version.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "telvox/device")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "describe") return@setMethodCallHandler result.notImplemented()
+                val info = try {
+                    packageManager.getPackageInfo(packageName, 0)
+                } catch (_: Exception) {
+                    null
+                }
+                @Suppress("DEPRECATION")
+                val build = info?.let {
+                    if (android.os.Build.VERSION.SDK_INT >= 28) it.longVersionCode.toString() else it.versionCode.toString()
+                }
+                val brand = android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
+                val model = android.os.Build.MODEL
+                result.success(
+                    mapOf(
+                        "model" to if (model.startsWith(brand, ignoreCase = true)) model else "$brand $model",
+                        "os" to "Android ${android.os.Build.VERSION.RELEASE}",
+                        "version" to info?.versionName,
+                        "build" to build,
+                    ),
+                )
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "telvox/call_audio")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
