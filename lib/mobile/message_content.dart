@@ -279,21 +279,7 @@ class MessageContent {
             ? 'url'
             : 'list';
       }
-      if (type.contains('Order')) {
-        final order = object(params['order']);
-        line(order['status'] == null ? null : 'Order ${order['status']}');
-        for (final item in rows(order['items'])) {
-          line('${item['name'] ?? 'Item'} × ${item['quantity'] ?? 1}');
-        }
-        final amount = object(params['total_amount']);
-        final value = num.tryParse('${amount['value']}'),
-            offset = num.tryParse('${amount['offset']}');
-        if (value != null && offset != null && offset > 0) {
-          line(
-            '${params['currency'] ?? ''} ${(value / offset).toStringAsFixed(2)}',
-          );
-        }
-      }
+      // An order's items and amounts are drawn by its own card (orders.dart).
       if (text.isEmpty && body is Map && !body.containsKey('component')) {
         text = 'Form response';
         formResponse = true;
@@ -301,6 +287,21 @@ class MessageContent {
       }
       if (text.isEmpty) text = readableText(row['message_body']);
       if (text.isEmpty) text = 'Interactive message';
+      return;
+    }
+    if (type == 'order') {
+      // A customer's cart: what they typed with it, else how many items.
+      final order = object(p['order']);
+      line(order['text']);
+      if (text.isEmpty) {
+        final count = rows(order['product_items']).fold<int>(
+          0,
+          (sum, i) => sum + (int.tryParse('${i['quantity']}') ?? 1),
+        );
+        text = count == 0
+            ? 'Order'
+            : 'Order: $count ${count == 1 ? 'item' : 'items'}';
+      }
       return;
     }
     if (type == 'voice_call') {

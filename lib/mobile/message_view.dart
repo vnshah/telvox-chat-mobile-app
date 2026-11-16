@@ -19,6 +19,7 @@ import 'media.dart';
 import 'media_preview.dart';
 import 'models.dart';
 import 'message_content.dart';
+import 'orders.dart';
 import 'voice_waveform.dart';
 
 /// [contactName] names the quoted author: a customer usually quotes the
@@ -278,7 +279,63 @@ class LiveMessageView extends StatelessWidget {
     // WhatsApp frames each kind differently; anything else keeps the generic
     // bubble below with its text, media tiles, fields and buttons.
     final product = productCardOf(m);
+    final order = orderOf(m);
+    final orderDetails = orderDetailsOf(m);
+    final orderStatus = orderStatusOf(m);
+    Widget? footNote() => c.footer.isEmpty
+        ? null
+        : Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              c.footer,
+              key: const ValueKey('message-footer'),
+              style: const TextStyle(fontSize: 13, height: 1.3, color: T.muted),
+            ),
+          );
     final Widget? special = switch (m.type) {
+      // A customer's cart, as WhatsApp draws it, opening in full.
+      'order' when order != null => MessageBubble(
+        message: bare(order.note),
+        first: first,
+        maxWidth: 254 + 17,
+        contentBefore: OrderCard(order),
+        footer: BubbleButtons(
+          const [(null, 'View sent cart')],
+          onTap: (_) => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) =>
+                  OrderCartPage(order, sentAt: m.json['created_at']),
+            ),
+          ),
+        ),
+      ),
+      // A request to pay: its text, the order, and WhatsApp's pay button.
+      'interactiveOrderDetails' when orderDetails != null => MessageBubble(
+        message: bare(c.text),
+        first: first,
+        maxWidth: width,
+        contentAfter: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [OrderDetailsCard(orderDetails), ?footNote()],
+        ),
+        footer: BubbleButtons(
+          [(Icons.payments_outlined, orderDetails.button)],
+          onTap: (_) => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => OrderDetailsPage(orderDetails),
+            ),
+          ),
+        ),
+      ),
+      // An order update: where the order is, then its text.
+      'interactiveOrderStatus' when orderStatus != null => MessageBubble(
+        message: bare(c.text),
+        first: first,
+        maxWidth: width,
+        contentBefore: OrderStatusBadge(orderStatus),
+        contentAfter: footNote(),
+      ),
       'image' || 'video' when file != null => MessageBubble(
         message: bare(c.text),
         first: first,

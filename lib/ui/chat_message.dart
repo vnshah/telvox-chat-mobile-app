@@ -458,8 +458,17 @@ class MessageBubble extends StatelessWidget {
 /// WhatsApp's buttons under a message: full width, a hairline above each,
 /// the label centred with its icon. They show what the customer can tap.
 class BubbleButtons extends StatelessWidget {
-  const BubbleButtons(this.buttons, {super.key, this.iconAfter = false});
+  const BubbleButtons(
+    this.buttons, {
+    super.key,
+    this.iconAfter = false,
+    this.onTap,
+  });
   final List<(IconData?, String)> buttons;
+
+  /// Called with the tapped button's label; without it the buttons only show
+  /// what the customer was offered, as the web inbox draws them.
+  final void Function(String label)? onTap;
 
   /// The icon follows the label, as a dropdown's arrow does.
   final bool iconAfter;
@@ -469,43 +478,54 @@ class BubbleButtons extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       for (final (icon, label) in buttons)
-        Container(
-          constraints: const BoxConstraints(minHeight: 42),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-          decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: T.edge)),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (icon != null && !iconAfter)
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: Icon(icon, size: 18, color: T.green),
-                ),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: T.green,
+        _tappable(
+          label,
+          Container(
+            constraints: const BoxConstraints(minHeight: 42),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: T.edge)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (icon != null && !iconAfter)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Icon(icon, size: 18, color: T.green),
+                  ),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: T.green,
+                    ),
                   ),
                 ),
-              ),
-              if (icon != null && iconAfter)
-                Padding(
-                  padding: const EdgeInsets.only(left: 2),
-                  child: Icon(icon, size: 18, color: T.green),
-                ),
-            ],
+                if (icon != null && iconAfter)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 2),
+                    child: Icon(icon, size: 18, color: T.green),
+                  ),
+              ],
+            ),
           ),
         ),
     ],
   );
+
+  Widget _tappable(String label, Widget child) => onTap == null
+      ? child
+      : InkWell(
+          key: ValueKey('bubble-button-$label'),
+          onTap: () => onTap!(label),
+          child: child,
+        );
 }
 
 class _BubbleTail extends CustomPainter {
