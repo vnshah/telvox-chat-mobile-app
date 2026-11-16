@@ -588,7 +588,10 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
 ) {
   final lat = double.tryParse('${location['latitude']}');
   final lng = double.tryParse('${location['longitude']}');
-  if (lat == null || lng == null) return null;
+  // A place off the globe (a template filled with a placeholder) is no map.
+  if (lat == null || lng == null || lat.abs() > 90 || lng.abs() > 180) {
+    return null;
+  }
   return (
     latitude: lat,
     longitude: lng,

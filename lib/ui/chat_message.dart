@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'data.dart';
 import 'delivery_tick.dart';
 import 'theme.dart';
+import 'whatsapp_text.dart';
 
 // Count complete emoji sequences, including skin tones, flags and ZWJ families.
 // Numbers and punctuation stay normal text unless part of an emoji keycap.
@@ -85,8 +86,9 @@ class _MessageText extends StatelessWidget {
       children: [
         Text.rich(
           TextSpan(
-            text: message.text,
             children: [
+              // *bold*, _italic_ and the rest, as WhatsApp draws them.
+              ...whatsappSpans(message.text),
               WidgetSpan(
                 alignment: PlaceholderAlignment.bottom,
                 child: SizedBox(width: stampWidth + 7, height: stampHeight),
@@ -422,8 +424,8 @@ class MessageBubble extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (m.text.isNotEmpty)
-                        Text(
-                          m.text,
+                        Text.rich(
+                          TextSpan(children: whatsappSpans(m.text)),
                           style: const TextStyle(fontSize: 15, height: 1.3),
                         ),
                       contentAfter!,

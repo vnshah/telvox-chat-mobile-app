@@ -1,6 +1,7 @@
 import 'package:html/parser.dart' show parseFragment;
 
 import 'api.dart';
+import 'maps.dart' show locationOf;
 
 String readableText(Object? value) {
   if (value is! String) return '';
@@ -28,6 +29,23 @@ class MessageContent {
   /// and grey under the body.
   String footer = '';
 
+  /// A template's or interactive message's text header, which WhatsApp
+  /// shows in bold above the body.
+  String heading = '';
+
+  /// A template's location header: a place WhatsApp shows as a map.
+  Json? headerLocation;
+
+  /// A carousel template's cards, each with its picture, text and buttons.
+  final carousel = <CarouselCard>[];
+
+  /// The contact cards a customer shared.
+  final contacts = <Json>[];
+
+  /// What WhatsApp would not pass on: `revoke` (deleted), `album`,
+  /// `poll_creation` or another kind; null for a supported message.
+  String? unsupported;
+
   /// The customer's answers to a WhatsApp form (a flow), in [fields].
   bool formResponse = false;
   final media = <Json>[];
@@ -41,6 +59,8 @@ class MessageContent {
       buttons.isNotEmpty || media.isNotEmpty || fields.isNotEmpty;
   String get summary => text.isNotEmpty
       ? text
+      : heading.isNotEmpty
+      ? heading
       : fields.isNotEmpty
       ? 'Form response'
       : media.isNotEmpty
@@ -123,11 +143,22 @@ class MessageContent {
     } else if (type == 'footer') {
       footer = readableText(c['text']);
     } else if (type == 'carousel') {
-      for (final card in rows(c['cards'])) {
-        for (final part in rows(card['components'])) {
-          component(part);
-        }
+      // Each card is its list of components (or, from WhatsApp's own
+      // payload, an object holding them).
+      for (final card in (c['cards'] is List ? c['cards'] as List : const [])) {
+        final parts = card is List
+            ? rows(card)
+            : rows(object(card)['components']);
+        if (parts.isNotEmpty) carousel.add(CarouselCard.of(parts));
       }
+    } else if (type == 'header' &&
+        c['location'] != null &&
+        locationOf(object(c['location'])) != null) {
+      headerLocation = object(c['location']);
+    } else if (type == 'header' &&
+        readableText(c['text']).isNotEmpty &&
+        !['image', 'video', 'document'].any((k) => c[k] != null)) {
+      heading = readableText(c['text']);
     } else {
       line(c['text']);
       for (final kind in ['image', 'video', 'document', 'audio', 'sticker']) {
@@ -222,7 +253,11 @@ class MessageContent {
         component(c);
       }
       if (text.isEmpty) line(object(p['text'])['body']);
-      if (text.isEmpty && media.isEmpty) {
+      if (text.isEmpty &&
+          media.isEmpty &&
+          heading.isEmpty &&
+          headerLocation == null &&
+          carousel.isEmpty) {
         text = 'Template: ${readableText(row['message_body'])}';
       }
       return;
@@ -239,7 +274,7 @@ class MessageContent {
         form(nfm['response_json']);
       }
       final c = object(p['component'] ?? p['interactive']);
-      line(object(c['header'])['text']);
+      heading = readableText(object(c['header'])['text']);
       line(object(c['body'])['text']);
       footer = readableText(object(c['footer'])['text']);
       for (final kind in ['image', 'video', 'document']) {
@@ -285,8 +320,10 @@ class MessageContent {
         formResponse = true;
         form(body);
       }
-      if (text.isEmpty) text = readableText(row['message_body']);
-      if (text.isEmpty) text = 'Interactive message';
+      if (text.isEmpty && heading.isEmpty) {
+        text = readableText(row['message_body']);
+      }
+      if (text.isEmpty && heading.isEmpty) text = 'Interactive message';
       return;
     }
     if (type == 'order') {
@@ -328,7 +365,19 @@ class MessageContent {
       location(object(p['location']));
       return;
     }
+    if (type == 'unsupported') {
+      unsupported = readableText(object(p['unsupported'])['type'])
+          .ifEmpty('unknown');
+      text = switch (unsupported) {
+        'revoke' => 'This message was deleted',
+        'album' => 'Photo album',
+        'poll_creation' || 'poll' => 'Poll',
+        _ => 'Unsupported message',
+      };
+      return;
+    }
     if (type == 'contacts') {
+      contacts.addAll(rows(p['contacts']));
       for (final c in rows(p['contacts'])) {
         line(object(c['name'])['formatted_name']);
         for (final phone in rows(c['phones'])) {
@@ -369,4 +418,56 @@ class VoiceCall {
 
 extension on String {
   String ifEmpty(String fallback) => isEmpty ? fallback : this;
+}
+
+/// One card of a carousel template.
+class CarouselCard {
+  const CarouselCard({
+    this.image = '',
+    this.video = false,
+    this.text = '',
+    this.buttons = const [],
+  });
+
+  factory CarouselCard.of(List<Json> parts) {
+    var image = '', text = '';
+    var video = false;
+    final buttons = <(String, String)>[];
+    for (final part in parts) {
+      switch ('${part['type']}'.toLowerCase()) {
+        case 'header':
+          final media = object(part['image'] ?? part['video']);
+          video = part['video'] != null;
+          image = readableText(
+            media['link'] ?? media['media_path'] ?? media['url'],
+          );
+        case 'body':
+          text = readableText(part['text']);
+        case 'buttons':
+          for (final b in rows(part['buttons'])) {
+            final label = readableText(b['text']);
+            if (label.isEmpty) continue;
+            buttons.add((
+              label,
+              switch ('${b['type']}'.toUpperCase()) {
+                'URL' => 'url',
+                'PHONE_NUMBER' => 'phone',
+                'QUICK_REPLY' => 'reply',
+                _ => 'reply',
+              },
+            ));
+          }
+      }
+    }
+    return CarouselCard(
+      image: image,
+      video: video,
+      text: text,
+      buttons: buttons,
+    );
+  }
+
+  final String image, text;
+  final bool video;
+  final List<(String, String)> buttons;
 }

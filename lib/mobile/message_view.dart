@@ -10,6 +10,7 @@ import '../ui/theme.dart';
 import '../ui/data.dart' show Message;
 import '../ui/delivery_tick.dart';
 import '../ui/chat_message.dart';
+import '../ui/whatsapp_text.dart';
 import '../ui/file_type.dart';
 import 'media_save.dart' show DownloadButton;
 import '../ui/conversation.dart' show SwipeReply;
@@ -42,8 +43,15 @@ Message messagePresentation(
       : quoted['message_type'] == 'audio'
       ? MessageMedia.fromMessage(quoted, apiBase)
       : null;
+  // A text header is bold above the body, as WhatsApp draws it.
+  final heading = m.content.heading.replaceAll('*', '').trim();
+  final body = m.content.text;
   return Message(
-    m.content.text,
+    heading.isEmpty
+        ? body
+        : body.isEmpty
+        ? '*$heading*'
+        : '*$heading*\n$body',
     out: m.outgoing,
     time: const MobileClock().time(m.json['created_at']),
     reply: quoted == null ? null : MessageContent(quoted).summary,
@@ -293,6 +301,30 @@ class LiveMessageView extends StatelessWidget {
             ),
           );
     final Widget? special = switch (m.type) {
+      // A file the server never downloaded: say so, not an empty bubble.
+      'image' ||
+      'video' ||
+      'audio' ||
+      'document' ||
+      'sticker' when file == null => MessageBubble(
+        message: bare(c.text),
+        first: first,
+        maxWidth: 254 + 17,
+        contentBefore: UnavailableMedia(m.type),
+      ),
+      // What WhatsApp would not pass on: deleted, an album, a poll.
+      'unsupported' => MessageBubble(
+        message: bare(''),
+        first: first,
+        maxWidth: width,
+        contentBefore: UnsupportedNote(c.unsupported, c.text),
+      ),
+      'contacts' when c.contacts.isNotEmpty => MessageBubble(
+        message: bare(''),
+        first: first,
+        maxWidth: 254 + 17,
+        contentBefore: SharedContacts(c.contacts),
+      ),
       // A customer's cart, as WhatsApp draws it, opening in full.
       'order' when order != null => MessageBubble(
         message: bare(order.note),
@@ -311,7 +343,7 @@ class LiveMessageView extends StatelessWidget {
       ),
       // A request to pay: its text, the order, and WhatsApp's pay button.
       'interactiveOrderDetails' when orderDetails != null => MessageBubble(
-        message: bare(c.text),
+        message: bare(presentation.text),
         first: first,
         maxWidth: width,
         contentAfter: Column(
@@ -1662,17 +1694,19 @@ class _GenericBubble extends StatelessWidget {
     }
     // The bubble's full width less its thin frame, as WhatsApp fills it.
     final width = maxWidth - 6;
+    final place = c.headerLocation;
     return MessageBubble(
       message: presentation,
       first: first,
       maxWidth: maxWidth,
       tight: header != null,
-      contentBefore: header == null && others.isEmpty
+      contentBefore: header == null && others.isEmpty && place == null
           ? null
           : Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (place != null) LocationCard(place),
                 if (header != null)
                   HeaderMedia(
                     header,
@@ -1704,37 +1738,46 @@ class _GenericBubble extends StatelessWidget {
           : BubbleButtons([
               for (final b in c.buttons) (buttonIcon(b, c.buttonKinds[b]), b),
             ]),
-      contentAfter: c.footer.isEmpty && c.fields.isEmpty
+      contentAfter: c.footer.isEmpty && c.fields.isEmpty && c.carousel.isEmpty
           ? null
-          : ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 250),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (c.footer.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Text(
-                        c.footer,
-                        key: const ValueKey('message-footer'),
-                        style: const TextStyle(
-                          fontSize: 13,
-                          height: 1.3,
-                          color: T.muted,
-                        ),
-                      ),
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (c.footer.isNotEmpty || c.fields.isNotEmpty)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 250),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (c.footer.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Text(
+                              c.footer,
+                              key: const ValueKey('message-footer'),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                height: 1.3,
+                                color: T.muted,
+                              ),
+                            ),
+                          ),
+                        for (final f in c.fields.entries)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 5),
+                            child: Text(
+                              '${f.key}: ${f.value}',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ),
+                      ],
                     ),
-                  for (final f in c.fields.entries)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 5),
-                      child: Text(
-                        '${f.key}: ${f.value}',
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                    ),
-                ],
-              ),
+                  ),
+                if (c.carousel.isNotEmpty)
+                  CarouselStrip(c.carousel, apiBase: apiBase),
+              ],
             ),
     );
   }
@@ -2011,11 +2054,16 @@ ProductCardData? productCardOf(ApiMessage m) {
       );
     case 'interactiveMultipleProduct':
       final products = rows(body['products']);
-      if (products.isEmpty) return null;
+      // Without the catalogue here, the list still says how many it holds.
+      final listed = products.isNotEmpty
+          ? products.length
+          : rows(object(object(body['component'])['action'])['sections'])
+                .fold<int>(0, (n, s) => n + rows(s['product_items']).length);
+      if (listed == 0) return null;
       return (
-        image: text(products.first['image_url']),
+        image: products.isEmpty ? '' : text(products.first['image_url']),
         title: text(object(object(body['component'])['header'])['text']),
-        subtitle: '${products.length} Items',
+        subtitle: '$listed Items',
         button: 'View items',
       );
     case 'interactiveCatalogue':
@@ -2107,4 +2155,285 @@ class ProductCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A file the server never received from WhatsApp: what it was, and that it
+/// cannot be opened, in place of an empty bubble.
+class UnavailableMedia extends StatelessWidget {
+  const UnavailableMedia(this.type, {super.key});
+  final String type;
+  @override
+  Widget build(BuildContext context) {
+    final (icon, label) = switch (type) {
+      'image' => (Icons.image_not_supported_outlined, 'Photo'),
+      'video' => (Icons.videocam_off_outlined, 'Video'),
+      'audio' => (Icons.mic_off_outlined, 'Voice message'),
+      'sticker' => (Icons.emoji_emotions_outlined, 'Sticker'),
+      _ => (Icons.insert_drive_file_outlined, 'Document'),
+    };
+    return Container(
+      key: const ValueKey('media-unavailable'),
+      width: 250,
+      margin: const EdgeInsets.only(top: 2, bottom: 4),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .04),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 26, color: T.muted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: T.ink,
+                  ),
+                ),
+                const Text(
+                  'Not available: this file was not saved',
+                  style: TextStyle(fontSize: 12, color: T.muted),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A message WhatsApp does not pass on to business apps, said as WhatsApp
+/// says it: a deleted message, an album, a poll, or another kind.
+class UnsupportedNote extends StatelessWidget {
+  const UnsupportedNote(this.kind, this.label, {super.key});
+  final String? kind;
+  final String label;
+  @override
+  Widget build(BuildContext context) {
+    final (icon, hint) = switch (kind) {
+      'revoke' => (Icons.block, null),
+      'album' => (
+        Icons.photo_library_outlined,
+        'WhatsApp does not share albums with business apps',
+      ),
+      'poll_creation' || 'poll' => (
+        Icons.poll_outlined,
+        'WhatsApp does not share polls with business apps',
+      ),
+      _ => (
+        Icons.info_outline,
+        'WhatsApp does not share this kind of message with business apps',
+      ),
+    };
+    return ConstrainedBox(
+      key: const ValueKey('unsupported-note'),
+      constraints: const BoxConstraints(maxWidth: 250),
+      child: Padding(
+        padding: const EdgeInsets.only(top: 2, bottom: 2),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Icon(icon, size: 17, color: T.muted),
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontStyle: FontStyle.italic,
+                      color: T.secondary,
+                    ),
+                  ),
+                  if (hint != null)
+                    Text(
+                      hint,
+                      style: const TextStyle(fontSize: 12, color: T.muted),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Contact cards a customer shared: each name with its initial and numbers,
+/// as the web inbox lists them.
+class SharedContacts extends StatelessWidget {
+  const SharedContacts(this.contacts, {super.key});
+  final List<Json> contacts;
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: 250,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final (i, c) in contacts.indexed)
+          Container(
+            key: ValueKey('shared-contact-$i'),
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              border: i == contacts.length - 1
+                  ? null
+                  : const Border(bottom: BorderSide(color: T.edge)),
+            ),
+            child: Row(
+              children: [
+                () {
+                  final name = readableText(
+                    object(c['name'])['formatted_name'] ??
+                        object(c['name'])['first_name'],
+                  ).trim();
+                  return CircleAvatar(
+                    radius: 20,
+                    backgroundColor: T.surfaceHigh,
+                    child: name.isEmpty
+                        ? const Icon(Icons.person, color: T.muted)
+                        : Text(
+                            name.characters.first.toUpperCase(),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: T.ink,
+                            ),
+                          ),
+                  );
+                }(),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        readableText(object(c['name'])['formatted_name'])
+                            .ifBlank('Contact'),
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: T.ink,
+                        ),
+                      ),
+                      for (final phone in rows(c['phones']))
+                        Text(
+                          readableText(phone['phone']),
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: T.secondary,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
+/// A carousel template's cards in a row that scrolls sideways, each with its
+/// picture, text and buttons, as WhatsApp and the web inbox show them.
+class CarouselStrip extends StatelessWidget {
+  const CarouselStrip(this.cards, {super.key, required this.apiBase});
+  final List<CarouselCard> cards;
+  final String apiBase;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 8),
+    child: SingleChildScrollView(
+      key: const ValueKey('carousel'),
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final (i, card) in cards.indexed)
+            Container(
+              key: ValueKey('carousel-card-$i'),
+              width: 220,
+              margin: EdgeInsets.only(right: i == cards.length - 1 ? 0 : 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: T.edge),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    height: 130,
+                    child: () {
+                      final url = card.video
+                          ? null
+                          : mediaUri(card.image, apiBase);
+                      final fallback = ColoredBox(
+                        color: card.video
+                            ? const Color(0xFF1F2A33)
+                            : T.surfaceHigh,
+                        child: Icon(
+                          card.video
+                              ? Icons.play_circle_outline
+                              : Icons.image_outlined,
+                          size: 36,
+                          color: card.video ? Colors.white : T.muted,
+                        ),
+                      );
+                      return url == null
+                          ? fallback
+                          : Image.network(
+                              '$url',
+                              fit: BoxFit.cover,
+                              cacheWidth: 660,
+                              errorBuilder: (_, _, _) => fallback,
+                            );
+                    }(),
+                  ),
+                  if (card.text.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                      child: Text.rich(
+                        TextSpan(children: whatsappSpans(card.text)),
+                        maxLines: 8,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          height: 1.3,
+                          color: T.ink,
+                        ),
+                      ),
+                    ),
+                  if (card.buttons.isNotEmpty)
+                    BubbleButtons([
+                      for (final (label, kind) in card.buttons)
+                        (buttonIcon(label, kind), label),
+                    ]),
+                ],
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+extension on String {
+  String ifBlank(String fallback) => trim().isEmpty ? fallback : this;
 }
