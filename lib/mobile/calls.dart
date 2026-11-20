@@ -376,6 +376,14 @@ String callPermissionLabel(Json contact) {
   if (waba['allow_voice_calling'] != true && waba['allow_voice_calling'] != 1) {
     return (shown: false, blocked: null);
   }
+  // The number may call, but this agent may not place calls: the server
+  // refuses calls/initiate, so no button (an older server's flag asked only
+  // the number). Answering incoming calls is a separate permission.
+  final initiate = rows(object(config?['capabilities'])['actions'])
+      .where((a) => a['name'] == 'calls.initiate');
+  if (initiate.isNotEmpty && initiate.first['allowed'] != true) {
+    return (shown: false, blocked: null);
+  }
   if (waba['call_status_and_working_hours'] == false) {
     return (
       shown: true,

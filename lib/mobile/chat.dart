@@ -1246,9 +1246,12 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   /// Whether this number may ask the customer for permission to call.
   /// Not once the customer has allowed calls for good: WhatsApp refuses
   /// to ask again ("A permanent permission has already been approved").
+  /// Only for an agent who could then call: an older server's message type
+  /// asked only the number, so the agent's own start-call route counts too.
   bool get canAskToCall =>
       (widget.session.canSendType('call_permission_request') ??
           callEligibility(widget.session.config, callContact).shown) &&
+      widget.session.canRoute('calls.initiate') != false &&
       callPermissionStatus(callContact).state != CallPermission.permanent;
 
   /// Share a place picked on the map, or ask the customer for their location

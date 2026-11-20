@@ -215,6 +215,28 @@ void main() {
     );
   });
 
+  test('no call button for an agent who may not place calls', () {
+    Json config(bool? mayCall) => {
+      'inbox': {
+        'waba_user': {
+          'allow_voice_calling': true,
+          'call_status_and_working_hours': true,
+        },
+      },
+      'capabilities': {
+        'actions': [
+          {'name': 'inbox.send.message', 'allowed': true},
+          if (mayCall != null) {'name': 'calls.initiate', 'allowed': mayCall},
+        ],
+      },
+    };
+    // The number can call, but this agent cannot (only answer, or neither).
+    expect(callEligibility(config(false), permitted).shown, false);
+    expect(callEligibility(config(true), permitted).shown, true);
+    // A server that does not list the route: the number's flag decides.
+    expect(callEligibility(config(null), permitted).shown, true);
+  });
+
   test('an SDP arrives quoted or escaped and leaves as CRLF lines', () {
     expect(
       cleanSdp(r'"v=0\r\no=- 1 1 IN IP4 0.0.0.0"'),
