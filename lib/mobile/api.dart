@@ -236,6 +236,47 @@ class MobileSession extends ChangeNotifier {
   String get _accountKey =>
       'account.${Uri.parse(api.dio.options.baseUrl).host}';
 
+  /// The account's permissions again, from the server: an admin may have
+  /// changed them while the app was away (calling taken away, say). Keeps
+  /// what it had when the server cannot be reached.
+  Future<void> refreshSettings() async {
+    if (!ready) return;
+    final number = api.wabaId;
+    try {
+      final settings = await api.get('config');
+      // Only a whole answer replaces what the app runs on.
+      if (object(settings['inbox']).isEmpty || !ready || api.wabaId != number) {
+        return;
+      }
+      config = settings;
+      if (!calls.busy) calls.attach();
+      await _rememberAccount();
+      notifyListeners();
+    } catch (_) {
+      /* The next return to the app tries again. */
+    }
+  }
+
+  /// The server refused a call this account placed: it may no longer place
+  /// calls. The call button goes now, before the settings come back.
+  void callingRefused() {
+    final settings = config;
+    if (settings == null) return;
+    final inbox = object(settings['inbox']);
+    config = {
+      ...settings,
+      'inbox': {
+        ...inbox,
+        'waba_user': {
+          ...object(inbox['waba_user']),
+          'allow_voice_calling': false,
+        },
+      },
+    };
+    notifyListeners();
+    unawaited(refreshSettings());
+  }
+
   Future<void> _rememberAccount() async {
     if (user == null || config == null || api.wabaId == null) return;
     try {

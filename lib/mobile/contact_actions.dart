@@ -13,7 +13,7 @@ import 'models.dart' show formatPhone;
 import 'screens.dart' show failure, mobileNotice, openPage;
 import 'shared_media.dart';
 import 'call_history.dart';
-import 'calls.dart' show callEligibility, callPermissionLabel;
+import 'calls.dart' show callEligibility, callHistoryShown, callPermissionLabel;
 import 'conversation_window.dart';
 
 class ContactActionsPage extends StatefulWidget {
@@ -486,7 +486,7 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
                 label: 'WhatsApp calls',
                 value: callPermissionLabel(contact),
               ),
-            if (callEligibility(widget.session.config, contact).shown)
+            if (callHistoryShown(widget.session, contact))
               DetailRow(
                 icon: Icons.history,
                 label: 'Call history',

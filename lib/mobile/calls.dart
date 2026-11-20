@@ -369,6 +369,13 @@ String callPermissionLabel(Json contact) {
   };
 }
 
+/// Whether this account may see a contact's call history: its own permission
+/// (calling, answering or the call report), which a server lists; otherwise
+/// whether the number calls.
+bool callHistoryShown(MobileSession session, Json contact) =>
+    session.canRoute('inbox-shared.calls.history') ??
+    callEligibility(session.config, contact).shown;
+
 /// Whether this number and contact can be called now, worded for the call
 /// button's tooltip when not.
 ({bool shown, String? blocked}) callEligibility(Json? config, Json contact) {
@@ -538,7 +545,9 @@ class PhoneCalls extends ChangeNotifier {
   void attach() {
     detach();
     final waba = session.api.wabaId, user = number(session.user?['id']);
-    if (waba != null) {
+    // A number's live calls are only for those who may take calls on it;
+    // the server refuses the channel to anyone else.
+    if (waba != null && session.canRoute('calls.ready') != false) {
       _subscriptions.add(session.realtime.listen('calls.$waba', _outgoing));
     }
     if (user != null) {
@@ -610,6 +619,12 @@ class PhoneCalls extends ChangeNotifier {
       if (state == CallState.dialing) _set(CallState.ringing);
     } catch (e) {
       if (state != CallState.dialing) return;
+      // Refused for this account: calling was taken away since the chat opened.
+      if (e is ApiFailure && e.httpStatus == 403) {
+        session.callingRefused();
+        await _end('You no longer have permission to make calls.');
+        return;
+      }
       await _end(e is ApiFailure ? e.message : 'The call could not start.');
     }
   }
@@ -1480,8 +1495,16 @@ class CallButton extends StatelessWidget {
   const CallButton({super.key, required this.session, required this.contact});
   final MobileSession session;
   final Json contact;
+
+  /// Rebuilt with the session's settings, so the button goes as soon as the
+  /// app learns calling was taken away, without leaving the chat.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: session,
+    builder: (context, _) => _button(context),
+  );
+
+  Widget _button(BuildContext context) {
     final rule = callEligibility(session.config, contact);
     if (!rule.shown) return const SizedBox.shrink();
     return AppIconButton(

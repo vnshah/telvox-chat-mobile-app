@@ -104,6 +104,13 @@ Future<Harness> harness(WidgetTester tester) async {
       return answer(r, h, {'auth': 'app-key:signature'});
     }
     if (r.path.startsWith('inbox/calls/')) posts.add(r);
+    // Contact 403: the server refuses the call (calling taken away).
+    if (r.path == 'inbox/calls/initiate' &&
+        (r.data as Map)['contact_id'] == 403) {
+      return answer(r, h, {
+        'message': 'User does not have the right permissions.',
+      }, 403);
+    }
     if (r.path == 'inbox/calls/offer' &&
         (r.data as Map)['call_id'] == 'wacid.GONE') {
       return answer(r, h, {
@@ -237,6 +244,66 @@ void main() {
     expect(callEligibility(config(null), permitted).shown, true);
   });
 
+  test('back in the app, permissions are fetched again', () async {
+    Json? served;
+    final session =
+        MobileSession(
+            fakeApi((r, h) => answer(r, h, r.path == 'config' ? served : {})),
+            MemoryStore(),
+          )
+          ..user = {'id': 1}
+          ..config = {
+            'inbox': {
+              'waba_user': {'allow_voice_calling': true},
+            },
+          };
+    session.api
+      ..token = 'token'
+      ..wabaId = 7;
+    var told = 0;
+    session.addListener(() => told++);
+
+    // A half answer never replaces the settings the app runs on.
+    served = {'success': true};
+    await session.refreshSettings();
+    expect(callEligibility(session.config, permitted).shown, isTrue);
+
+    // The admin took calling away while the app was in the background.
+    served = {
+      'inbox': {
+        'waba_user': {'allow_voice_calling': false},
+      },
+    };
+    await session.refreshSettings();
+    expect(callEligibility(session.config, permitted).shown, isFalse);
+    expect(told, 1);
+  });
+
+  test('call history follows its own permission, not the call button', () {
+    final session = MobileSession(
+      fakeApi((r, h) => answer(r, h, {})),
+      MemoryStore(),
+    );
+    Json config({required bool history, required bool call}) => {
+      'inbox': {
+        'waba_user': {'allow_voice_calling': call},
+      },
+      'capabilities': {
+        'actions': [
+          {'name': 'inbox-shared.calls.history', 'allowed': history},
+          {'name': 'calls.initiate', 'allowed': call},
+        ],
+      },
+    };
+    // Answers calls (or reads the call report) but may not place them.
+    session.config = config(history: true, call: false);
+    expect(callHistoryShown(session, permitted), isTrue);
+    expect(callEligibility(session.config, permitted).shown, isFalse);
+    // No calling permission of any kind.
+    session.config = config(history: false, call: false);
+    expect(callHistoryShown(session, permitted), isFalse);
+  });
+
   test('an SDP arrives quoted or escaped and leaves as CRLF lines', () {
     expect(
       cleanSdp(r'"v=0\r\no=- 1 1 IN IP4 0.0.0.0"'),
@@ -329,6 +396,43 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
     await tester.pumpAndSettle();
     expect(find.byType(CallScreen), findsNothing);
+    h.session.realtime.stop();
+    await tester.pump();
+    h.session.dispose();
+  });
+
+  testWidgets('a call refused for want of permission takes the button away', (
+    tester,
+  ) async {
+    final h = await harness(tester);
+    final refused = {...permitted, 'id': 403};
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: T.themeFor(TargetPlatform.android),
+        home: Scaffold(
+          body: Center(
+            child: CallButton(session: h.session, contact: refused),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byTooltip('Voice call'));
+    await settle(tester);
+    expect(
+      find.text('You no longer have permission to make calls.'),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(find.byType(CallScreen), findsNothing);
+    // Gone from the chat at once, without leaving it.
+    expect(find.byTooltip('Voice call'), findsNothing);
+    expect(
+      object(
+        object(h.session.config?['inbox'])['waba_user'],
+      )['allow_voice_calling'],
+      isFalse,
+    );
     h.session.realtime.stop();
     await tester.pump();
     h.session.dispose();

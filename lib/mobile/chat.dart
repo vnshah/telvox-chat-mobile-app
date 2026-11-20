@@ -2535,10 +2535,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
                     OverflowMenu(
                       items: [
                         (label: 'Contact details', onPressed: openContact),
-                        if (callEligibility(
-                          widget.session.config,
-                          callContact,
-                        ).shown)
+                        if (callHistoryShown(widget.session, callContact))
                           (
                             label: 'Call history',
                             onPressed: () => openPage(

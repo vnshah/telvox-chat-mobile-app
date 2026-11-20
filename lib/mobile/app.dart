@@ -75,6 +75,8 @@ class _MobileApplicationState extends State<MobileApplication>
     switch (state) {
       case AppLifecycleState.resumed:
         session.connection.resume();
+        // Permissions may have changed while away (calling taken away, say).
+        unawaited(session.refreshSettings());
       case AppLifecycleState.paused || AppLifecycleState.hidden:
         session.connection.pause();
       default:
