@@ -10,6 +10,7 @@ import '../core/config/app_config.dart';
 import 'call_push.dart';
 import 'calls.dart';
 import 'connection.dart';
+import 'models.dart' show maskNumber;
 import 'conversation_sync.dart';
 import 'device_identity.dart';
 import 'local_cache.dart';
@@ -256,6 +257,11 @@ class MobileSession extends ChangeNotifier {
       /* The next return to the app tries again. */
     }
   }
+
+  /// A customer's raw number as this account may see it: masked when the
+  /// number's masking applies to it, as the web inbox shows it.
+  String shownNumber(Object? raw) =>
+      maskNumber(raw, object(config?['inbox'])['number_masking']);
 
   /// The server refused a call this account placed: it may no longer place
   /// calls. The call button goes now, before the settings come back.

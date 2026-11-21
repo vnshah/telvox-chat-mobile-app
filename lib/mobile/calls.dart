@@ -1017,7 +1017,7 @@ class PhoneCalls extends ChangeNotifier {
           id: uuid,
           nameCaller: _name,
           appName: 'Telvox Chat',
-          handle: '${contact['phone'] ?? contact['wa_id'] ?? ''}',
+          handle: session.shownNumber(contact['phone'] ?? contact['wa_id']),
           type: 0,
           extra: {'call_id': callId ?? ''},
           callingNotification: const NotificationParams(
@@ -1044,8 +1044,8 @@ class PhoneCalls extends ChangeNotifier {
   String get _name {
     final name = readableText(contact['profile_name']);
     if (name.isNotEmpty) return name;
-    final phone = '${contact['phone'] ?? contact['wa_id'] ?? ''}';
-    return phone.isEmpty ? 'WhatsApp call' : '+$phone';
+    final phone = session.shownNumber(contact['phone'] ?? contact['wa_id']);
+    return phone.isEmpty ? 'WhatsApp call' : formatPhone(phone);
   }
 
   void _fresh() {
@@ -1187,7 +1187,11 @@ class _CallScreenState extends State<CallScreen> {
   Widget build(BuildContext context) {
     final c = widget.calls;
     final name = readableText(c.contact['profile_name'] ?? c.contact['name'])
-        .ifEmpty('+${c.contact['phone'] ?? c.contact['wa_id'] ?? ''}');
+        .ifEmpty(
+          formatPhone(
+            c.session.shownNumber(c.contact['phone'] ?? c.contact['wa_id']),
+          ),
+        );
     final initials = name.trim().isEmpty
         ? '?'
         : name

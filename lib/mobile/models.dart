@@ -132,15 +132,44 @@ class MobileClock {
 }
 
 /// Readable phone number: `+91 99999 99999` for Indian numbers, `+` and the digits
-/// otherwise. Masked numbers (with *) are shown exactly as the server sends.
+/// otherwise. A number already laid out (spaces) or masked is shown exactly as
+/// the server sends it: masking hides digits behind a character such as `•`,
+/// and reading only the digits out of `••••••3210` would show `+3210`.
 String formatPhone(Object? raw) {
   final text = '${raw ?? ''}'.trim();
-  if (text.isEmpty || text.contains('*') || text.contains(' ')) return text;
+  if (text.isEmpty || RegExp(r'[^0-9+]').hasMatch(text)) return text;
   final digits = text.replaceAll(RegExp(r'[^0-9]'), '');
   if (digits.length == 12 && digits.startsWith('91')) {
     return '+91 ${digits.substring(2, 7)} ${digits.substring(7)}';
   }
   return digits.isEmpty ? text : '+$digits';
+}
+
+/// A number masked by this viewer's masking rule (`inbox.number_masking` in
+/// the account's config), as the web inbox masks it. Most numbers come from
+/// the server already masked (`display_wa_id`); a call carries only the raw
+/// number, so that one is masked here. A viewer allowed the full number gets
+/// a rule with `enabled: false` and the number back unchanged.
+String maskNumber(Object? raw, Object? rule) {
+  final value = '${raw ?? ''}'.trim();
+  final cfg = object(rule);
+  if (value.isEmpty || cfg['enabled'] != true) return value;
+  final count = number(cfg['count']) ?? 0;
+  if (count < 1 || count >= value.length) return value;
+  final given = '${cfg['mask_char'] ?? ''}';
+  final char = given.isEmpty ? '•' : given;
+  final hidden = char * (value.length - count);
+  switch (number(cfg['position'])) {
+    case 1:
+      return value.substring(0, count) + hidden;
+    case 3:
+      final left = (count + 1) ~/ 2;
+      return value.substring(0, left) +
+          hidden +
+          value.substring(value.length - (count - left));
+    default:
+      return hidden + value.substring(value.length - count);
+  }
 }
 
 class ApiMessage {

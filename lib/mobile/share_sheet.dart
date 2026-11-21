@@ -254,7 +254,7 @@ class _ShareTargetsPageState extends State<ShareTargetsPage> {
       subtitle: Text(
         window == false
             ? 'Window closed: only a template can be sent'
-            : formatPhone('${chat['wa_id'] ?? ''}'),
+            : formatPhone('${chat['display_wa_id'] ?? chat['wa_id'] ?? ''}'),
         style: TextStyle(
           fontSize: 12.5,
           color: window == false ? T.danger : T.muted,

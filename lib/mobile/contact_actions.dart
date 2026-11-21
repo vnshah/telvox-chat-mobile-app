@@ -368,7 +368,9 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
     final canAssign = plan.available;
     final notes = this.notes;
     final latest = notes.isEmpty ? null : readableText(notes.first['content']);
-    final shown = name.isEmpty ? formatPhone(c['wa_id']) : name;
+    final shown = name.isEmpty
+        ? formatPhone(c['display_wa_id'] ?? c['wa_id'])
+        : name;
     return DetailScaffold(
       // WhatsApp's contact info has no title; the header says who it is.
       title: '',
