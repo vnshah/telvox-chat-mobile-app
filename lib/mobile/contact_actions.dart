@@ -368,9 +368,9 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
     final canAssign = plan.available;
     final notes = this.notes;
     final latest = notes.isEmpty ? null : readableText(notes.first['content']);
-    final shown = name.isEmpty
-        ? formatPhone(c['display_wa_id'] ?? c['wa_id'])
-        : name;
+    final phone = formatPhone(c['display_wa_id'] ?? c['wa_id']);
+    // A customer with no name is headed by their number; it is not repeated below.
+    final shown = name.isEmpty ? phone : name;
     return DetailScaffold(
       // WhatsApp's contact info has no title; the header says who it is.
       title: '',
@@ -393,7 +393,7 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
             avatarSeed: widget.id,
             avatarImage: '${c['profile_url'] ?? ''}',
             title: shown,
-            subtitle: formatPhone(c['display_wa_id'] ?? c['wa_id']),
+            subtitle: name.isEmpty ? null : phone,
             onTitleTap: editName,
             online: open,
             status: open

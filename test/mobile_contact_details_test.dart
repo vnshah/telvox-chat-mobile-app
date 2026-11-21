@@ -487,4 +487,44 @@ void main() {
     );
     await close(tester, session);
   });
+
+  testWidgets('a customer\'s masked number shows once, with its mask', (
+    tester,
+  ) async {
+    Json withName(String name) {
+      final body = details();
+      final data = object(body['data']);
+      return {
+        ...body,
+        'data': {
+          ...data,
+          'contact': {
+            ...object(data['contact']),
+            'profile_name': name,
+            'wa_id': '919724105194',
+            'display_wa_id': '••••••••5194',
+          },
+        },
+      };
+    }
+
+    var session = await open(
+      tester,
+      (s) => ContactActionsPage(s, 12),
+      (r) => r.path == 'inbox/getContactDetails' ? withName('Priya') : null,
+    );
+    expect(find.text('Priya'), findsOneWidget);
+    expect(find.text('••••••••5194'), findsOneWidget);
+    expect(find.textContaining('9724105194'), findsNothing);
+    await close(tester, session);
+
+    session = await open(
+      tester,
+      (s) => ContactActionsPage(s, 12),
+      (r) => r.path == 'inbox/getContactDetails' ? withName('') : null,
+    );
+    expect(find.text('••••••••5194'), findsOneWidget);
+    expect(find.textContaining('9724105194'), findsNothing);
+    await close(tester, session);
+  });
 }
