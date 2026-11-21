@@ -741,6 +741,11 @@ class PhoneCalls extends ChangeNotifier {
         if (id == callId && state == CallState.incoming) _end('Missed call');
       case 'call_ended':
         if (id == callId && busy) _end('Call ended');
+      // An admin took calling away: the call button goes now, not on the
+      // next return to the app. A call in progress is hung up by the server.
+      case 'calling_permission':
+        if (d['can_answer'] == false) _canAnswer = false;
+        if (d['can_call'] == false) session.callingRefused();
     }
   }
 

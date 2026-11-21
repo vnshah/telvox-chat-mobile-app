@@ -401,6 +401,34 @@ void main() {
     h.session.dispose();
   });
 
+  testWidgets('calling taken away by an admin takes the button away at once', (
+    tester,
+  ) async {
+    final h = await harness(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: T.themeFor(TargetPlatform.android),
+        home: Scaffold(
+          body: Center(
+            child: CallButton(session: h.session, contact: permitted),
+          ),
+        ),
+      ),
+    );
+    expect(find.byTooltip('Voice call'), findsOneWidget);
+
+    h.socket.server('calling_permission', {
+      'can_call': false,
+      'can_answer': false,
+    }, channel: 'private-App.Models.User.1');
+    await settle(tester);
+
+    expect(find.byTooltip('Voice call'), findsNothing);
+    h.session.realtime.stop();
+    await tester.pump();
+    h.session.dispose();
+  });
+
   testWidgets('a call refused for want of permission takes the button away', (
     tester,
   ) async {
