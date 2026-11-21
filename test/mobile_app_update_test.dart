@@ -123,19 +123,24 @@ void main() {
     tester,
   ) async {
     final offered = ValueNotifier<Json?>({..._required, 'status': 'available'});
+    // Where the app puts it: in the app's builder, above its navigator (and
+    // so above the overlay that tooltips and the like need).
     await tester.pumpWidget(
       MaterialApp(
-        home: UpdateOfferBar(
-          offered,
-          child: const Scaffold(body: Text('Chats')),
-        ),
+        builder: (_, child) => UpdateOfferBar(offered, child: child!),
+        home: const Scaffold(body: Text('Chats')),
       ),
     );
     await tester.pumpAndSettle();
     expect(find.text('New version available'), findsOneWidget);
     expect(find.text('Chats'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Not now'));
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.widget<Icon>(find.byIcon(Icons.close_rounded)).semanticLabel,
+      'Not now',
+    );
+    await tester.tap(find.byIcon(Icons.close_rounded));
     await tester.pumpAndSettle();
     expect(find.text('New version available'), findsNothing);
 

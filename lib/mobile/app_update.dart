@@ -273,14 +273,18 @@ class _UpdateOfferBarState extends State<UpdateOfferBar> {
                     onPressed: () => openUpdateLink(url),
                     child: const Text('Update'),
                   ),
+                  // No tooltip: the bar sits above the app's navigator, so
+                  // there is no overlay here for one to show in.
                   IconButton(
-                    tooltip: 'Not now',
                     visualDensity: VisualDensity.compact,
                     iconSize: 18,
                     color: Colors.white,
                     onPressed: () =>
                         setState(() => dismissed = offer['latest_build']),
-                    icon: const Icon(Icons.close_rounded),
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      semanticLabel: 'Not now',
+                    ),
                   ),
                   const SizedBox(width: 4),
                 ],
