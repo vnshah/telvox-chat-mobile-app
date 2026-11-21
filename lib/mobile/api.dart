@@ -112,6 +112,11 @@ class MobileApi {
   int? wabaId;
   VoidCallback? onUnauthorized;
 
+  /// Set when the server refuses this build as too old (426): what to show
+  /// on the update page. Every request can bring it, so an old app is
+  /// stopped wherever it is; cleared when the server lets the build in again.
+  final updateRequired = ValueNotifier<Json?>(null);
+
   /// Every request names the app and the phone, so the server's sign-in
   /// history and activity show which phone it was.
   void identify(DeviceIdentity identity) =>
@@ -149,6 +154,12 @@ class MobileApi {
       final status = response.statusCode ?? 0;
       if (status == 401 && authenticated && requestToken == token) {
         onUnauthorized?.call();
+      }
+      if (status == 426) {
+        updateRequired.value = {
+          'status': 'required',
+          ...object(body['update']),
+        };
       }
       if (status < 200 ||
           status >= 300 ||
@@ -191,8 +202,12 @@ class MobileApi {
     }
   }
 
-  Future<Json> get(String path, {Json? query}) async =>
-      object(await request(path, query: query));
+  Future<Json> get(
+    String path, {
+    Json? query,
+    bool authenticated = true,
+  }) async =>
+      object(await request(path, query: query, authenticated: authenticated));
   Future<Json> post(String path, [Json? body]) async =>
       object(await request(path, method: 'POST', data: body));
 }
@@ -255,6 +270,32 @@ class MobileSession extends ChangeNotifier {
       notifyListeners();
     } catch (_) {
       /* The next return to the app tries again. */
+    }
+  }
+
+  /// A newer build the server offers but does not require: the app shows a
+  /// dismissible "new version" bar while it is set.
+  final updateOffered = ValueNotifier<Json?>(null);
+
+  /// Asks the server whether this build is current, may update or must
+  /// update (on launch and on each return to the app, signed in or not).
+  /// Offline, nothing changes: the last answer stands.
+  Future<void> checkForUpdate() async {
+    try {
+      api.identify(await deviceIdentity().timeout(const Duration(seconds: 3)));
+    } catch (_) {
+      /* Without its build the server cannot judge the app; it lets it in. */
+    }
+    try {
+      final update = object(
+        (await api.get('app/version', authenticated: false))['update'],
+      );
+      api.updateRequired.value = update['status'] == 'required' ? update : null;
+      updateOffered.value = update['status'] == 'available' ? update : null;
+    } on ApiFailure catch (failure) {
+      // A 426 has already set updateRequired.
+      if (failure.httpStatus != 426) return;
+      updateOffered.value = null;
     }
   }
 

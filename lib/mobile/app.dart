@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../ui/theme.dart';
 import 'api.dart';
+import 'app_update.dart';
 import 'boot_screen.dart';
 import 'calls.dart';
 import 'connection.dart';
@@ -52,6 +53,8 @@ class _MobileApplicationState extends State<MobileApplication>
     // Media already on the phone opens from it at once.
     unawaited(MediaCache.instance.load().catchError((_) {}));
     unawaited(session.restore());
+    // Whether this build must or may update, before anything else is asked.
+    unawaited(session.checkForUpdate());
     session.callPush.start();
     shares.pending.addListener(_offerShare);
     session.addListener(_offerShare);
@@ -77,6 +80,8 @@ class _MobileApplicationState extends State<MobileApplication>
         session.connection.resume();
         // Permissions may have changed while away (calling taken away, say).
         unawaited(session.refreshSettings());
+        // An update may have been required (or installed) while away.
+        unawaited(session.checkForUpdate());
       case AppLifecycleState.paused || AppLifecycleState.hidden:
         session.connection.pause();
       default:
@@ -120,8 +125,21 @@ class _MobileApplicationState extends State<MobileApplication>
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: session,
+    listenable: Listenable.merge([session, session.api.updateRequired]),
     builder: (context, _) {
+      // Too old to be used: the update page is the whole app until updated.
+      if (session.api.updateRequired.value case final update?) {
+        return MaterialApp(
+          key: const ValueKey('update-required'),
+          title: 'Telvox Chat',
+          debugShowCheckedModeBanner: false,
+          theme: T.themeFor(defaultTargetPlatform),
+          home: UpdateRequiredScreen(
+            update: update,
+            checkAgain: session.checkForUpdate,
+          ),
+        );
+      }
       final boot = _boot;
       final app =
           '$boot:${session.signedIn}:${session.ready}:${session.generation}';
@@ -165,7 +183,10 @@ class _MobileApplicationState extends State<MobileApplication>
       // Offline, a bar across the top; the app stays usable beneath it.
       child: OfflineBar(
         session.connection,
-        child: OngoingCallBar(session.calls, child: child!),
+        child: UpdateOfferBar(
+          session.updateOffered,
+          child: OngoingCallBar(session.calls, child: child!),
+        ),
       ),
     ),
     // Opened offline with no account kept yet: it loads once back online.
