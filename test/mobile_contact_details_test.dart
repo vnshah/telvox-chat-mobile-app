@@ -526,5 +526,20 @@ void main() {
     expect(find.text('••••••••5194'), findsOneWidget);
     expect(find.textContaining('9724105194'), findsNothing);
     await close(tester, session);
+
+    // A name that is only the number reads as no name: the masked number
+    // once, and a "?" avatar rather than a masked dot.
+    session = await open(
+      tester,
+      (s) => ContactActionsPage(s, 12),
+      (r) => r.path == 'inbox/getContactDetails'
+          ? withName('+91 97241 05194')
+          : null,
+    );
+    expect(find.text('••••••••5194'), findsOneWidget);
+    expect(find.text('?'), findsOneWidget);
+    expect(find.text('•'), findsNothing);
+    expect(find.textContaining('97241'), findsNothing);
+    await close(tester, session);
   });
 }
