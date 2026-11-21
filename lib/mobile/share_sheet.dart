@@ -12,7 +12,6 @@ import 'chat.dart' show LiveChat;
 import 'conversation_window.dart';
 import 'media.dart';
 import 'media_quality.dart';
-import 'message_content.dart' show readableText;
 import 'message_view.dart' show VideoFirstFrame;
 import 'models.dart';
 import 'screens.dart' show openPage;
@@ -265,10 +264,7 @@ class _ShareTargetsPageState extends State<ShareTargetsPage> {
 }
 
 String _name(Json chat) {
-  final name = readableText(chat['profile_name']);
-  return name.isNotEmpty
-      ? name
-      : formatPhone('${chat['display_wa_id'] ?? chat['wa_id'] ?? ''}');
+  return customerLabel(chat);
 }
 
 /// Whether the chat's WhatsApp window is open: true or false when the list

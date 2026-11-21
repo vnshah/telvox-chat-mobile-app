@@ -172,6 +172,56 @@ String maskNumber(Object? raw, Object? rule) {
   }
 }
 
+/// Whether a customer's name is only their phone number, as WhatsApp leaves
+/// it for a customer with no name, written with or without the country code,
+/// spaces, dashes or brackets.
+bool nameIsNumber(Object? name, Json contact) {
+  final digits = '${name ?? ''}'.replaceAll(RegExp(r'[\s+\-().]'), '');
+  if (!RegExp(r'^\d{6,}$').hasMatch(digits)) return false;
+  for (final raw in [contact['wa_id'], contact['phone']]) {
+    final number = '${raw ?? ''}'.replaceAll(RegExp(r'\D'), '');
+    if (number.length < 6) continue;
+    if (number.endsWith(digits) || digits.endsWith(number)) return true;
+  }
+  return false;
+}
+
+/// A customer's name as this viewer may see it. A name that is only the
+/// customer's number would show the number whole where the number itself is
+/// masked, so it is masked as the number is: by the server's `display_wa_id`
+/// or, for a call that carries only the raw number, by [mask]. A viewer
+/// allowed the full number sees the name as saved.
+String customerName(
+  Object? name,
+  Json contact, [
+  String Function(Object? raw)? mask,
+]) {
+  final text = readableText(name);
+  if (!nameIsNumber(text, contact)) return text;
+  final display =
+      contact['display_wa_id'] ??
+      mask?.call(contact['phone'] ?? contact['wa_id']);
+  final shown = formatPhone(display);
+  return RegExp(r'[^0-9+ ]').hasMatch(shown) ? shown : text;
+}
+
+/// A customer as a title: their name, or their number when they have none,
+/// either one masked as this viewer may see it.
+String customerLabel(Json contact, [String Function(Object? raw)? mask]) {
+  final name = customerName(
+    readableText(contact['profile_name']).isEmpty
+        ? contact['waba_profile_name']
+        : contact['profile_name'],
+    contact,
+    mask,
+  );
+  if (name.isNotEmpty) return name;
+  final number =
+      contact['display_wa_id'] ??
+      (mask ?? (raw) => '${raw ?? ''}')(contact['phone'] ?? contact['wa_id']);
+  return formatPhone(number);
+}
+
 class ApiMessage {
   ApiMessage(this.json);
   final Json json;

@@ -865,8 +865,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       ConversationSearchPage(
         widget.session,
         contactId: contactId,
-        contactName:
-            '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}',
+        contactName: customerLabel(widget.contact, widget.session.shownNumber),
       ),
     );
     if (found != null && mounted) jumpTo(id: number(found['id']));
@@ -1083,7 +1082,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
       ? (readableText(m.json['sender_name']).isEmpty
             ? 'You'
             : readableText(m.json['sender_name']))
-      : '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}';
+      : customerLabel(widget.contact, widget.session.shownNumber);
 
   Future<void> attachMenu(bool canTemplate) async {
     // Product only where the number has a catalogue to send from.
@@ -1220,7 +1219,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
   }
 
   String get contactName =>
-      '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}';
+      customerLabel(widget.contact, widget.session.shownNumber);
 
   /// WhatsApp's camera: a photo or video, reviewed and captioned, then sent.
   Future<void> camera() async {
@@ -2410,8 +2409,10 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
           onCallBack: callable
               ? () => startCall(context, widget.session, callContact)
               : null,
-          contactName:
-              '${widget.contact['profile_name'] ?? widget.contact['display_wa_id'] ?? phone}',
+          contactName: customerLabel(
+            widget.contact,
+            widget.session.shownNumber,
+          ),
           businessName: widget.session.wabaName,
           onQuoteTap:
               widget.ticketId == null &&
@@ -2425,7 +2426,7 @@ class _LiveChatState extends State<LiveChat> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final name = '${widget.contact['profile_name'] ?? phone}';
+    final name = customerLabel(widget.contact, widget.session.shownNumber);
     final permission = policy;
     final swap = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
@@ -2949,7 +2950,11 @@ class _TemplatePickerState extends State<TemplatePicker> {
   @override
   Widget build(BuildContext context) {
     final all = templates;
-    final name = readableText(widget.contact['profile_name']);
+    final name = customerName(
+      widget.contact['profile_name'],
+      widget.contact,
+      widget.session.shownNumber,
+    );
     final categories = <String>{
       for (final t in all ?? const <Json>[]) '${t['category']}'.toUpperCase(),
     }.where((c) => c.isNotEmpty).toList()..sort();

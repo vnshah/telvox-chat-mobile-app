@@ -53,7 +53,11 @@ class _CallHistoryPageState extends State<CallHistoryPage> {
 
   @override
   Widget build(BuildContext context) {
-    final name = readableText(widget.contact['profile_name']);
+    final name = customerName(
+      widget.contact['profile_name'],
+      widget.contact,
+      widget.session.shownNumber,
+    );
     final list = calls;
     return Scaffold(
       appBar: AppBar(

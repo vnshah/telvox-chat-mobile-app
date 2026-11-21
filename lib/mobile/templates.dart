@@ -6,7 +6,7 @@ import 'media.dart';
 import 'template_plan.dart';
 import 'send_policy.dart';
 import 'detail_layout.dart' show DetailSection;
-import 'message_content.dart' show readableText;
+import 'models.dart' show customerName;
 import 'screens.dart' show failure, mobileNotice;
 
 class TemplateSend extends StatefulWidget {
@@ -282,7 +282,11 @@ class _TemplateSendState extends State<TemplateSend> {
   @override
   Widget build(BuildContext context) {
     final t = widget.template;
-    final name = readableText(widget.contact['profile_name']);
+    final name = customerName(
+      widget.contact['profile_name'],
+      widget.contact,
+      widget.session.shownNumber,
+    );
     final ready = plan;
     return Scaffold(
       appBar: AppBar(

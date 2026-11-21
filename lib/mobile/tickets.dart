@@ -10,7 +10,7 @@ import 'contact_actions.dart' show ContactFieldsPage;
 import 'shared_media.dart' show MediaGalleryPage;
 import 'detail_layout.dart';
 import 'editors.dart';
-import 'models.dart' show MobileClock, formatPhone;
+import 'models.dart' show MobileClock, customerName, formatPhone;
 import 'send_policy.dart' show flag, ticketSendDetail;
 import 'realtime.dart';
 import 'screens.dart' show failure, mobileNotice, openPage;
@@ -366,7 +366,11 @@ class _TicketPageState extends State<TicketPage> {
         if (entry.value is Map) object(entry.value)..['key'] = entry.key,
     ];
     final apple = isCupertino(context);
-    final who = '${contact['profile_name'] ?? ''}';
+    final who = customerName(
+      contact['profile_name'],
+      contact,
+      widget.session.shownNumber,
+    );
     return DetailScaffold(
       title: number,
       busy: busy,
@@ -626,7 +630,8 @@ class _CreateTicketPageState extends State<CreateTicketPage> {
     final created = await openPage<bool>(
       context,
       ActionEditor(
-        title: 'New ticket for ${selected['profile_name']}',
+        title:
+            'New ticket for ${customerName(selected['profile_name'], selected, widget.session.shownNumber)}',
         submit: 'Create ticket',
         fields: [
           const EditField('subject', 'Subject', required: true),
@@ -696,7 +701,13 @@ class _CreateTicketPageState extends State<CreateTicketPage> {
                   children: [
                     for (final c in contacts)
                       AppListTile(
-                        title: Text('${c['profile_name'] ?? ''}'),
+                        title: Text(
+                          customerName(
+                            c['profile_name'],
+                            c,
+                            widget.session.shownNumber,
+                          ),
+                        ),
                         subtitle: Text(
                           '${c['display_wa_id'] ?? c['wa_id'] ?? ''}',
                         ),

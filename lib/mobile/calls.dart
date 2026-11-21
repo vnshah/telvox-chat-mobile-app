@@ -14,7 +14,6 @@ import '../ui/theme.dart';
 import 'api.dart';
 import 'call_push.dart';
 import 'call_recording.dart';
-import 'message_content.dart' show readableText;
 import 'models.dart';
 import 'realtime.dart';
 
@@ -1042,7 +1041,11 @@ class PhoneCalls extends ChangeNotifier {
   }
 
   String get _name {
-    final name = readableText(contact['profile_name']);
+    final name = customerName(
+      contact['profile_name'],
+      contact,
+      session.shownNumber,
+    );
     if (name.isNotEmpty) return name;
     final phone = session.shownNumber(contact['phone'] ?? contact['wa_id']);
     return phone.isEmpty ? 'WhatsApp call' : formatPhone(phone);
@@ -1186,8 +1189,12 @@ class _CallScreenState extends State<CallScreen> {
   @override
   Widget build(BuildContext context) {
     final c = widget.calls;
-    final name = readableText(c.contact['profile_name'] ?? c.contact['name'])
-        .ifEmpty(
+    final name =
+        customerName(
+          c.contact['profile_name'] ?? c.contact['name'],
+          c.contact,
+          c.session.shownNumber,
+        ).ifEmpty(
           formatPhone(
             c.session.shownNumber(c.contact['phone'] ?? c.contact['wa_id']),
           ),

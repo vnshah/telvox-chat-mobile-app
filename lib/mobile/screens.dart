@@ -1095,11 +1095,7 @@ class _LiveListState extends State<LiveList> with WidgetsBindingObserver {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              SheetTitle(
-                readableText(contact['profile_name']).isEmpty
-                    ? formatPhone(contact['display_wa_id'] ?? contact['wa_id'])
-                    : readableText(contact['profile_name']),
-              ),
+              SheetTitle(customerLabel(contact, widget.session.shownNumber)),
               for (final (key, icon, label) in [
                 ('open', Icons.chat_outlined, 'Open chat'),
                 ('details', Icons.person_outline, 'Contact details'),
@@ -1961,8 +1957,8 @@ class LiveConversationRow extends StatelessWidget {
     // This phone is on a call with this customer: said in green in place of
     // the last message, until the call ends.
     final onCall = ticket ? null : session.calls.statusWith(contact['id']);
-    final name =
-        '${contact['profile_name'] ?? contact['waba_profile_name'] ?? contact['display_wa_id'] ?? 'Contact'}';
+    final label = customerLabel(contact, session.shownNumber);
+    final name = label.isEmpty ? 'Contact' : label;
     final last = object(item[ticket ? 'last_thread' : 'last_message']);
     final unread =
         number(item[ticket ? 'unread_message' : 'unread_message_count']) ?? 0;

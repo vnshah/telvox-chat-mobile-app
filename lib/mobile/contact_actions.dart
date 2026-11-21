@@ -9,7 +9,7 @@ import 'detail_layout.dart';
 import 'media.dart';
 import 'notes.dart';
 import 'message_content.dart' show readableText;
-import 'models.dart' show formatPhone;
+import 'models.dart' show customerName, formatPhone;
 import 'screens.dart' show failure, mobileNotice, openPage;
 import 'shared_media.dart';
 import 'call_history.dart';
@@ -135,7 +135,12 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
       EditField(
         'profile_name',
         'Name',
-        value: '${contact['profile_name'] ?? ''}',
+        // A name that is only the number is not shown unmasked here either.
+        value:
+            customerName(contact['profile_name'], contact) ==
+                readableText(contact['profile_name'])
+            ? '${contact['profile_name'] ?? ''}'
+            : '',
         required: true,
         hint: 'Contact name',
       ),
@@ -346,7 +351,13 @@ class _ContactActionsPageState extends State<ContactActionsPage> {
         ],
       );
     }
-    final name = '${c['profile_name'] ?? c['waba_profile_name'] ?? ''}';
+    final name = customerName(
+      readableText(c['profile_name']).isEmpty
+          ? c['waba_profile_name']
+          : c['profile_name'],
+      c,
+      widget.session.shownNumber,
+    );
     final initials = name
         .trim()
         .split(RegExp(r'\s+'))
