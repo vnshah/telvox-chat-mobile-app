@@ -8,6 +8,7 @@ import 'package:telvox_chat_mobile_app/mobile/calls.dart'
     show CallPermission, callPermissionLabel, callPermissionStatus;
 import 'package:telvox_chat_mobile_app/mobile/list_filter.dart';
 import 'package:telvox_chat_mobile_app/mobile/message_info.dart';
+import 'package:telvox_chat_mobile_app/ui/chat_message.dart' show sourceMarks;
 import 'package:telvox_chat_mobile_app/ui/delivery_tick.dart';
 import 'package:telvox_chat_mobile_app/mobile/message_notes.dart';
 import 'package:telvox_chat_mobile_app/mobile/message_view.dart'
@@ -490,6 +491,12 @@ void main() {
       expect(messageSource(sent({'message_source': 1})), 1);
       expect(messageSource(sent({'message_source': '4'})), 4);
       expect(messageSource(sent({'message_source': 0})), 0);
+    });
+    test('a reply typed in the mobile app is marked as one', () {
+      expect(messageSource(sent({'message_source': 6})), 6);
+      expect(sourceMarks[6]?.$2, 'Sent from the mobile app');
+      // A reply typed in the web inbox stays unmarked.
+      expect(sourceMarks.containsKey(0), isFalse);
     });
     test('an AI-written message gets no other mark; customers none', () {
       expect(messageSource(sent({'message_source': 3, 'sent_by_ai': 1})), 0);

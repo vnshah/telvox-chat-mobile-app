@@ -121,6 +121,7 @@ const sourceMarks = <int, (IconData, String)>{
   2: (Icons.account_tree_outlined, 'Sent by an automation'),
   3: (Icons.smart_toy_outlined, 'Sent by a chatbot'),
   4: (Icons.code_rounded, 'Sent through the API'),
+  6: (Icons.smartphone_rounded, 'Sent from the mobile app'),
 };
 
 /// The time and delivery ticks in a bubble's corner. Public so content that
